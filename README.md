@@ -1,99 +1,103 @@
-# Hytale Example Plugin
+# Nexori Plugin
 
-An example project that can build and run plugins for the game Hytale!
+Nexori is a Hytale network plugin focused on one job first: giving creators a
+safe, guided way to establish trust between their servers without forcing them
+onto a hosted backend.
 
-> **⚠️ Warning: Early Access**    
-> The game Hytale is in early access, and so is this project! Features may be
-> incomplete, unstable, or change frequently. Please be patient and understanding as development
-> continues.
+Project planning and release/versioning rules live in
+[`docs/ROADMAP.md`](D:\JanielNunez\hyjn-nexori\nexori-plugin\docs\ROADMAP.md).
 
-## Introduction
-This project contains a Gradle project that can be imported into IDEA and used
-as the foundation for custom Hytale plugins. The template will add the Hytale
-server to your classpath and create a run configuration that can be used to
-run your plugin on the server. It can also be used to build a sharable JAR file
-that contains your plugin.
+## Current Scope
 
-## Requirements
-Please ensure all the requirements are met before getting started.
+This repository currently contains the first usable slice of the plugin:
 
-1. Download Hytale using the official launcher.
-2. Have Intellij IDEA installed. Community edition is fine.
-3. Download Java 25 and set it as the SDK in IDEA.
+- per-server identity generation with an Ed25519 keypair
+- local persistence for server identity and bootstrap state
+- short-lived bootstrap sessions for enrollment windows
+- saved peer IPs persisted as JSON in the server data folder
+- a lightweight peer manager UI based on custom pages
+- bootstrap travel that collects public keys, gets a signed proof from each peer,
+  and installs the verified trust bundle across enrolled servers
 
-## Configuring Template
-It is important to configure the project before using it as a template. Doing
-this before importing the project will help avoid running into caching issues
-later on.
+## Current Commands
 
-### 1: Project Name
-Set the name of the project in `settings.gradle`. This should be the name of
-your plugin. We recommend capitalizing your project name and avoiding 
-whitespace and most special characters. This will be used as the base name for
-any files produced by Gradle, like the sharable JAR file.
+Use these in game:
 
-### 2: Gradle Properties
-Review the properties defined in `gradle.properties`. You should change the 
-`maven_group` to match your project. You should also change the `version`
-property before making a new release, or set up CI/CD to automate it.
-
-### 3: Manifest
-The manifest file provides important information about your plugin to Hytale.
-You should update every property in this file to reflect your project. The 
-most important property to set is `Main` which tells the game which class
-file to load as the entry point for your plugin. The file can be found at 
-`src/main/resources/manifest.json`.
-
-**This template has configured Gradle to automatically update the `Version` and
-`IncludesAssetPack` property to reflect your Gradle properties every time you 
-run the game in development, or build the plugin. This is a workaround to allow
-the in-game asset editor to be used when working on your project.**
-
-## Importing into IDEA
-When opening the project in IDEA it should automatically create the
-`HytaleServer` run configuration and a `./run` folder. When you run the game it
-will generate all the relevant files in there. It will also load the default 
-assets from the games.
-
-**If you do not see the `HytaleServer` run configuration, you may need to open
-the dropdown or click `Edit Configurations...` once to unhide it.**
-
-## Importing into VSCode
-While VSCode is not officially supported, you can generate launch configs by 
-running `./gradlew generateVSCodeLaunch`.
-
-## Connecting to Server
-Once the server is running in IDEA you should be able to connect to 
-`Local Server` using your standard Hytale client. If the server does not show
-up automatically, add the IP as `127.0.0.1` manually.
-
-### You MUST authenticate your test server!
-In order to connect to the test server, you must authenticate it with Hytale.
-This is done by running the `auth login device` command in the server terminal.
-This command will print a URL that you can use to authenticate the server using
-your Hytale account. Once authenticated, you can run the 
-`auth persistence Encrypted` command to keep your server authenticated after 
-restarting it. 
-
-**Never share your encrypted auth file!**
-
-If you are unable to run commands from the IDEA terminal, you can also run the 
-command from code like this. Make sure to remove the code after your server is
-authenticated.
-
-```java
-    @Override
-    protected void start() {
-        CommandManager.get().handleCommand(ConsoleSender.INSTANCE, "auth login device");
-    }
+```text
+/nexori help
+/nexori status
+/nexori peers
+/nexori add <host:port>
+/nexori remove <host:port>
+/nexori clear
+/nexoristart
+/nexoritravel <host:port> [--routeKey=<key>] [--entryPoint=<id>]
+/nexorimenu
 ```
 
+Saved data currently lives under the plugin data directory:
 
-## Verifying The Example Plugin
-You can verify the Example plugin has loaded by running the `/test` command 
-in game. It will print the name and version of your plugin. This is for 
-demonstration purposes, and should **NOT** be included in your final build.
+- `config/configured-peers.json`
+- `state/bootstrap-state.properties`
+- `state/bootstrap-run.json`
+- `state/trust-bundle.json`
+- `identity/*`
 
-The example plugin also includes a recipe defined by an asset pack. This recipe
-allows you to craft 10 dirt into 1 dirt using the crafting window. This is also
-an example and should be removed before you release the plugin.
+## Current Bootstrap Flow
+
+Today the plugin does this:
+
+1. collect each target server's public key
+2. deliver a short-lived challenge
+3. receive a signed proof back through referral payloads
+4. verify the proof on the origin server
+5. save a trusted bundle locally on the origin server
+6. distribute that same bundle back out so every enrolled server installs it
+
+## Release Line
+
+The current committed milestone is `0.1.0`.
+
+- `0.1.x` is for fixes and stability
+- `0.2.0` is planned for the first route system
+- `1.0.0` is the target for the first non-coder-friendly adventure network kit
+
+## Secure Referrals
+
+Nexori now also includes a signed referral envelope for normal server-to-server
+travel after bootstrap.
+
+- the full payload is signed, not just one field
+- the destination verifies the signature against the current trust bundle
+- the payload type is explicit so future protocols can reuse the same envelope
+- the first payload type implemented is `travel.direct`
+
+This is the foundation for future portal, queue, return, and inventory
+protocols without redesigning the security model.
+
+The next milestone is building higher-level tools such as portals and queue
+flows on top of these secure referrals.
+
+## Development Notes
+
+- Java 25 is required.
+- The Gradle build expects a local Hytale install.
+- If Hytale is installed outside the default location, pass `-Phytale_home=<path>`.
+
+Example:
+
+```powershell
+.\gradlew.bat compileJava -Phytale_home=D:\JanielNunez\AppData
+```
+
+## Authentication Reminder
+
+When running a local Hytale server for development, authenticate it with the
+official flow:
+
+```text
+auth login device
+auth persistence Encrypted
+```
+
+Never share the resulting encrypted auth material.

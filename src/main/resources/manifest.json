@@ -1,14 +1,14 @@
 {
-    "Group": "Example",
-    "Name": "ExamplePlugin",
-    "Version": "0.0.2",
-    "Description": "An example plugin for HyTale!",
+    "Group": "Nexori",
+    "Name": "NexoriPlugin",
+    "Version": "0.1.0",
+    "Description": "Secure server-to-server trust bootstrap for Hytale networks.",
     "Authors": [
         {
-            "Name": "It's you!"
+            "Name": "Janiel Nunez"
         }
     ],
-    "Website": "example.org",
+    "Website": "https://github.com/hyjn-nexori/nexori-plugin",
     "ServerVersion": "*",
     "Dependencies": {
         
@@ -17,6 +17,6 @@
         
     },
     "DisabledByDefault": false,
-    "Main": "org.example.plugin.ExamplePlugin",
+    "Main": "io.github.hyjn.nexori.plugin.NexoriPlugin",
     "IncludesAssetPack": true
 }
