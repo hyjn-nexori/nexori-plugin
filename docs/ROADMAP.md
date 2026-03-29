@@ -8,7 +8,7 @@ experience without needing a backend first.
 The primary audience for the first product is:
 
 - server owners who do not want to code
-- creators who want to build an adventure network with in-game tools
+- creators who want to build a survival/adventure network with in-game tools
 - modders who want a safe transfer foundation they can build on later
 
 The product direction is:
@@ -16,11 +16,13 @@ The product direction is:
 - bootstrap trust between servers with per-server keypairs
 - use signed referrals for all protected server-to-server travel
 - let owners configure their network from inside the game
+- define the travel behaviors in Nexori itself instead of making owners invent
+  their own protocol
 - keep JSON files as persistence, but never make JSON editing the normal workflow
 
 ## What Exists Today
 
-Current `0.1.0` foundation:
+Current `0.2.0` foundation:
 
 - per-server identity generation with Ed25519
 - peer discovery and trust bootstrap
@@ -28,23 +30,33 @@ Current `0.1.0` foundation:
 - signed secure referral envelope
 - first secure travel payload type (`travel.direct`)
 - basic peer management UI
+- destination target definitions stored on the destination server
+- automatic `<world>.natural_spawn` target registration
+- secure destination target resolution on arrival
+- first concrete arrival execution for:
+  - `NATURAL_SPAWN`
+  - `COORDINATE`
+  - `PORTAL`
 
 ## Target For 1.0.0
 
 Nexori `1.0.0` should let a non-coder install the mod on multiple servers and
-build a simple but real network completely in game.
+build a simple but real survival/adventure network completely in game.
 
 That means `1.0.0` should include:
 
 - secure bootstrap for all servers in the network
 - signed server-to-server travel built on the trust bundle
-- route definitions stored in config and editable from in-game UI
-- portal-based travel for adventure/survival style networks
-- route behaviors such as:
-  - send to spawn
-  - send to portal target
-  - send into a queue
-  - return to lobby
+- destination targets stored in config and editable from in-game UI
+- trigger bindings stored in config and editable from in-game UI
+- travel profiles defined by Nexori and selectable from in-game UI
+- portal-based travel for survival/adventure style networks
+- configurable spawn and coordinate targets between servers
+- inventory rules for safe cross-server travel
+- built-in arrival behaviors such as:
+  - travel to natural spawn
+  - travel to coordinate
+  - travel to portal
 - clear rejection messages when travel fails
 - reset/rebootstrap tools for owners
 - solid docs for both no-coders and modders
@@ -52,7 +64,9 @@ That means `1.0.0` should include:
 `1.0.0` does **not** need to include:
 
 - hosted backend
-- complex distributed matchmaking
+- minigame queue orchestration
+- distributed matchmaking
+- instanced minigame lifecycle management
 - cloud orchestration
 - monetization features
 
@@ -64,31 +78,38 @@ That means `1.0.0` should include:
 - signed referral envelope exists
 - first secure travel test exists
 
-### `0.2.0` Route System
+### `0.2.0` Destination Targets
 
-- add `RouteDefinition`
-- add `RouteStore` and `RouteService`
-- resolve `routeKey` in the destination server
-- add initial route config persistence
+- add destination target definitions
+- add destination target storage and runtime resolution
+- resolve `destinationTargetId` in the destination server
+- auto-register natural spawn targets from world config
+- execute the first destination-target arrivals on the destination server
+- define the first built-in arrival kinds:
+  - `NATURAL_SPAWN`
+  - `COORDINATE`
+  - `PORTAL`
 
-### `0.3.0` Portal Basics
+### `0.3.0` Trigger Bindings
 
-- add portal route behavior
-- let owners define destination server + route + entry point
-- support arrival at predefined portal/spawn targets
+- add trigger binding definitions
+- let owners link a command or local portal trigger to a remote destination target
+- let trigger bindings select a built-in travel profile
 
-### `0.4.0` In-Game Route UI
+### `0.4.0` In-Game Owner UI
 
-- create guided forms for route creation
+- create guided forms for destination target creation
 - create guided forms for portal setup
+- create guided forms for trigger binding setup
 - allow owners to select current position/orientation in game
 - reduce command usage for normal setup
 
-### `0.5.0` Queue Basics
+### `0.5.0` Spawn And Portal Owner Flows
 
-- add simple queue route behavior
-- support one lobby -> one queue -> one destination flow
-- support route-based dispatch to minigame entry points
+- polish owner-facing spawn and portal setup flows
+- support destination target discovery from the origin server
+- support survival/adventure travel loops without custom code
+- reduce remaining command-heavy setup steps
 
 ### `0.6.0` Travel Outcomes And Errors
 
@@ -97,17 +118,17 @@ That means `1.0.0` should include:
 - protection against stale or replayed travel payloads
 - cleaner recovery/reset flows
 
-### `0.7.0` Inventory And Return Flows
+### `0.7.0` Inventory Travel Profiles
 
 - secure inventory transfer payloads
-- return-to-origin or return-to-lobby routes
-- route behaviors that combine travel + inventory rules
+- return-to-origin or return-to-hub presets built from targets + trigger bindings
+- travel profiles that combine arrival + inventory rules
 
 ### `0.8.0` Owner Experience
 
 - polish UI wording and forms
-- presets for common network types
-- easier route linking between servers
+- presets for common survival/adventure network types
+- easier target linking between servers
 - better operational commands
 
 ### `0.9.0` Hardening
@@ -121,8 +142,18 @@ That means `1.0.0` should include:
 
 - complete no-code happy path
 - stable secure travel APIs
-- stable portal and route workflows
+- stable portal and destination target workflows
 - stable bootstrap and reset flows
+- stable survival/adventure network setup for owners without code
+
+## Beyond 1.0
+
+After `1.0.0`, Nexori can expand into:
+
+- minigame queue flows
+- instance allocation
+- match orchestration
+- more developer-facing APIs for advanced custom game modes
 
 ## Versioning Rules
 
@@ -145,7 +176,7 @@ Meaning:
   - no breaking config or API changes
 - `MINOR`
   - new features
-  - new route behaviors
+  - new arrival behaviors
   - new UI features
   - still backward compatible
 - `MAJOR`
@@ -178,10 +209,10 @@ Recommended workflow:
 
 Examples:
 
-- current milestone: `0.1.0`
-- next in-progress line after release: `0.1.1-SNAPSHOT` or `0.2.0-SNAPSHOT`
-- first bugfix after release: `0.1.1`
-- next feature milestone: `0.2.0`
+- current milestone: `0.2.0`
+- next in-progress line after release: `0.2.1-SNAPSHOT` or `0.3.0-SNAPSHOT`
+- first bugfix after release: `0.2.1`
+- next feature milestone: `0.3.0`
 
 ## Release Policy
 

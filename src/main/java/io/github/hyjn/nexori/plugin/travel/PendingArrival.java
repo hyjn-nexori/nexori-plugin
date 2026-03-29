@@ -3,9 +3,13 @@ package io.github.hyjn.nexori.plugin.travel;
 public record PendingArrival(
     String sourceServerId,
     String sourceConnectionAddress,
-    String routeKey,
-    String entryPointId,
+    String destinationTargetId,
+    String destinationTargetKind,
+    String worldName,
+    String arrivalPointId,
+    String travelProfileId,
     String arrivalMessage,
-    String contextJson
+    String contextJson,
+    String metadataJson
 ) {
 }

@@ -6,6 +6,8 @@ onto a hosted backend.
 
 Project planning and release/versioning rules live in
 [`docs/ROADMAP.md`](D:\JanielNunez\hyjn-nexori\nexori-plugin\docs\ROADMAP.md).
+The travel domain model lives in
+[`docs/TRAVEL_MODEL.md`](D:\JanielNunez\hyjn-nexori\nexori-plugin\docs\TRAVEL_MODEL.md).
 
 ## Current Scope
 
@@ -31,13 +33,19 @@ Use these in game:
 /nexori remove <host:port>
 /nexori clear
 /nexoristart
-/nexoritravel <host:port> [--routeKey=<key>] [--entryPoint=<id>]
+/nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]
+/nexoritarget
+/nexoritargetlist
+/nexoritargetadd <targetId> <kind> <world> <arrivalPoint>
+/nexoritargetshow <targetId>
+/nexoritargetremove <targetId>
 /nexorimenu
 ```
 
 Saved data currently lives under the plugin data directory:
 
 - `config/configured-peers.json`
+- `config/destination-targets.json`
 - `state/bootstrap-state.properties`
 - `state/bootstrap-run.json`
 - `state/trust-bundle.json`
@@ -54,13 +62,27 @@ Today the plugin does this:
 5. save a trusted bundle locally on the origin server
 6. distribute that same bundle back out so every enrolled server installs it
 
+## Destination Targets
+
+The next layer above secure travel is the destination target system.
+
+- the destination server offers explicit `DestinationTarget`s
+- a travel payload now identifies a destination target instead of a free-form route
+- each target can define a world and an arrival point id
+- the first target kinds are `NATURAL_SPAWN`, `COORDINATE`, and `PORTAL`
+- the plugin now auto-registers `<world>.natural_spawn` targets by reading each
+  world's `config.json` spawn point
+- the secure travel handler rejects unknown destination targets instead of accepting raw labels
+
 ## Release Line
 
-The current committed milestone is `0.1.0`.
+The current committed milestone is `0.2.0`.
 
-- `0.1.x` is for fixes and stability
-- `0.2.0` is planned for the first route system
+- `0.2.x` is for fixes and stability on the first destination target system
+- `0.3.0` is planned for the first trigger binding system
 - `1.0.0` is the target for the first non-coder-friendly adventure network kit
+
+The next active development line after this release is `0.3.0-SNAPSHOT`.
 
 ## Secure Referrals
 
@@ -72,11 +94,11 @@ travel after bootstrap.
 - the payload type is explicit so future protocols can reuse the same envelope
 - the first payload type implemented is `travel.direct`
 
-This is the foundation for future portal, queue, return, and inventory
+This is the foundation for future portal, return, and inventory
 protocols without redesigning the security model.
 
-The next milestone is building higher-level tools such as portals and queue
-flows on top of these secure referrals.
+The next milestone is building higher-level tools such as portals, spawns, and
+return flows on top of these secure referrals.
 
 ## Development Notes
 

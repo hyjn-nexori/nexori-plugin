@@ -23,15 +23,19 @@ public final class NexoriTravelCommand extends AbstractPlayerCommand {
 
     private final SecureTravelService secureTravelService;
     private final RequiredArg<String> destinationArg;
-    private final OptionalArg<String> routeKeyArg;
+    private final OptionalArg<String> targetIdArg;
+    private final OptionalArg<String> legacyRouteKeyArg;
     private final OptionalArg<String> entryPointArg;
+    private final OptionalArg<String> travelProfileArg;
 
     public NexoriTravelCommand(@Nonnull SecureTravelService secureTravelService) {
         super("nexoritravel", "Starts a signed Nexori travel referral to one trusted destination.");
         this.secureTravelService = secureTravelService;
         this.destinationArg = withRequiredArg("destination", "Trusted destination in host:port format.", ArgTypes.STRING);
-        this.routeKeyArg = withOptionalArg("routeKey", "Optional logical route key.", ArgTypes.STRING);
-        this.entryPointArg = withOptionalArg("entryPoint", "Optional entry point id for future portals.", ArgTypes.STRING);
+        this.targetIdArg = withOptionalArg("targetId", "Destination target id.", ArgTypes.STRING);
+        this.legacyRouteKeyArg = withOptionalArg("routeKey", "Deprecated alias for targetId.", ArgTypes.STRING);
+        this.entryPointArg = withOptionalArg("arrivalPoint", "Optional arrival point override.", ArgTypes.STRING);
+        this.travelProfileArg = withOptionalArg("travelProfile", "Optional travel profile id.", ArgTypes.STRING);
         setPermissionGroup(GameMode.Adventure);
     }
 
@@ -45,9 +49,12 @@ public final class NexoriTravelCommand extends AbstractPlayerCommand {
     ) {
         try {
             ConfiguredPeer destination = ConfiguredPeer.parse(context.get(destinationArg));
-            String routeKey = context.provided(routeKeyArg) ? context.get(routeKeyArg) : "";
-            String entryPoint = context.provided(entryPointArg) ? context.get(entryPointArg) : "";
-            secureTravelService.travel(playerRef, destination, routeKey, entryPoint, "");
+            String targetId = context.provided(targetIdArg)
+                ? context.get(targetIdArg)
+                : (context.provided(legacyRouteKeyArg) ? context.get(legacyRouteKeyArg) : "");
+            String arrivalPoint = context.provided(entryPointArg) ? context.get(entryPointArg) : "";
+            String travelProfile = context.provided(travelProfileArg) ? context.get(travelProfileArg) : "";
+            secureTravelService.travel(playerRef, destination, targetId, arrivalPoint, travelProfile, "");
             context.sendMessage(Message.raw("Started secure Nexori travel to " + destination.connectionAddress() + "."));
         } catch (IllegalArgumentException exception) {
             context.sendMessage(Message.raw(exception.getMessage()));

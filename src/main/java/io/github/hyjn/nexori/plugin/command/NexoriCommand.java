@@ -70,7 +70,13 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexori open [minutes]"));
         ctx.sendMessage(Message.raw("- /nexori close"));
         ctx.sendMessage(Message.raw("- /nexoristart"));
-        ctx.sendMessage(Message.raw("- /nexoritravel <host:port> [routeKey] [entryPoint]"));
+        ctx.sendMessage(Message.raw("- /nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]"));
+        ctx.sendMessage(Message.raw("- /nexoritarget"));
+        ctx.sendMessage(Message.raw("- /nexoritargetlist"));
+        ctx.sendMessage(Message.raw("- /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>"));
+        ctx.sendMessage(Message.raw("  COORDINATE and PORTAL use your current position and look direction."));
+        ctx.sendMessage(Message.raw("- /nexoritargetshow <targetId>"));
+        ctx.sendMessage(Message.raw("- /nexoritargetremove <targetId>"));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
     }
 
@@ -79,9 +85,11 @@ public class NexoriCommand extends CommandBase {
         BootstrapState bootstrapState = plugin.getBootstrapStateStore().getCurrentState();
         TrustBundle bundle = plugin.getBootstrapCoordinator().getTrustBundle();
         int peerCount = plugin.getConfiguredPeerService().list().size();
+        int targetCount = plugin.getDestinationTargetService().size();
         ctx.sendMessage(Message.raw("Nexori serverId: " + identity.serverId()));
         ctx.sendMessage(Message.raw("Fingerprint: " + identity.fingerprint()));
         ctx.sendMessage(Message.raw("Saved peers: " + peerCount));
+        ctx.sendMessage(Message.raw("Destination targets: " + targetCount));
         ctx.sendMessage(Message.raw("Bootstrap open: " + bootstrapState.hasActiveSession()));
         ctx.sendMessage(Message.raw("Bundle version: " + bootstrapState.bundleVersion()));
         ctx.sendMessage(Message.raw("Verified bundle members: " + bundle.members().size()));
