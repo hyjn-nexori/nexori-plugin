@@ -6,5 +6,5 @@ public record InventoryTransferBackupConfigDocument(
     int schemaVersion,
     List<InventoryTransferBackupRecord> backups
 ) {
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 }

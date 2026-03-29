@@ -24,7 +24,9 @@ This repository currently contains the first usable slice of the plugin:
 - trusted destination target discovery and caching on the origin server
 - configurable Nexori portals with secure trigger bindings
 - built-in travel profiles for keeping, clearing, or applying inventory
-- manual backup/recover commands for `APPLY_INVENTORY`
+- in-game recovery UI plus backup/recover flows for `APPLY_INVENTORY`
+- local destination overwrite backups for `APPLY_INVENTORY` claims
+- recovery mode and per-player backup limit controls for admins
 - guided in-game owner setup for destination targets and portal binding setup
 - per-player draft-aware setup flows that resume after destination discovery travel
 - target manager UI for listing, editing, and removing owner-managed targets
@@ -55,8 +57,11 @@ Use these in game:
 /nexoriportalshow <portalId>
 /nexoriportalbind <portalId> <host:port> <targetId> [--travelProfile=<id>]
 /nexoriportalunbind <portalId>
+/nexorirecovery
 /nexoribackups
 /nexorirecover <transferId>
+/nexorirecoverymode <status|enable|disable>
+/nexoribackuplimit <1-50>
 /nexorimenu
 ```
 
@@ -108,13 +113,13 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.4.0`.
+The current committed milestone is `0.5.0`.
 
-- `0.4.x` is for fixes and stability on the new owner setup UI
-- `0.5.0` is planned for spawn/portal owner flow polish and more complete no-code loops
+- `0.5.x` is for fixes and stability on the new recovery and inventory transfer flows
+- `0.6.0` is planned for clearer travel outcomes and diagnostics
 - `1.0.0` is the target for the first non-coder-friendly adventure network kit
 
-The next active development line after this release is `0.5.0-SNAPSHOT`.
+The next active development line after this release is `0.6.0-SNAPSHOT`.
 
 ## Secure Referrals
 
@@ -127,11 +132,11 @@ travel after bootstrap.
 - the first payload type implemented is `travel.direct`
 
 This is now the foundation for destination targets, portals, discovery,
-inventory-aware travel profiles, and the first complete guided owner setup
-flows without redesigning the security model.
+inventory-aware travel profiles, guided owner setup flows, and recovery-aware
+inventory transfer without redesigning the security model.
 
-The next milestone is polishing those owner flows and simplifying the remaining
-rough edges in the no-code setup experience.
+The next milestone is clearer travel outcomes, diagnostics, and maintenance
+flows around the now-functional owner and player happy paths.
 
 ## Development Notes
 

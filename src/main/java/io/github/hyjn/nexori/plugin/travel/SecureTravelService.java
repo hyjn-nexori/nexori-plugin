@@ -109,7 +109,10 @@ public final class SecureTravelService implements SecureReferralHandler {
         );
         byte[] encodedPayload = secureReferralService.createPayload(playerRef, PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
 
-        if (profileType == TravelProfileType.APPLY_INVENTORY && inventoryState != null) {
+        if (profileType == TravelProfileType.APPLY_INVENTORY
+            && inventoryState != null
+            && !inventoryTransferId.isBlank()
+            && inventoryTransferService.shouldTransferInventory(inventoryState)) {
             inventoryTransferService.saveOriginBackup(
                 inventoryTransferId,
                 playerRef,

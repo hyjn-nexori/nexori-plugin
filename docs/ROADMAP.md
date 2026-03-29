@@ -22,7 +22,7 @@ The product direction is:
 
 ## What Exists Today
 
-Current `0.4.0` foundation:
+Current `0.5.0` foundation:
 
 - per-server identity generation with Ed25519
 - peer discovery and trust bootstrap
@@ -43,7 +43,9 @@ Current `0.4.0` foundation:
   - `KEEP_INVENTORY`
   - `CLEAR_INVENTORY`
   - `APPLY_INVENTORY`
-- manual backup/recover flow for `APPLY_INVENTORY`
+- manual and UI-driven backup/recover flow for `APPLY_INVENTORY`
+- local destination overwrite backups and direct local claims
+- admin controls for recovery enable/disable and per-player backup limits
 - guided in-game destination target management and creation flows
 - guided in-game portal setup and trigger binding flows
 - per-player and per-portal draft-aware setup resume after discovery travel
@@ -119,39 +121,49 @@ That means `1.0.0` should include:
 - allow owners to select current position/orientation in game
 - reduce command usage for normal setup
 
-### `0.5.0` Spawn And Portal Owner Flows
+### `0.5.0` Inventory Recovery UI
 
-- polish owner-facing spawn and portal setup flows
-- support destination target discovery from the origin server
-- support survival/adventure travel loops without custom code
-- reduce remaining command-heavy setup steps
+- add a simple in-game recovery page for normal players
+- let players inspect their own recent inventory transfer backups without reading
+  raw ids from chat
+- let players try recovery from the UI instead of depending on raw recovery
+  commands
+- add direct local claims for destination-side overwrite backups
+- add admin controls for recovery locks and per-player backup limits
+- keep the low-level backup and recover commands as admin/debug tools
 
-### `0.6.0` Travel Outcomes And Errors
+### `0.6.0` Travel Outcomes And Diagnostics
 
-- explicit success/failure states
-- better owner-facing diagnostics
-- protection against stale or replayed travel payloads
-- cleaner recovery/reset flows
+- add clearer travel success/failure states for players and owners
+- improve diagnostics when a portal, binding, target, or inventory transfer
+  fails
+- make failed travel and recovery states easier to understand without digging
+  through logs
+- keep the failure paths functional before spending time on visual polish
 
-### `0.7.0` Advanced Travel Profiles
+### `0.7.0` Reset And Maintenance Tools
 
-- add richer secure inventory travel flows and edge-case polish
-- add return-to-origin or return-to-hub presets built from targets + trigger bindings
-- expand travel profiles that combine arrival + inventory rules
+- add owner tools to reset or rebootstrap trust safely
+- add maintenance tools for clearing stale discovery cache, drafts, and stuck
+  recovery state
+- add safer operational commands for repairing a live survival/adventure
+  network
+- make maintenance flows part of the product instead of ad-hoc manual fixes
 
-### `0.8.0` Owner Experience
+### `0.8.0` Hardening
 
-- polish UI wording and forms
-- presets for common survival/adventure network types
-- easier target linking between servers
-- better operational commands
+- strengthen replay/stale payload protection
+- improve validation around config, bindings, targets, and transfer state
+- add migration handling and upgrade safety for pre-`1.0.0` releases
+- improve compatibility checks so owners get safer upgrades between milestones
 
-### `0.9.0` Hardening
+### `0.9.0` Docs And Release Prep
 
-- migration handling
-- upgrade safety
-- more validation and compatibility checks
-- documentation and setup guides
+- write setup guides for no-code survival/adventure owners
+- write troubleshooting guides for travel, recovery, and trust bootstrap issues
+- document the owner happy path end-to-end
+- prepare the project for a stable `1.0.0` release instead of adding more
+  pre-release surface area
 
 ### `1.0.0` Stable Adventure Network Kit
 
@@ -224,10 +236,10 @@ Recommended workflow:
 
 Examples:
 
-- current milestone: `0.4.0`
-- next in-progress line after release: `0.4.1-SNAPSHOT` or `0.5.0-SNAPSHOT`
-- first bugfix after release: `0.4.1`
-- next feature milestone: `0.5.0`
+- current release: `0.5.0`
+- next in-progress line after release: `0.5.1-SNAPSHOT` or `0.6.0-SNAPSHOT`
+- first bugfix after release: `0.5.1`
+- next feature milestone: `0.6.0`
 
 ## Release Policy
 

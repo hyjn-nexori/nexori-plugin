@@ -10,6 +10,7 @@ import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
+import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -42,6 +43,9 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
         @Nonnull World world
     ) {
         try {
+            Player player = store.getComponent(ref, Player.getComponentType());
+            inventoryTransferService.requireRecoveryInventoryEmpty(playerRef.getUuid(), player);
+
             TransformComponent transformComponent = store.getComponent(ref, TransformComponent.getComponentType());
             if (transformComponent == null) {
                 throw new IllegalStateException("Could not read your live position for Nexori recovery return.");
@@ -53,16 +57,18 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
                 rotation = headRotation.getRotation();
             }
 
-            inventoryTransferService.startRecoveryQuery(
+            InventoryTransferService.RecoveryStartResult result = inventoryTransferService.startRecovery(
                 playerRef,
                 context.get(transferIdArg),
                 world.getName(),
                 new Transform(transformComponent.getPosition(), rotation)
             );
-            context.sendMessage(Message.raw("Started Nexori inventory recovery query. If the destination is reachable, you will be sent there and back to resolve it."));
+            context.sendMessage(Message.raw(result.message()));
         } catch (IllegalArgumentException exception) {
             context.sendMessage(Message.raw(exception.getMessage()));
-        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+        } catch (IllegalStateException exception) {
+            context.sendMessage(Message.raw(exception.getMessage()));
+        } catch (IOException | GeneralSecurityException exception) {
             context.sendMessage(Message.raw("Failed to start Nexori inventory recovery: " + exception.getMessage()));
         }
     }

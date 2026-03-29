@@ -47,6 +47,7 @@ public final class PlayerSaveRepository {
             JsonObject components = ensureObject(root, "Components");
             JsonObject player = ensureObject(components, "Player");
             player.add("Inventory", toInventoryJson(state));
+            writeSplitInventoryComponents(components, state);
 
             backupExisting(file);
             writeJson(file, root);
@@ -80,6 +81,12 @@ public final class PlayerSaveRepository {
             JsonObject inventory = player != null && player.has("Inventory") && player.get("Inventory").isJsonObject()
                 ? player.getAsJsonObject("Inventory")
                 : null;
+
+            InventoryTransferState splitInventory = components == null ? null : fromSplitInventoryComponents(components, inventory);
+            if (splitInventory != null) {
+                return Optional.of(splitInventory);
+            }
+
             if (inventory == null) {
                 return Optional.empty();
             }
@@ -210,6 +217,92 @@ public final class PlayerSaveRepository {
         JsonObject created = new JsonObject();
         parent.add(key, created);
         return created;
+    }
+
+    private static void writeSplitInventoryComponents(@Nonnull JsonObject components, @Nonnull InventoryTransferState state) {
+        writeInventoryComponent(components, "StorageInventory", state.storage(), null);
+        writeInventoryComponent(components, "ArmorInventory", state.armor(), null);
+        writeInventoryComponent(components, "HotbarInventory", state.hotBar(), state.activeHotbarSlot());
+        writeInventoryComponent(components, "UtilityInventory", state.utility(), state.activeUtilitySlot());
+        writeInventoryComponent(components, "BackpackInventory", state.backpack(), null);
+        writeInventoryComponent(components, "ToolInventory", state.tool(), state.activeToolsSlot());
+    }
+
+    private static void writeInventoryComponent(
+        @Nonnull JsonObject components,
+        @Nonnull String componentKey,
+        @Nonnull ContainerTransferState state,
+        Integer activeSlot
+    ) {
+        JsonObject component = ensureObject(components, componentKey);
+        component.add("Inventory", toContainerJson(state));
+        if (activeSlot != null) {
+            component.addProperty("ActiveSlot", activeSlot);
+        }
+    }
+
+    private static InventoryTransferState fromSplitInventoryComponents(
+        @Nonnull JsonObject components,
+        JsonObject playerInventory
+    ) {
+        JsonObject storage = inventoryObject(components, "StorageInventory");
+        JsonObject armor = inventoryObject(components, "ArmorInventory");
+        JsonObject hotbar = inventoryObject(components, "HotbarInventory");
+        JsonObject utility = inventoryObject(components, "UtilityInventory");
+        JsonObject backpack = inventoryObject(components, "BackpackInventory");
+        JsonObject tool = inventoryObject(components, "ToolInventory");
+
+        if (storage == null && armor == null && hotbar == null && utility == null && backpack == null && tool == null) {
+            return null;
+        }
+
+        return new InventoryTransferState(
+            playerInventory != null && playerInventory.has("Version") ? playerInventory.get("Version").getAsInt() : 0,
+            storage != null ? fromContainerJson(storage, "Storage") : fallbackContainer(playerInventory, "Storage"),
+            armor != null ? fromContainerJson(armor, "Armor") : fallbackContainer(playerInventory, "Armor"),
+            hotbar != null ? fromContainerJson(hotbar, "HotBar") : fallbackContainer(playerInventory, "HotBar"),
+            utility != null ? fromContainerJson(utility, "Utility") : fallbackContainer(playerInventory, "Utility"),
+            backpack != null ? fromContainerJson(backpack, "Backpack") : fallbackContainer(playerInventory, "Backpack"),
+            tool != null ? fromContainerJson(tool, "Tool") : fallbackContainer(playerInventory, "Tool"),
+            activeSlot(components, "HotbarInventory", playerInventory, "ActiveHotbarSlot"),
+            activeSlot(components, "ToolInventory", playerInventory, "ActiveToolsSlot"),
+            activeSlot(components, "UtilityInventory", playerInventory, "ActiveUtilitySlot")
+        );
+    }
+
+    private static JsonObject inventoryObject(@Nonnull JsonObject components, @Nonnull String componentKey) {
+        if (!components.has(componentKey) || !components.get(componentKey).isJsonObject()) {
+            return null;
+        }
+        JsonObject component = components.getAsJsonObject(componentKey);
+        if (!component.has("Inventory") || !component.get("Inventory").isJsonObject()) {
+            return null;
+        }
+        return component.getAsJsonObject("Inventory");
+    }
+
+    @Nonnull
+    private static ContainerTransferState fallbackContainer(JsonObject playerInventory, @Nonnull String key) {
+        return playerInventory != null
+            ? fromContainerJson(playerInventory.getAsJsonObject(key), key)
+            : new ContainerTransferState(key, 0, Map.of());
+    }
+
+    private static int activeSlot(
+        @Nonnull JsonObject components,
+        @Nonnull String componentKey,
+        JsonObject playerInventory,
+        @Nonnull String playerInventoryKey
+    ) {
+        if (components.has(componentKey) && components.get(componentKey).isJsonObject()) {
+            JsonObject component = components.getAsJsonObject(componentKey);
+            if (component.has("ActiveSlot")) {
+                return component.get("ActiveSlot").getAsInt();
+            }
+        }
+        return playerInventory != null && playerInventory.has(playerInventoryKey)
+            ? playerInventory.get(playerInventoryKey).getAsInt()
+            : -1;
     }
 
     @Nonnull

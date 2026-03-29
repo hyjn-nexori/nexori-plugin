@@ -10,6 +10,7 @@ import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriBackupsCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriBackupLimitCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
@@ -18,6 +19,8 @@ import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalUnbindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriRecoverCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriRecoveryModeCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriRecoveryPageCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriStartCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetAddCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
@@ -33,6 +36,7 @@ import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.inventory.InventorySnapshotService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferBackupStore;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferPolicyStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferReceiptStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
@@ -139,6 +143,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 new InventoryTransferBackupStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-backups.json")),
                 new InventoryTransferReceiptStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-receipts.json")),
+                new InventoryTransferPolicyStore(this.getDataDirectory().resolve("config").resolve("inventory-transfer-policy.json")),
                 new PlayerSaveRepository(this.getLogger()),
                 new InventorySnapshotService(),
                 this.secureReferralService
@@ -180,6 +185,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.portalInteractionService.registerPageSupplier();
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriBackupLimitCommand(this, this.inventoryTransferService));
+            this.getCommandRegistry().registerCommand(new NexoriRecoveryModeCommand(this, this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriBackupsCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
             this.getCommandRegistry().registerCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
@@ -189,6 +196,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
+            this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
             this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));
@@ -246,6 +254,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public SecureTravelService getSecureTravelService() {
         return secureTravelService;
+    }
+
+    public InventoryTransferService getInventoryTransferService() {
+        return inventoryTransferService;
     }
 
     public DestinationTargetService getDestinationTargetService() {

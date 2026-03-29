@@ -6,22 +6,21 @@ import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
+import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import io.github.hyjn.nexori.plugin.inventory.InventoryTransferBackupRecord;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
+import io.github.hyjn.nexori.plugin.ui.NexoriRecoveryPage;
 
 import javax.annotation.Nonnull;
-import java.time.Instant;
-import java.util.List;
 
-public final class NexoriBackupsCommand extends AbstractPlayerCommand {
+public final class NexoriRecoveryPageCommand extends AbstractPlayerCommand {
 
     private final InventoryTransferService inventoryTransferService;
 
-    public NexoriBackupsCommand(@Nonnull InventoryTransferService inventoryTransferService) {
-        super("nexoribackups", "Lists your recent Nexori inventory transfer backups.");
+    public NexoriRecoveryPageCommand(@Nonnull InventoryTransferService inventoryTransferService) {
+        super("nexorirecovery", "Opens your Nexori inventory recovery page.");
         this.inventoryTransferService = inventoryTransferService;
         setPermissionGroup(GameMode.Adventure);
     }
@@ -39,19 +38,12 @@ public final class NexoriBackupsCommand extends AbstractPlayerCommand {
             return;
         }
 
-        List<InventoryTransferBackupRecord> backups = inventoryTransferService.listBackups(playerRef.getUuid());
-        if (backups.isEmpty()) {
-            context.sendMessage(Message.raw("You do not have any Nexori inventory transfer backups on this server."));
+        Player player = store.getComponent(ref, Player.getComponentType());
+        if (player == null) {
+            context.sendMessage(Message.raw("nexorirecovery: could not resolve the live player entity."));
             return;
         }
 
-        context.sendMessage(Message.raw("Your Nexori inventory transfer backups:"));
-        for (InventoryTransferBackupRecord backup : backups) {
-            context.sendMessage(Message.raw("- " + backup.transferId()
-                + " -> " + backup.destinationConnectionAddress()
-                + " target=" + backup.destinationTargetId()
-                + " profile=" + backup.travelProfileId()
-                + " createdAt=" + Instant.ofEpochMilli(backup.createdAtEpochMs())));
-        }
+        NexoriRecoveryPage.open(ref, store, playerRef, player, inventoryTransferService, "", "");
     }
 }

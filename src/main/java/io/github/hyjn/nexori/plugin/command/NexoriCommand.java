@@ -86,6 +86,10 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportalshow <portalId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalbind <portalId> <host:port> <targetId> [travelProfile]"));
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
+        ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));
+        ctx.sendMessage(Message.raw("- /nexorirecoverymode <status|enable|disable>"));
+        ctx.sendMessage(Message.raw("- /nexorirecovery"));
+        ctx.sendMessage(Message.raw("  Opens the in-game recovery list for your recent inventory transfer backups."));
         ctx.sendMessage(Message.raw("- /nexoribackups"));
         ctx.sendMessage(Message.raw("- /nexorirecover <transferId>"));
         ctx.sendMessage(Message.raw("  Travel profiles: KEEP_INVENTORY, CLEAR_INVENTORY, APPLY_INVENTORY"));
@@ -102,6 +106,9 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("Fingerprint: " + identity.fingerprint()));
         ctx.sendMessage(Message.raw("Saved peers: " + peerCount));
         ctx.sendMessage(Message.raw("Destination targets: " + targetCount));
+        ctx.sendMessage(Message.raw("Inventory recovery: "
+            + (plugin.getInventoryTransferService().isRecoveryEnabled() ? "enabled" : "disabled")));
+        ctx.sendMessage(Message.raw("Backups per player: " + plugin.getInventoryTransferService().getMaxBackupsPerPlayer()));
         ctx.sendMessage(Message.raw("Bootstrap open: " + bootstrapState.hasActiveSession()));
         ctx.sendMessage(Message.raw("Bundle version: " + bootstrapState.bundleVersion()));
         ctx.sendMessage(Message.raw("Verified bundle members: " + bundle.members().size()));

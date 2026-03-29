@@ -19,6 +19,7 @@ import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
+import io.github.hyjn.nexori.plugin.ui.NexoriRecoveryPage;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -35,11 +36,10 @@ public final class InventoryTransferService {
 
     public static final String QUERY_PAYLOAD_TYPE = "inventory-transfer.receipt-query";
     public static final String REPLY_PAYLOAD_TYPE = "inventory-transfer.receipt-reply";
-    private static final int MAX_PLAYER_BACKUPS = 5;
-
     private final HytaleLogger logger;
     private final InventoryTransferBackupStore backupStore;
     private final InventoryTransferReceiptStore receiptStore;
+    private final InventoryTransferPolicyStore policyStore;
     private final PlayerSaveRepository playerSaveRepository;
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
@@ -54,6 +54,7 @@ public final class InventoryTransferService {
         @Nonnull HytaleLogger logger,
         @Nonnull InventoryTransferBackupStore backupStore,
         @Nonnull InventoryTransferReceiptStore receiptStore,
+        @Nonnull InventoryTransferPolicyStore policyStore,
         @Nonnull PlayerSaveRepository playerSaveRepository,
         @Nonnull InventorySnapshotService inventorySnapshotService,
         @Nonnull SecureReferralService secureReferralService
@@ -61,6 +62,7 @@ public final class InventoryTransferService {
         this.logger = logger;
         this.backupStore = backupStore;
         this.receiptStore = receiptStore;
+        this.policyStore = policyStore;
         this.playerSaveRepository = playerSaveRepository;
         this.inventorySnapshotService = inventorySnapshotService;
         this.secureReferralService = secureReferralService;
@@ -98,6 +100,7 @@ public final class InventoryTransferService {
             transferId,
             System.currentTimeMillis(),
             playerRef.getUuid(),
+            InventoryTransferBackupMode.ORIGIN_QUERY.id(),
             destinationConnectionAddress,
             destinationTargetId,
             travelProfileId,
@@ -108,6 +111,31 @@ public final class InventoryTransferService {
             + " for " + playerRef.getUsername()
             + " toward " + saved.destinationConnectionAddress()
             + " -> " + saved.destinationTargetId() + ".");
+        return saved;
+    }
+
+    @Nonnull
+    public InventoryTransferBackupRecord saveLocalOverwriteBackup(
+        @Nonnull UUID playerUuid,
+        @Nonnull String relatedConnectionAddress,
+        @Nonnull String relatedTargetId,
+        @Nonnull String travelProfileId,
+        @Nonnull InventoryTransferState inventoryState
+    ) throws IOException {
+        InventoryTransferBackupRecord saved = backupStore.save(new InventoryTransferBackupRecord(
+            UUID.randomUUID().toString(),
+            System.currentTimeMillis(),
+            playerUuid,
+            InventoryTransferBackupMode.LOCAL_RESTORE.id(),
+            relatedConnectionAddress,
+            relatedTargetId,
+            travelProfileId,
+            inventoryState
+        ));
+        trimBackupsForPlayer(playerUuid);
+        logger.atInfo().log("Saved Nexori local overwrite backup " + saved.transferId()
+            + " for " + playerUuid
+            + " relatedServer=" + saved.destinationConnectionAddress() + ".");
         return saved;
     }
 
@@ -136,13 +164,25 @@ public final class InventoryTransferService {
                 return;
             }
             case CLEAR_INVENTORY -> clearDestinationInventory(playerUuid);
-            case APPLY_INVENTORY -> applyInboundInventory(
-                playerUuid,
-                transferId,
-                inventoryState,
-                sourceServerId == null ? "" : sourceServerId,
-                sourceConnectionAddress == null ? "" : sourceConnectionAddress
-            );
+            case APPLY_INVENTORY -> {
+                boolean hasTransferId = transferId != null && !transferId.isBlank();
+                boolean hasInventorySnapshot = inventoryState != null;
+                if (!hasTransferId && !hasInventorySnapshot) {
+                    logger.atInfo().log(
+                        "Skipping Nexori APPLY_INVENTORY inbound apply for " + playerUuid
+                            + " because no visible inventory was transferred."
+                    );
+                    return;
+                }
+
+                applyInboundInventory(
+                    playerUuid,
+                    transferId,
+                    inventoryState,
+                    sourceServerId == null ? "" : sourceServerId,
+                    sourceConnectionAddress == null ? "" : sourceConnectionAddress
+                );
+            }
         }
     }
 
@@ -157,14 +197,27 @@ public final class InventoryTransferService {
             .filter(record -> playerUuid.equals(record.playerUuid()));
     }
 
-    public void startRecoveryQuery(
+    @Nonnull
+    public RecoveryStartResult startRecovery(
         @Nonnull PlayerRef playerRef,
         @Nonnull String transferId,
         @Nonnull String originWorldName,
         @Nonnull Transform originTransform
     ) throws IOException, GeneralSecurityException {
+        requireRecoveryEnabled();
         InventoryTransferBackupRecord backup = findPlayerBackup(playerRef.getUuid(), transferId)
             .orElseThrow(() -> new IllegalArgumentException("That Nexori inventory backup does not exist for your player."));
+
+        InventoryTransferBackupMode backupMode = InventoryTransferBackupMode.parse(backup.backupModeId());
+        if (backupMode == InventoryTransferBackupMode.LOCAL_RESTORE) {
+            restoreBackupForActivePlayer(playerRef, backup);
+            backupStore.remove(backup.transferId());
+            return new RecoveryStartResult(
+                false,
+                "Nexori claim restored your saved local inventory backup on this server."
+            );
+        }
+
         ConfiguredPeer destination = ConfiguredPeer.parse(backup.destinationConnectionAddress());
         pendingRecoveryQueries.put(backup.transferId(), new PendingRecoveryQuery(
             backup.transferId(),
@@ -181,6 +234,54 @@ public final class InventoryTransferService {
             new InventoryTransferReceiptQueryPayload(backup.transferId()),
             Duration.ofSeconds(30)
         );
+        return new RecoveryStartResult(
+            true,
+            "Started Nexori inventory recovery query. If the destination is reachable, you will be sent there and back to resolve it."
+        );
+    }
+
+    public boolean isRecoveryEnabled() {
+        return policyStore.isApplyInventoryBackupsEnabled();
+    }
+
+    public void setRecoveryEnabled(boolean enabled) throws IOException {
+        policyStore.setApplyInventoryBackupsEnabled(enabled);
+    }
+
+    public int getMaxBackupsPerPlayer() {
+        return policyStore.getMaxBackupsPerPlayer();
+    }
+
+    public void setMaxBackupsPerPlayer(int maxBackupsPerPlayer) throws IOException {
+        policyStore.setMaxBackupsPerPlayer(maxBackupsPerPlayer);
+        trimAllBackupsToPolicy();
+    }
+
+    public void requireRecoveryEnabled() {
+        if (!policyStore.isApplyInventoryBackupsEnabled()) {
+            throw new IllegalStateException("Nexori inventory recovery is currently disabled by this server's admin.");
+        }
+    }
+
+    public boolean shouldTransferInventory(InventoryTransferState state) {
+        return state != null && occupiedVisibleSlots(state) > 0;
+    }
+
+    public void requireRecoveryInventoryEmpty(@Nonnull UUID playerUuid, Player player) {
+        InventoryTransferState currentState = null;
+        if (player != null) {
+            currentState = inventorySnapshotService.capture(player);
+        } else {
+            currentState = playerSaveRepository.readInventoryState(playerUuid).orElse(null);
+        }
+
+        if (currentState != null) {
+            int occupied = occupiedVisibleSlots(currentState);
+            int capacity = totalVisibleCapacity(currentState);
+            if (occupied > 0) {
+                throw new IllegalStateException("Your current inventory is not empty (" + occupied + "/" + capacity + "). Empty it before trying Nexori recovery because recovery overwrites your current origin inventory.");
+            }
+        }
     }
 
     public void handlePlayerConnect(@Nonnull PlayerConnectEvent event) {
@@ -229,7 +330,15 @@ public final class InventoryTransferService {
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
         Ref<EntityStore> playerRefStoreRef = event.getPlayerRef();
         playerRefStoreRef.getStore().addComponent(playerRefStoreRef, Teleport.getComponentType(), teleport);
-        event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+        NexoriRecoveryPage.open(
+            playerRefStoreRef,
+            playerRefStoreRef.getStore(),
+            playerRef,
+            event.getPlayer(),
+            this,
+            pendingReturn.selectedTransferId(),
+            pendingReturn.message()
+        );
     }
 
     private void clearDestinationInventory(@Nonnull UUID playerUuid) {
@@ -258,6 +367,17 @@ public final class InventoryTransferService {
             throw new IllegalArgumentException("APPLY_INVENTORY travel requires an inventory snapshot.");
         }
 
+        InventoryTransferState currentState = playerSaveRepository.readInventoryState(playerUuid).orElse(null);
+        if (currentState != null && shouldTransferInventory(currentState)) {
+            saveLocalOverwriteBackup(
+                playerUuid,
+                sourceConnectionAddress.isBlank() ? sourceServerId : sourceConnectionAddress,
+                "incoming_apply_inventory",
+                TravelProfileType.APPLY_INVENTORY.id(),
+                currentState
+            );
+        }
+
         if (!playerSaveRepository.applyInventoryState(playerUuid, inventoryState)) {
             pendingRuntimeApplies.put(playerUuid, inventoryState);
         }
@@ -273,9 +393,19 @@ public final class InventoryTransferService {
     }
 
     private void trimBackupsForPlayer(@Nonnull UUID playerUuid) throws IOException {
+        int maxBackups = policyStore.getMaxBackupsPerPlayer();
         List<InventoryTransferBackupRecord> backups = backupStore.listByPlayer(playerUuid);
-        for (int index = MAX_PLAYER_BACKUPS; index < backups.size(); index++) {
+        for (int index = maxBackups; index < backups.size(); index++) {
             backupStore.remove(backups.get(index).transferId());
+        }
+    }
+
+    private void trimAllBackupsToPolicy() throws IOException {
+        Set<UUID> players = backupStore.listAll().stream()
+            .map(InventoryTransferBackupRecord::playerUuid)
+            .collect(java.util.stream.Collectors.toSet());
+        for (UUID playerUuid : players) {
+            trimBackupsForPlayer(playerUuid);
         }
     }
 
@@ -345,6 +475,7 @@ public final class InventoryTransferService {
             pendingRecoveryReturns.put(event.getUuid(), new PendingRecoveryReturn(
                 pendingQuery.originWorldName(),
                 pendingQuery.originTransform(),
+                backup != null && result != InventoryTransferQueryResult.APPLIED ? backup.transferId() : "",
                 message
             ));
         } catch (IOException exception) {
@@ -352,6 +483,7 @@ public final class InventoryTransferService {
             pendingRecoveryReturns.put(event.getUuid(), new PendingRecoveryReturn(
                 pendingQuery.originWorldName(),
                 pendingQuery.originTransform(),
+                payload.transferId(),
                 "The Nexori recovery reply was received, but applying the local resolution failed: " + exception.getMessage()
             ));
         }
@@ -362,6 +494,39 @@ public final class InventoryTransferService {
             pendingRuntimeApplies.put(backup.playerUuid(), backup.inventoryState());
         }
         logger.atInfo().log("Restored Nexori inventory backup " + backup.transferId() + " for " + backup.playerUuid() + ".");
+    }
+
+    private void restoreBackupForActivePlayer(@Nonnull PlayerRef playerRef, @Nonnull InventoryTransferBackupRecord backup) {
+        boolean persisted = playerSaveRepository.applyInventoryState(backup.playerUuid(), backup.inventoryState());
+        Player player = playerRef.getComponent(Player.getComponentType());
+        if (player != null) {
+            inventorySnapshotService.applyToPlayer(player, backup.inventoryState());
+        } else if (!persisted) {
+            pendingRuntimeApplies.put(backup.playerUuid(), backup.inventoryState());
+        }
+        logger.atInfo().log("Claimed Nexori local inventory backup " + backup.transferId() + " for " + backup.playerUuid() + ".");
+    }
+
+    private static int occupiedVisibleSlots(@Nonnull InventoryTransferState state) {
+        return occupiedSlots(state.storage())
+            + occupiedSlots(state.armor())
+            + occupiedSlots(state.hotBar())
+            + occupiedSlots(state.utility())
+            + occupiedSlots(state.backpack());
+    }
+
+    private static int totalVisibleCapacity(@Nonnull InventoryTransferState state) {
+        return Math.max(state.storage().capacity(), 0)
+            + Math.max(state.armor().capacity(), 0)
+            + Math.max(state.hotBar().capacity(), 0)
+            + Math.max(state.utility().capacity(), 0)
+            + Math.max(state.backpack().capacity(), 0);
+    }
+
+    private static int occupiedSlots(@Nonnull ContainerTransferState container) {
+        return (int) container.items().values().stream()
+            .filter(item -> item != null && item.quantity() > 0)
+            .count();
     }
 
     private record PendingRecoveryQuery(
@@ -379,7 +544,14 @@ public final class InventoryTransferService {
     private record PendingRecoveryReturn(
         String originWorldName,
         Transform originTransform,
+        String selectedTransferId,
         String message
+    ) {
+    }
+
+    public record RecoveryStartResult(
+        boolean remoteTravelStarted,
+        @Nonnull String message
     ) {
     }
 

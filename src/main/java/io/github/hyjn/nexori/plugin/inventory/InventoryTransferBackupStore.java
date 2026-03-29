@@ -51,6 +51,11 @@ public final class InventoryTransferBackupStore {
             .toList();
     }
 
+    @Nonnull
+    public synchronized List<InventoryTransferBackupRecord> listAll() {
+        return new ArrayList<>(byTransferId.values());
+    }
+
     public synchronized boolean remove(@Nonnull String transferId) throws IOException {
         InventoryTransferBackupRecord removed = byTransferId.remove(transferId.trim().toLowerCase());
         flush();
