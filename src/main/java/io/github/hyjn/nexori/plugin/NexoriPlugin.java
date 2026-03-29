@@ -9,6 +9,7 @@ import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriBackupsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
@@ -16,6 +17,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalUnbindCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriRecoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriStartCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetAddCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
@@ -28,6 +30,11 @@ import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheSe
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
+import io.github.hyjn.nexori.plugin.inventory.InventorySnapshotService;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferBackupStore;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferReceiptStore;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
+import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalBreakSystem;
@@ -65,6 +72,7 @@ public class NexoriPlugin extends JavaPlugin {
     private TriggerBindingService triggerBindingService;
     private PortalInstanceService portalInstanceService;
     private SecureReferralService secureReferralService;
+    private InventoryTransferService inventoryTransferService;
     private SecureTravelService secureTravelService;
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private NexoriPortalInteractionService portalInteractionService;
@@ -122,12 +130,21 @@ public class NexoriPlugin extends JavaPlugin {
                 this.localIdentity,
                 this.trustBundleStore
             );
+            this.inventoryTransferService = new InventoryTransferService(
+                this.getLogger(),
+                new InventoryTransferBackupStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-backups.json")),
+                new InventoryTransferReceiptStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-receipts.json")),
+                new PlayerSaveRepository(this.getLogger()),
+                new InventorySnapshotService(),
+                this.secureReferralService
+            );
             this.secureTravelService = new SecureTravelService(
                 this.getLogger(),
                 this.localIdentity,
                 this.trustBundleStore,
                 this.destinationTargetService,
-                this.secureReferralService
+                this.secureReferralService,
+                this.inventoryTransferService
             );
             this.destinationTargetDiscoveryService = new DestinationTargetDiscoveryService(
                 this.getLogger(),
@@ -147,9 +164,12 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.secureTravelService);
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.responseHandler());
+            this.secureReferralService.registerHandler(this.inventoryTransferService.queryHandler());
+            this.secureReferralService.registerHandler(this.inventoryTransferService.replyHandler());
             this.portalInteractionService.registerPageSupplier();
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriBackupsCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
             this.getCommandRegistry().registerCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
             this.getCommandRegistry().registerCommand(new NexoriPortalGiveCommand(this));
@@ -157,6 +177,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
             this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));

@@ -22,7 +22,7 @@ The product direction is:
 
 ## What Exists Today
 
-Current `0.2.0` foundation:
+Current `0.3.0` foundation:
 
 - per-server identity generation with Ed25519
 - peer discovery and trust bootstrap
@@ -37,6 +37,13 @@ Current `0.2.0` foundation:
   - `NATURAL_SPAWN`
   - `COORDINATE`
   - `PORTAL`
+- trusted destination target discovery and caching on the origin server
+- configurable Nexori portal instances with local trigger bindings
+- first built-in travel profiles:
+  - `KEEP_INVENTORY`
+  - `CLEAR_INVENTORY`
+  - `APPLY_INVENTORY`
+- manual backup/recover flow for `APPLY_INVENTORY`
 
 ## Target For 1.0.0
 
@@ -90,12 +97,15 @@ That means `1.0.0` should include:
   - `COORDINATE`
   - `PORTAL`
 
-### `0.3.0` Trigger Bindings
+### `0.3.0` Portal Trigger Bindings And Travel Profiles
 
 - add trigger binding definitions
-- let owners link a command or local portal trigger to a remote destination target
+- let owners link a local portal trigger to a remote destination target
 - let trigger bindings select a built-in travel profile
 - add trusted destination target discovery and caching from the origin server
+- add configurable Nexori portal instances with admin-only management UI
+- add first built-in travel profiles for inventory-aware travel
+- add manual backup/recover flows for `APPLY_INVENTORY`
 
 ### `0.4.0` In-Game Owner UI
 
@@ -119,11 +129,11 @@ That means `1.0.0` should include:
 - protection against stale or replayed travel payloads
 - cleaner recovery/reset flows
 
-### `0.7.0` Inventory Travel Profiles
+### `0.7.0` Advanced Travel Profiles
 
-- secure inventory transfer payloads
-- return-to-origin or return-to-hub presets built from targets + trigger bindings
-- travel profiles that combine arrival + inventory rules
+- add richer secure inventory travel flows and edge-case polish
+- add return-to-origin or return-to-hub presets built from targets + trigger bindings
+- expand travel profiles that combine arrival + inventory rules
 
 ### `0.8.0` Owner Experience
 
@@ -165,7 +175,7 @@ Nexori should use semantic versioning with **three numbers only**:
 Examples:
 
 - `0.1.0`
-- `0.2.0`
+- `0.3.0`
 - `1.0.0`
 - `1.0.1`
 
@@ -210,10 +220,10 @@ Recommended workflow:
 
 Examples:
 
-- current milestone: `0.2.0`
-- next in-progress line after release: `0.2.1-SNAPSHOT` or `0.3.0-SNAPSHOT`
-- first bugfix after release: `0.2.1`
-- next feature milestone: `0.3.0`
+- current milestone: `0.3.0`
+- next in-progress line after release: `0.3.1-SNAPSHOT` or `0.4.0-SNAPSHOT`
+- first bugfix after release: `0.3.1`
+- next feature milestone: `0.4.0`
 
 ## Release Policy
 

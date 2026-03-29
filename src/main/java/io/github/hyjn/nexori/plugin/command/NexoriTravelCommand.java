@@ -13,6 +13,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 
 import javax.annotation.Nonnull;
@@ -53,7 +54,9 @@ public final class NexoriTravelCommand extends AbstractPlayerCommand {
                 ? context.get(targetIdArg)
                 : (context.provided(legacyRouteKeyArg) ? context.get(legacyRouteKeyArg) : "");
             String arrivalPoint = context.provided(entryPointArg) ? context.get(entryPointArg) : "";
-            String travelProfile = context.provided(travelProfileArg) ? context.get(travelProfileArg) : "";
+            String travelProfile = TravelProfileType.parse(
+                context.provided(travelProfileArg) ? context.get(travelProfileArg) : ""
+            ).id();
             secureTravelService.travel(playerRef, destination, targetId, arrivalPoint, travelProfile, "");
             context.sendMessage(Message.raw("Started secure Nexori travel to " + destination.connectionAddress() + "."));
         } catch (IllegalArgumentException exception) {

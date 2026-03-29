@@ -17,7 +17,10 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
@@ -44,6 +47,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final TrustBundleStore trustBundleStore;
     private final DestinationTargetService destinationTargetService;
     private final SecureReferralService secureReferralService;
+    private final InventoryTransferService inventoryTransferService;
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
 
     public SecureTravelService(
@@ -51,13 +55,15 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull ServerIdentity localIdentity,
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull DestinationTargetService destinationTargetService,
-        @Nonnull SecureReferralService secureReferralService
+        @Nonnull SecureReferralService secureReferralService,
+        @Nonnull InventoryTransferService inventoryTransferService
     ) {
         this.logger = logger;
         this.localIdentity = localIdentity;
         this.trustBundleStore = trustBundleStore;
         this.destinationTargetService = destinationTargetService;
         this.secureReferralService = secureReferralService;
+        this.inventoryTransferService = inventoryTransferService;
     }
 
     @Nonnull
@@ -82,16 +88,40 @@ public final class SecureTravelService implements SecureReferralHandler {
             throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
         }
 
+        TravelProfileType profileType = TravelProfileType.parse(travelProfileId);
+        InventoryTransferState inventoryState = null;
+        String inventoryTransferId = "";
+        if (profileType == TravelProfileType.APPLY_INVENTORY) {
+            inventoryState = inventoryTransferService.captureCurrentInventory(playerRef);
+            inventoryTransferId = UUID.randomUUID().toString();
+        }
+
         SecureTravelPayload payload = new SecureTravelPayload(
             localIdentity.serverId().toString(),
             "",
             destinationTargetId,
             arrivalPointId,
-            travelProfileId,
+            profileType.id(),
             "Secure travel accepted from " + localIdentity.serverId() + ".",
-            contextJson
+            contextJson == null || contextJson.isBlank() ? "{}" : contextJson,
+            inventoryTransferId,
+            inventoryState
         );
-        secureReferralService.referPlayer(playerRef, destination.host(), destination.port(), PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
+        byte[] encodedPayload = secureReferralService.createPayload(playerRef, PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
+
+        if (profileType == TravelProfileType.APPLY_INVENTORY && inventoryState != null) {
+            inventoryTransferService.saveOriginBackup(
+                inventoryTransferId,
+                playerRef,
+                destination.connectionAddress(),
+                destinationTargetId,
+                profileType.id(),
+                inventoryState
+            );
+            inventoryTransferService.clearOriginInventory(playerRef, inventoryState);
+        }
+
+        playerRef.referToServer(destination.host(), destination.port(), encodedPayload);
     }
 
     @Override
@@ -101,6 +131,23 @@ public final class SecureTravelService implements SecureReferralHandler {
         if (resolvedTarget == null) {
             event.setCancelled(true);
             event.setReason(Message.raw("This Nexori destination target is not configured on the destination server: " + payload.destinationTargetId()));
+            return;
+        }
+
+        TravelProfileType profileType;
+        try {
+            profileType = TravelProfileType.parse(payload.travelProfileId());
+            inventoryTransferService.prepareInboundArrival(
+                event.getUuid(),
+                profileType,
+                payload.inventoryTransferId(),
+                payload.inventoryState(),
+                payload.sourceServerId(),
+                payload.sourceConnectionAddress()
+            );
+        } catch (IllegalArgumentException | IOException exception) {
+            event.setCancelled(true);
+            event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
             return;
         }
 
@@ -114,7 +161,7 @@ public final class SecureTravelService implements SecureReferralHandler {
             resolvedTarget.definition().kind().name(),
             resolvedTarget.effectiveWorldName(),
             resolvedTarget.effectiveArrivalPointId(),
-            payload.travelProfileId(),
+            profileType.id(),
             arrivalMessage,
             payload.contextJson(),
             resolvedTarget.definition().metadataJson()
@@ -132,6 +179,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         if (event.getPlayerRef() == null) {
             return;
         }
+        inventoryTransferService.handlePlayerConnect(event);
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -145,11 +193,13 @@ public final class SecureTravelService implements SecureReferralHandler {
 
         PendingArrival arrival = pendingArrivals.remove(playerRef.getUuid());
         if (arrival == null) {
+            inventoryTransferService.handlePlayerReady(event);
             return;
         }
 
         applyArrivalTeleport(event, playerRef, arrival);
         event.getPlayer().sendMessage(Message.raw(buildArrivalMessage(arrival)));
+        inventoryTransferService.handlePlayerReady(event);
     }
 
     private void applyArrivalTeleport(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {

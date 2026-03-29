@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.travel;
 
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
+
 public record SecureTravelPayload(
     String sourceServerId,
     String sourceConnectionAddress,
@@ -7,6 +9,8 @@ public record SecureTravelPayload(
     String arrivalPointId,
     String travelProfileId,
     String arrivalMessage,
-    String contextJson
+    String contextJson,
+    String inventoryTransferId,
+    InventoryTransferState inventoryState
 ) {
 }

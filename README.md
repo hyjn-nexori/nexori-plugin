@@ -20,6 +20,11 @@ This repository currently contains the first usable slice of the plugin:
 - a lightweight peer manager UI based on custom pages
 - bootstrap travel that collects public keys, gets a signed proof from each peer,
   and installs the verified trust bundle across enrolled servers
+- destination targets stored on the destination server
+- trusted destination target discovery and caching on the origin server
+- configurable Nexori portals with secure trigger bindings
+- built-in travel profiles for keeping, clearing, or applying inventory
+- manual backup/recover commands for `APPLY_INVENTORY`
 
 ## Current Commands
 
@@ -39,15 +44,29 @@ Use these in game:
 /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>
 /nexoritargetshow <targetId>
 /nexoritargetremove <targetId>
+/nexoridiscover <host:port>
+/nexoridiscovered [host:port]
+/nexoriportalgive
+/nexoriportallist
+/nexoriportalshow <portalId>
+/nexoriportalbind <portalId> <host:port> <targetId> [--travelProfile=<id>]
+/nexoriportalunbind <portalId>
+/nexoribackups
+/nexorirecover <transferId>
 /nexorimenu
 ```
 
 Saved data currently lives under the plugin data directory:
 
 - `config/configured-peers.json`
+- `config/discovered-destination-targets.json`
 - `config/destination-targets.json`
+- `config/portal-instances.json`
+- `config/trigger-bindings.json`
 - `state/bootstrap-state.properties`
 - `state/bootstrap-run.json`
+- `state/inventory-transfer-backups.json`
+- `state/inventory-transfer-receipts.json`
 - `state/trust-bundle.json`
 - `identity/*`
 
@@ -76,13 +95,13 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.2.0`.
+The current committed milestone is `0.3.0`.
 
-- `0.2.x` is for fixes and stability on the first destination target system
-- `0.3.0` is planned for the first trigger binding system
+- `0.3.x` is for fixes and stability on trigger bindings, discovery, and travel profiles
+- `0.4.0` is planned for the first guided in-game owner setup UI
 - `1.0.0` is the target for the first non-coder-friendly adventure network kit
 
-The next active development line after this release is `0.3.0-SNAPSHOT`.
+The next active development line after this release is `0.4.0-SNAPSHOT`.
 
 ## Secure Referrals
 
@@ -94,11 +113,11 @@ travel after bootstrap.
 - the payload type is explicit so future protocols can reuse the same envelope
 - the first payload type implemented is `travel.direct`
 
-This is the foundation for future portal, return, and inventory
-protocols without redesigning the security model.
+This is now the foundation for destination targets, portals, discovery, and
+inventory-aware travel profiles without redesigning the security model.
 
-The next milestone is building higher-level tools such as portals, spawns, and
-return flows on top of these secure referrals.
+The next milestone is polishing the no-code owner setup flow on top of these
+secure referrals.
 
 ## Development Notes
 

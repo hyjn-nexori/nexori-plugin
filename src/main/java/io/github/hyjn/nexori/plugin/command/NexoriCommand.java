@@ -84,6 +84,9 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportalshow <portalId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalbind <portalId> <host:port> <targetId> [travelProfile]"));
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
+        ctx.sendMessage(Message.raw("- /nexoribackups"));
+        ctx.sendMessage(Message.raw("- /nexorirecover <transferId>"));
+        ctx.sendMessage(Message.raw("  Travel profiles: KEEP_INVENTORY, CLEAR_INVENTORY, APPLY_INVENTORY"));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
     }
 

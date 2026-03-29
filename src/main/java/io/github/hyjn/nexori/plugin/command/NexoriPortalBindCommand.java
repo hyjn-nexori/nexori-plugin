@@ -11,6 +11,7 @@ import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -59,11 +60,12 @@ public final class NexoriPortalBindCommand extends CommandBase {
                 portalId,
                 context.get(destinationArg),
                 context.get(targetIdArg),
-                context.provided(travelProfileArg) ? context.get(travelProfileArg) : "",
+                TravelProfileType.parse(context.provided(travelProfileArg) ? context.get(travelProfileArg) : "").id(),
                 "{}"
             );
             context.sendMessage(Message.raw("Bound portal " + portalId + " to "
-                + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId() + "."));
+                + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()
+                + " with profile " + binding.travelProfileId() + "."));
         } catch (IOException | IllegalArgumentException exception) {
             context.sendMessage(Message.raw("Failed to bind the Nexori portal: " + exception.getMessage()));
         }
