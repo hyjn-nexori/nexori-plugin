@@ -1,0 +1,194 @@
+$C = "../../Common.ui";
+$T = "NexoriTheme.ui";
+
+$C.@PageOverlay {}
+
+$C.@Container {
+  Anchor: (Width: 1320, Height: 760);
+
+  #Title {
+    Group {
+      $C.@Title {
+        @Text = "NEXORI PORTAL";
+      }
+
+      Group {
+        LayoutMode: Top;
+
+        Label {
+          Text: "Admin-only portal details and trigger binding status.";
+          Style: (TextColor: $T.@BodyText);
+        }
+      }
+    }
+  }
+
+  #Content {
+    LayoutMode: Top;
+    Padding: (Full: 14);
+
+    Group {
+      Padding: (Full: 16);
+      Background: $T.@MenuPanelBg;
+      LayoutMode: Top;
+
+      Label #PortalSummaryText {
+        Text: "Portal summary";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group {
+        Anchor: (Height: 8);
+      }
+
+      Label #PortalLocationText {
+        Text: "default @ (0, 0, 0)";
+        Style: (TextColor: $T.@PrimaryText);
+      }
+
+      Group {
+        Anchor: (Height: 14);
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Portal ID:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #PortalIdText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group {
+        Anchor: (Height: 6);
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Local Target:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #PortalTargetText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group {
+        Anchor: (Height: 6);
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Enabled:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #PortalEnabledText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group {
+        Anchor: (Height: 14);
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Collision Binding:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #PortalBindingText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group {
+        Anchor: (Height: 6);
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Travel Profile:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #PortalTravelProfileText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group {
+        Anchor: (Height: 18);
+      }
+
+      Label #PortalHelpText {
+        Text: "";
+        Style: (TextColor: $T.@MutedText);
+      }
+
+      Group {
+        Anchor: (Height: 18);
+      }
+
+      Button #TogglePortalButton {
+        Anchor: (Width: 180);
+        Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+        Background: $T.@TabActiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label #TogglePortalButtonLabel {
+          Text: "Toggle Portal";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+    }
+  }
+}
+
+$C.@BackButton {}

@@ -5,9 +5,17 @@ import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapRunStore;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapStateStore;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalShowCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalUnbindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriStartCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetAddCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
@@ -22,6 +30,11 @@ import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
+import io.github.hyjn.nexori.plugin.portal.NexoriPortalBreakSystem;
+import io.github.hyjn.nexori.plugin.portal.NexoriPortalInteractionService;
+import io.github.hyjn.nexori.plugin.portal.NexoriPortalPlaceSystem;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceStore;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefaults;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
@@ -49,9 +62,12 @@ public class NexoriPlugin extends JavaPlugin {
     private TrustBundleStore trustBundleStore;
     private DestinationTargetService destinationTargetService;
     private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
+    private TriggerBindingService triggerBindingService;
+    private PortalInstanceService portalInstanceService;
     private SecureReferralService secureReferralService;
     private SecureTravelService secureTravelService;
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
+    private NexoriPortalInteractionService portalInteractionService;
     private ServerIdentity localIdentity;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -62,6 +78,7 @@ public class NexoriPlugin extends JavaPlugin {
     protected void setup() {
         try {
             Files.createDirectories(this.getDataDirectory());
+            PluginAssetPackRegistrar.registerSelfAsAssetPack(this);
 
             this.identityManager = new ServerIdentityManager(this.getDataDirectory().resolve("identity"));
             this.localIdentity = this.identityManager.loadOrCreate();
@@ -76,6 +93,14 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
                 new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
+            );
+            this.triggerBindingService = new TriggerBindingService(
+                new TriggerBindingStore(this.getDataDirectory().resolve("config").resolve("trigger-bindings.json"))
+            );
+            this.portalInstanceService = new PortalInstanceService(
+                new PortalInstanceStore(this.getDataDirectory().resolve("config").resolve("portal-instances.json")),
+                this.destinationTargetService,
+                this.triggerBindingService
             );
             new DestinationTargetDefaults(this.getDataDirectory(), this.destinationTargetService).ensureDefaults(this.getLogger());
             this.trustBundleStore = new TrustBundleStore(this.getDataDirectory().resolve("state").resolve("trust-bundle.json"));
@@ -111,13 +136,27 @@ public class NexoriPlugin extends JavaPlugin {
                 this.discoveredDestinationTargetCacheService,
                 this.secureReferralService
             );
+            this.portalInteractionService = new NexoriPortalInteractionService(
+                this,
+                this.getLogger(),
+                this.portalInstanceService,
+                this.triggerBindingService,
+                this.secureTravelService,
+                this.getBasePermission() + ".admin"
+            );
             this.secureReferralService.registerHandler(this.secureTravelService);
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.responseHandler());
+            this.portalInteractionService.registerPageSupplier();
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
             this.getCommandRegistry().registerCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalGiveCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriPortalListCommand(this.portalInstanceService, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
             this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));
@@ -132,6 +171,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
+            this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
+            this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
 
             this.getLogger().atInfo().log(
                 "Nexori ready. serverId=" + this.localIdentity.serverId()
@@ -139,6 +180,7 @@ public class NexoriPlugin extends JavaPlugin {
                     + " bootstrapOpen=" + bootstrapState.hasActiveSession()
                     + " configuredPeers=" + this.configuredPeerService.list().size()
                     + " destinationTargets=" + this.destinationTargetService.size()
+                    + " portals=" + this.portalInstanceService.list().size()
             );
         } catch (IOException | GeneralSecurityException exception) {
             throw new IllegalStateException("Failed to initialize Nexori plugin", exception);
@@ -179,5 +221,13 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiscoveredDestinationTargetCacheService getDiscoveredDestinationTargetCacheService() {
         return discoveredDestinationTargetCacheService;
+    }
+
+    public TriggerBindingService getTriggerBindingService() {
+        return triggerBindingService;
+    }
+
+    public PortalInstanceService getPortalInstanceService() {
+        return portalInstanceService;
     }
 }

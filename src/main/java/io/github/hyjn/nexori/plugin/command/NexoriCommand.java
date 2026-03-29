@@ -79,6 +79,11 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("  COORDINATE and PORTAL use your current position and look direction."));
         ctx.sendMessage(Message.raw("- /nexoritargetshow <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoritargetremove <targetId>"));
+        ctx.sendMessage(Message.raw("- /nexoriportalgive [amount]"));
+        ctx.sendMessage(Message.raw("- /nexoriportallist"));
+        ctx.sendMessage(Message.raw("- /nexoriportalshow <portalId>"));
+        ctx.sendMessage(Message.raw("- /nexoriportalbind <portalId> <host:port> <targetId> [travelProfile]"));
+        ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
     }
 
