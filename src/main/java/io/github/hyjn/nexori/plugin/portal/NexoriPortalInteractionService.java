@@ -15,7 +15,10 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.access.NexoriAdminAccess;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
+import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
+import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriPortalPage;
 
@@ -36,6 +39,9 @@ public final class NexoriPortalInteractionService {
     private final HytaleLogger logger;
     private final PortalInstanceService portalInstanceService;
     private final TriggerBindingService triggerBindingService;
+    private final ConfiguredPeerService configuredPeerService;
+    private final DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
+    private final DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private final SecureTravelService secureTravelService;
     private final String adminPermission;
     private final Map<UUID, Long> lastCollisionHandledAtByPlayer = new ConcurrentHashMap<>();
@@ -45,6 +51,9 @@ public final class NexoriPortalInteractionService {
         @Nonnull HytaleLogger logger,
         @Nonnull PortalInstanceService portalInstanceService,
         @Nonnull TriggerBindingService triggerBindingService,
+        @Nonnull ConfiguredPeerService configuredPeerService,
+        @Nonnull DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService,
+        @Nonnull DestinationTargetDiscoveryService destinationTargetDiscoveryService,
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull String adminPermission
     ) {
@@ -52,6 +61,9 @@ public final class NexoriPortalInteractionService {
         this.logger = logger;
         this.portalInstanceService = portalInstanceService;
         this.triggerBindingService = triggerBindingService;
+        this.configuredPeerService = configuredPeerService;
+        this.discoveredDestinationTargetCacheService = discoveredDestinationTargetCacheService;
+        this.destinationTargetDiscoveryService = destinationTargetDiscoveryService;
         this.secureTravelService = secureTravelService;
         this.adminPermission = adminPermission;
     }
@@ -104,9 +116,17 @@ public final class NexoriPortalInteractionService {
             playerRef,
             portalInstanceService,
             triggerBindingService,
+            configuredPeerService,
+            discoveredDestinationTargetCacheService,
+            destinationTargetDiscoveryService,
             player.getWorld().getName(),
             blockPosition,
-            portal.orElse(null)
+            portal.orElse(null),
+            0,
+            "",
+            "",
+            "",
+            ""
         );
     }
 

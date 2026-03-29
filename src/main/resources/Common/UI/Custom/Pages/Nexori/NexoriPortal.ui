@@ -16,7 +16,7 @@ $C.@Container {
         LayoutMode: Top;
 
         Label {
-          Text: "Admin-only portal details and trigger binding status.";
+          Text: "Admin-only wizard for portal setup and secure trigger binding.";
           Style: (TextColor: $T.@BodyText);
         }
       }
@@ -37,154 +37,311 @@ $C.@Container {
         Style: (RenderBold: true, TextColor: $T.@StrongText);
       }
 
-      Group {
-        Anchor: (Height: 8);
-      }
+      Group { Anchor: (Height: 8); }
 
       Label #PortalLocationText {
         Text: "default @ (0, 0, 0)";
         Style: (TextColor: $T.@PrimaryText);
       }
 
-      Group {
-        Anchor: (Height: 14);
-      }
+      Group { Anchor: (Height: 8); }
 
-      Group {
-        LayoutMode: Left;
-
-        Label {
-          Text: "Portal ID:";
-          Style: (RenderBold: true, TextColor: $T.@StrongText);
-        }
-
-        Group {
-          Anchor: (Width: 8);
-        }
-
-        Label #PortalIdText {
-          Text: "";
-          Style: (TextColor: $T.@PrimaryText);
-        }
-      }
-
-      Group {
-        Anchor: (Height: 6);
-      }
-
-      Group {
-        LayoutMode: Left;
-
-        Label {
-          Text: "Local Target:";
-          Style: (RenderBold: true, TextColor: $T.@StrongText);
-        }
-
-        Group {
-          Anchor: (Width: 8);
-        }
-
-        Label #PortalTargetText {
-          Text: "";
-          Style: (TextColor: $T.@PrimaryText);
-        }
-      }
-
-      Group {
-        Anchor: (Height: 6);
-      }
-
-      Group {
-        LayoutMode: Left;
-
-        Label {
-          Text: "Enabled:";
-          Style: (RenderBold: true, TextColor: $T.@StrongText);
-        }
-
-        Group {
-          Anchor: (Width: 8);
-        }
-
-        Label #PortalEnabledText {
-          Text: "";
-          Style: (TextColor: $T.@PrimaryText);
-        }
-      }
-
-      Group {
-        Anchor: (Height: 14);
-      }
-
-      Group {
-        LayoutMode: Left;
-
-        Label {
-          Text: "Collision Binding:";
-          Style: (RenderBold: true, TextColor: $T.@StrongText);
-        }
-
-        Group {
-          Anchor: (Width: 8);
-        }
-
-        Label #PortalBindingText {
-          Text: "";
-          Style: (TextColor: $T.@PrimaryText);
-        }
-      }
-
-      Group {
-        Anchor: (Height: 6);
-      }
-
-      Group {
-        LayoutMode: Left;
-
-        Label {
-          Text: "Travel Profile:";
-          Style: (RenderBold: true, TextColor: $T.@StrongText);
-        }
-
-        Group {
-          Anchor: (Width: 8);
-        }
-
-        Label #PortalTravelProfileText {
-          Text: "";
-          Style: (TextColor: $T.@PrimaryText);
-        }
-      }
-
-      Group {
-        Anchor: (Height: 18);
-      }
-
-      Label #PortalHelpText {
+      Label #StatusText {
         Text: "";
-        Style: (TextColor: $T.@MutedText);
+        Visible: false;
+        Style: (TextColor: $T.@BodyText);
       }
+
+      Group { Anchor: (Height: 14); }
 
       Group {
-        Anchor: (Height: 18);
+        LayoutMode: Left;
+
+        Label #StepProgressText {
+          Text: "Step 1 of 4";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Width: 10); }
+
+        Label #StepTitleText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
       }
 
-      Button #TogglePortalButton {
-        Anchor: (Width: 180);
-        Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
-        Background: $T.@TabActiveBg;
-        Style: (
-          Hovered: (
-            Background: $T.@ActionHoverBg,
-          ),
-          Pressed: (
-            Background: $T.@ActionPressedBg,
-          )
-        );
+      Group { Anchor: (Height: 18); }
 
-        Label #TogglePortalButtonLabel {
-          Text: "Toggle Portal";
+      Group #ServerStep {
+        LayoutMode: Top;
+
+        Label {
+          Text: "Destination Server";
           Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Height: 8); }
+
+        Label #SelectedDestinationText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Label #SelectedDestinationMetaText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+
+        Group { Anchor: (Height: 14); }
+
+        Group {
+          LayoutMode: Left;
+
+          Button #DestinationPrevButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabInactiveBg;
+            Label { Text: "Prev"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #DestinationNextButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabActiveBg;
+            Label { Text: "Next"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+        }
+      }
+
+      Group #TargetStep {
+        LayoutMode: Top;
+        Visible: false;
+
+        Label {
+          Text: "Remote Destination Target";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Height: 8); }
+
+        Label #SelectedTargetText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Label #SelectedTargetMetaText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Label #DiscoveryStateText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+
+        Group { Anchor: (Height: 14); }
+
+        Group {
+          LayoutMode: Left;
+
+          Button #DiscoverButton {
+            Anchor: (Width: 178);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabActiveBg;
+            Label { Text: "Discover Targets"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #TargetPrevButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabInactiveBg;
+            Label { Text: "Prev"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #TargetNextButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabActiveBg;
+            Label { Text: "Next"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+        }
+      }
+
+      Group #ProfileStep {
+        LayoutMode: Top;
+        Visible: false;
+
+        Label {
+          Text: "Travel Profile";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Height: 8); }
+
+        Label #SelectedProfileText {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Label #SelectedProfileMetaText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+
+        Group { Anchor: (Height: 14); }
+
+        Group {
+          LayoutMode: Left;
+
+          Button #ProfilePrevButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabInactiveBg;
+            Label { Text: "Prev"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #ProfileNextButton {
+            Anchor: (Width: 88);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabActiveBg;
+            Label { Text: "Next"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+        }
+      }
+
+      Group #ReviewStep {
+        LayoutMode: Top;
+        Visible: false;
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Portal ID:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #PortalIdText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Local Target:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #PortalTargetText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Enabled:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #PortalEnabledText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 12); }
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Destination:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #ReviewDestinationText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Target:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #ReviewTargetText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Travel Profile:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #ReviewProfileText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
+        Label #ReviewBindingStateText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+
+        Group { Anchor: (Height: 16); }
+
+        Group {
+          LayoutMode: Left;
+
+          Button #BindPortalButton {
+            Anchor: (Width: 150);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabActiveBg;
+            Label { Text: "Save Binding"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #ClearBindingButton {
+            Anchor: (Width: 146);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@DangerBg;
+            Label { Text: "Clear Binding"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          }
+
+          Group { Anchor: (Width: 8); }
+
+          Button #TogglePortalButton {
+            Anchor: (Width: 170);
+            Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+            Background: $T.@TabInactiveBg;
+            Label #TogglePortalButtonLabel {
+              Text: "Toggle Portal";
+              Style: (RenderBold: true, TextColor: $T.@StrongText);
+            }
+          }
+        }
+      }
+
+      Group { Anchor: (Height: 18); }
+
+      Group {
+        LayoutMode: Left;
+
+        Button #PrevStepButton {
+          Anchor: (Width: 104);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabInactiveBg;
+          Label { Text: "Back"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Button #NextStepButton {
+          Anchor: (Width: 104);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabActiveBg;
+          Label { Text: "Next"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
         }
       }
     }

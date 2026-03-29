@@ -74,6 +74,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoridiscover <host:port>"));
         ctx.sendMessage(Message.raw("- /nexoridiscovered [host:port]"));
         ctx.sendMessage(Message.raw("- /nexoritarget"));
+        ctx.sendMessage(Message.raw("- /nexoritargetwizard"));
         ctx.sendMessage(Message.raw("- /nexoritargetlist"));
         ctx.sendMessage(Message.raw("- /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>"));
         ctx.sendMessage(Message.raw("  COORDINATE and PORTAL use your current position and look direction."));

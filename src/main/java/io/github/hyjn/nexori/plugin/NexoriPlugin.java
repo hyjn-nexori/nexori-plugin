@@ -24,6 +24,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetRemoveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriTargetWizardCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
@@ -158,6 +159,9 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 this.portalInstanceService,
                 this.triggerBindingService,
+                this.configuredPeerService,
+                this.discoveredDestinationTargetCacheService,
+                this.destinationTargetDiscoveryService,
                 this.secureTravelService,
                 this.getBasePermission() + ".admin"
             );
@@ -181,6 +185,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
             this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriTargetWizardCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetAddCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetRemoveCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriStartCommand(this.bootstrapCoordinator, this.getBasePermission() + ".admin"));

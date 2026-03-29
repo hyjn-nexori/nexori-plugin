@@ -4,19 +4,37 @@ import javax.annotation.Nonnull;
 import java.util.Locale;
 
 public enum TravelProfileType {
-    KEEP_INVENTORY("keep_inventory"),
-    CLEAR_INVENTORY("clear_inventory"),
-    APPLY_INVENTORY("apply_inventory");
+    KEEP_INVENTORY("keep_inventory", "Keep Inventory", "Use the inventory that already exists on the destination server."),
+    CLEAR_INVENTORY("clear_inventory", "Clear Inventory", "Clear the destination inventory before the player fully loads."),
+    APPLY_INVENTORY("apply_inventory", "Apply Inventory", "Move the origin inventory into the destination server with backup and recover support.");
 
     private final String id;
+    private final String displayName;
+    private final String description;
 
-    TravelProfileType(@Nonnull String id) {
+    TravelProfileType(
+        @Nonnull String id,
+        @Nonnull String displayName,
+        @Nonnull String description
+    ) {
         this.id = id;
+        this.displayName = displayName;
+        this.description = description;
     }
 
     @Nonnull
     public String id() {
         return id;
+    }
+
+    @Nonnull
+    public String displayName() {
+        return displayName;
+    }
+
+    @Nonnull
+    public String description() {
+        return description;
     }
 
     @Nonnull
