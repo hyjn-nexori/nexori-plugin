@@ -95,6 +95,7 @@ That means `1.0.0` should include:
 - add trigger binding definitions
 - let owners link a command or local portal trigger to a remote destination target
 - let trigger bindings select a built-in travel profile
+- add trusted destination target discovery and caching from the origin server
 
 ### `0.4.0` In-Game Owner UI
 

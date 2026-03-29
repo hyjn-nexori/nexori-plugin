@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SecureReferralService {
@@ -72,13 +73,24 @@ public final class SecureReferralService {
         @Nonnull Object payload,
         @Nonnull Duration ttl
     ) throws IOException, GeneralSecurityException {
+        return createPayload(playerRef.getUuid(), playerRef.getUsername(), payloadType, payload, ttl);
+    }
+
+    @Nonnull
+    public byte[] createPayload(
+        @Nonnull UUID playerUuid,
+        @Nonnull String playerUsername,
+        @Nonnull String payloadType,
+        @Nonnull Object payload,
+        @Nonnull Duration ttl
+    ) throws IOException, GeneralSecurityException {
         long issuedAt = System.currentTimeMillis();
         String payloadJson = gson.toJson(payload);
         SecureReferralEnvelope unsignedEnvelope = SecureReferralEnvelope.unsigned(
             payloadType,
             localIdentity.serverId(),
-            playerRef.getUuid(),
-            playerRef.getUsername(),
+            playerUuid,
+            playerUsername,
             issuedAt,
             issuedAt + ttl.toMillis(),
             payloadJson

@@ -71,6 +71,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexori close"));
         ctx.sendMessage(Message.raw("- /nexoristart"));
         ctx.sendMessage(Message.raw("- /nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]"));
+        ctx.sendMessage(Message.raw("- /nexoridiscover <host:port>"));
+        ctx.sendMessage(Message.raw("- /nexoridiscovered [host:port]"));
         ctx.sendMessage(Message.raw("- /nexoritarget"));
         ctx.sendMessage(Message.raw("- /nexoritargetlist"));
         ctx.sendMessage(Message.raw("- /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>"));

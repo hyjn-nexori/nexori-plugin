@@ -6,6 +6,8 @@ import io.github.hyjn.nexori.plugin.bootstrap.BootstrapRunStore;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapStateStore;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriStartCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetAddCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
@@ -13,6 +15,9 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetRemoveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
+import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
+import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
+import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
@@ -43,8 +48,10 @@ public class NexoriPlugin extends JavaPlugin {
     private BootstrapCoordinator bootstrapCoordinator;
     private TrustBundleStore trustBundleStore;
     private DestinationTargetService destinationTargetService;
+    private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private SecureReferralService secureReferralService;
     private SecureTravelService secureTravelService;
+    private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private ServerIdentity localIdentity;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -66,6 +73,9 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.destinationTargetService = new DestinationTargetService(
                 new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json"))
+            );
+            this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
+                new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
             );
             new DestinationTargetDefaults(this.getDataDirectory(), this.destinationTargetService).ensureDefaults(this.getLogger());
             this.trustBundleStore = new TrustBundleStore(this.getDataDirectory().resolve("state").resolve("trust-bundle.json"));
@@ -94,9 +104,20 @@ public class NexoriPlugin extends JavaPlugin {
                 this.destinationTargetService,
                 this.secureReferralService
             );
+            this.destinationTargetDiscoveryService = new DestinationTargetDiscoveryService(
+                this.getLogger(),
+                this.trustBundleStore,
+                this.destinationTargetService,
+                this.discoveredDestinationTargetCacheService,
+                this.secureReferralService
+            );
             this.secureReferralService.registerHandler(this.secureTravelService);
+            this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
+            this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.responseHandler());
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
+            this.getCommandRegistry().registerCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
             this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));
@@ -110,6 +131,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
 
             this.getLogger().atInfo().log(
                 "Nexori ready. serverId=" + this.localIdentity.serverId()
@@ -153,5 +175,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DestinationTargetService getDestinationTargetService() {
         return destinationTargetService;
+    }
+
+    public DiscoveredDestinationTargetCacheService getDiscoveredDestinationTargetCacheService() {
+        return discoveredDestinationTargetCacheService;
     }
 }
