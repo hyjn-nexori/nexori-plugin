@@ -65,6 +65,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
     private final ConfiguredPeerService configuredPeerService;
     private final DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private final DestinationTargetDiscoveryService destinationTargetDiscoveryService;
+    private final PortalSetupDraftService portalSetupDraftService;
     private final String worldName;
     private final Vector3i blockPosition;
     private final String portalId;
@@ -81,6 +82,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull ConfiguredPeerService configuredPeerService,
         @Nonnull DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService,
         @Nonnull DestinationTargetDiscoveryService destinationTargetDiscoveryService,
+        @Nonnull PortalSetupDraftService portalSetupDraftService,
         @Nonnull String worldName,
         @Nonnull Vector3i blockPosition,
         String portalId,
@@ -97,6 +99,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         this.configuredPeerService = configuredPeerService;
         this.discoveredDestinationTargetCacheService = discoveredDestinationTargetCacheService;
         this.destinationTargetDiscoveryService = destinationTargetDiscoveryService;
+        this.portalSetupDraftService = portalSetupDraftService;
         this.worldName = worldName;
         this.blockPosition = blockPosition.clone();
         this.portalId = safe(portalId).trim().toLowerCase();
@@ -115,6 +118,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull ConfiguredPeerService configuredPeerService,
         @Nonnull DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService,
         @Nonnull DestinationTargetDiscoveryService destinationTargetDiscoveryService,
+        @Nonnull PortalSetupDraftService portalSetupDraftService,
         @Nonnull String worldName,
         @Nonnull Vector3i blockPosition,
         PortalInstanceDefinition portal,
@@ -131,6 +135,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             configuredPeerService,
             discoveredDestinationTargetCacheService,
             destinationTargetDiscoveryService,
+            portalSetupDraftService,
             worldName,
             blockPosition,
             portal == null ? "" : portal.portalId(),
@@ -152,6 +157,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull ConfiguredPeerService configuredPeerService,
         @Nonnull DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService,
         @Nonnull DestinationTargetDiscoveryService destinationTargetDiscoveryService,
+        @Nonnull PortalSetupDraftService portalSetupDraftService,
         @Nonnull String worldName,
         @Nonnull Vector3i blockPosition,
         PortalInstanceDefinition portal,
@@ -176,6 +182,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                 configuredPeerService,
                 discoveredDestinationTargetCacheService,
                 destinationTargetDiscoveryService,
+                portalSetupDraftService,
                 worldName,
                 blockPosition,
                 portal,
@@ -339,12 +346,40 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                         reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "Select a destination server first.");
                         return;
                     }
+                    PortalInstanceDefinition resolvedPortal = portal.orElse(null);
+                    saveDraft(resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id());
                     Transform transform = captureCurrentTransform(store, ref);
                     destinationTargetDiscoveryService.discover(
                         playerRef,
                         ConfiguredPeer.parse(effectiveDestinationAddress),
                         player.getWorld().getName(),
-                        transform
+                        transform,
+                        (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> {
+                            PortalSetupDraft resumeDraft = resolvedPortal == null
+                                ? new PortalSetupDraft("", stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id())
+                                : portalSetupDraftService.find(resumePlayerRef.getUuid(), resolvedPortal.portalId())
+                                    .orElse(new PortalSetupDraft(resolvedPortal.portalId(), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id()));
+                            NexoriPortalPage.open(
+                                resumeRef,
+                                resumeStore,
+                                resumePlayerRef,
+                                resumePlayer,
+                                portalInstanceService,
+                                triggerBindingService,
+                                configuredPeerService,
+                                discoveredDestinationTargetCacheService,
+                                destinationTargetDiscoveryService,
+                                portalSetupDraftService,
+                                worldName,
+                                blockPosition,
+                                resolvedPortal,
+                                resumeDraft.stepIndex(),
+                                resumeDraft.selectedDestinationAddress(),
+                                resumeDraft.selectedTargetId(),
+                                resumeDraft.selectedTravelProfileId(),
+                                "Destination targets refreshed from " + effectiveDestinationAddress + "."
+                            );
+                        }
                     );
                     player.sendMessage(Message.raw("Nexori is discovering destination targets from " + effectiveDestinationAddress + "..."));
                 }
@@ -456,6 +491,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull String selectedTravelProfileId,
         @Nonnull String statusText
     ) {
+        saveDraft(portal, stepIndex, selectedDestinationAddress, selectedTargetId, selectedTravelProfileId);
         open(
             ref,
             store,
@@ -466,6 +502,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             configuredPeerService,
             discoveredDestinationTargetCacheService,
             destinationTargetDiscoveryService,
+            portalSetupDraftService,
             worldName,
             blockPosition,
             portal,
@@ -474,6 +511,28 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             selectedTargetId,
             selectedTravelProfileId,
             statusText
+        );
+    }
+
+    private void saveDraft(
+        PortalInstanceDefinition portal,
+        int stepIndex,
+        @Nonnull String selectedDestinationAddress,
+        @Nonnull String selectedTargetId,
+        @Nonnull String selectedTravelProfileId
+    ) {
+        if (portal == null) {
+            return;
+        }
+        portalSetupDraftService.save(
+            playerRef.getUuid(),
+            new PortalSetupDraft(
+                portal.portalId(),
+                stepIndex,
+                selectedDestinationAddress,
+                selectedTargetId,
+                selectedTravelProfileId
+            )
         );
     }
 

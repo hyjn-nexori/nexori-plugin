@@ -17,7 +17,6 @@ import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
-import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
 
 import javax.annotation.Nonnull;
@@ -80,6 +79,16 @@ public final class DestinationTargetDiscoveryService {
         @Nonnull String originWorldName,
         @Nonnull Transform originTransform
     ) throws IOException, GeneralSecurityException {
+        discover(playerRef, destination, originWorldName, originTransform, null);
+    }
+
+    public void discover(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        UiResumeAction resumeAction
+    ) throws IOException, GeneralSecurityException {
         if (!isTrustedDestination(destination)) {
             throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
         }
@@ -91,7 +100,8 @@ public final class DestinationTargetDiscoveryService {
             destination.connectionAddress(),
             originWorldName,
             originTransform.clone(),
-            Instant.now().plusSeconds(30).toEpochMilli()
+            Instant.now().plusSeconds(30).toEpochMilli(),
+            resumeAction
         ));
 
         secureReferralService.referPlayer(
@@ -124,6 +134,14 @@ public final class DestinationTargetDiscoveryService {
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
         event.getPlayerRef().getStore().addComponent(event.getPlayerRef(), Teleport.getComponentType(), teleport);
         event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+        if (pendingReturn.resumeAction() != null) {
+            pendingReturn.resumeAction().reopen(
+                event.getPlayerRef(),
+                event.getPlayerRef().getStore(),
+                playerRef,
+                event.getPlayer()
+            );
+        }
     }
 
     private void handleRequest(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
@@ -176,7 +194,8 @@ public final class DestinationTargetDiscoveryService {
             pendingReturns.put(event.getUuid(), new PendingDiscoveryReturn(
                 pendingRequest.originWorldName(),
                 pendingRequest.originTransform(),
-                "Discovered " + saved.targets().size() + " Nexori destination target(s) from " + saved.connectionAddress() + "."
+                "Discovered " + saved.targets().size() + " Nexori destination target(s) from " + saved.connectionAddress() + ".",
+                pendingRequest.resumeAction()
             ));
             logger.atInfo().log("Stored Nexori discovery response " + payload.requestId()
                 + " for " + saved.connectionAddress()
@@ -186,7 +205,8 @@ public final class DestinationTargetDiscoveryService {
             pendingReturns.put(event.getUuid(), new PendingDiscoveryReturn(
                 pendingRequest.originWorldName(),
                 pendingRequest.originTransform(),
-                "The Nexori discovery response was received, but saving the discovered targets failed: " + exception.getMessage()
+                "The Nexori discovery response was received, but saving the discovered targets failed: " + exception.getMessage(),
+                pendingRequest.resumeAction()
             ));
         }
     }
@@ -202,7 +222,8 @@ public final class DestinationTargetDiscoveryService {
         String destinationConnectionAddress,
         String originWorldName,
         Transform originTransform,
-        long expiresAtEpochMillis
+        long expiresAtEpochMillis,
+        UiResumeAction resumeAction
     ) {
         boolean isExpired() {
             return System.currentTimeMillis() > expiresAtEpochMillis;
@@ -212,7 +233,8 @@ public final class DestinationTargetDiscoveryService {
     private record PendingDiscoveryReturn(
         String originWorldName,
         Transform originTransform,
-        String message
+        String message,
+        UiResumeAction resumeAction
     ) {
     }
 

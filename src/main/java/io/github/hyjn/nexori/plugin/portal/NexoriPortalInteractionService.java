@@ -21,6 +21,8 @@ import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriPortalPage;
+import io.github.hyjn.nexori.plugin.ui.PortalSetupDraft;
+import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -42,6 +44,7 @@ public final class NexoriPortalInteractionService {
     private final ConfiguredPeerService configuredPeerService;
     private final DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private final DestinationTargetDiscoveryService destinationTargetDiscoveryService;
+    private final PortalSetupDraftService portalSetupDraftService;
     private final SecureTravelService secureTravelService;
     private final String adminPermission;
     private final Map<UUID, Long> lastCollisionHandledAtByPlayer = new ConcurrentHashMap<>();
@@ -54,6 +57,7 @@ public final class NexoriPortalInteractionService {
         @Nonnull ConfiguredPeerService configuredPeerService,
         @Nonnull DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService,
         @Nonnull DestinationTargetDiscoveryService destinationTargetDiscoveryService,
+        @Nonnull PortalSetupDraftService portalSetupDraftService,
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull String adminPermission
     ) {
@@ -64,6 +68,7 @@ public final class NexoriPortalInteractionService {
         this.configuredPeerService = configuredPeerService;
         this.discoveredDestinationTargetCacheService = discoveredDestinationTargetCacheService;
         this.destinationTargetDiscoveryService = destinationTargetDiscoveryService;
+        this.portalSetupDraftService = portalSetupDraftService;
         this.secureTravelService = secureTravelService;
         this.adminPermission = adminPermission;
     }
@@ -104,13 +109,9 @@ public final class NexoriPortalInteractionService {
             : new Vector3i(targetBlock.x, targetBlock.y, targetBlock.z);
 
         Optional<PortalInstanceDefinition> portal = resolvePortal(player.getWorld().getName(), blockPosition);
-        if (!NexoriAdminAccess.canManage(playerRef, player, adminPermission)) {
-            if (!shouldHandleTrigger(playerRef.getUuid())) {
-                return null;
-            }
-            triggerPortalTravel(player, playerRef, portal);
-            return null;
-        }
+        PortalSetupDraft draft = portal
+            .flatMap(found -> portalSetupDraftService.find(playerRef.getUuid(), found.portalId()))
+            .orElse(new PortalSetupDraft("", 0, "", "", ""));
 
         return NexoriPortalPage.create(
             playerRef,
@@ -119,13 +120,14 @@ public final class NexoriPortalInteractionService {
             configuredPeerService,
             discoveredDestinationTargetCacheService,
             destinationTargetDiscoveryService,
+            portalSetupDraftService,
             player.getWorld().getName(),
             blockPosition,
             portal.orElse(null),
-            0,
-            "",
-            "",
-            "",
+            draft.stepIndex(),
+            draft.selectedDestinationAddress(),
+            draft.selectedTargetId(),
+            draft.selectedTravelProfileId(),
             ""
         );
     }
