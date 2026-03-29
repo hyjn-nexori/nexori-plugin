@@ -58,6 +58,14 @@ public final class NexoriTargetAddCommand extends AbstractPlayerCommand {
 
         try {
             DestinationTargetKind kind = DestinationTargetKind.parse(ctx.get(kindArg));
+            if (kind == DestinationTargetKind.NATURAL_SPAWN) {
+                ctx.sendMessage(Message.raw("Natural spawn targets are generated automatically, one per world. Use the existing <world>.natural_spawn target instead of creating one manually."));
+                return;
+            }
+            if (kind == DestinationTargetKind.PORTAL) {
+                ctx.sendMessage(Message.raw("Portal targets are created automatically when you place a Nexori portal. Use the portal setup UI instead of creating one manually."));
+                return;
+            }
             DestinationTargetDefinition target = plugin.getDestinationTargetService().upsert(new DestinationTargetDefinition(
                 ctx.get(targetIdArg),
                 ctx.get(targetIdArg),

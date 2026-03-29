@@ -22,14 +22,21 @@ import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.portal.NexoriPortalInteractionService;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.util.UUID;
 
 public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<NexoriTargetWizardPage.PageData> {
+
+    private static final DestinationTargetKind[] WIZARD_KINDS = new DestinationTargetKind[] {
+        DestinationTargetKind.COORDINATE
+    };
 
     private static final Gson GSON = new Gson();
 
@@ -47,6 +54,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
 
     private final PlayerRef playerRef;
     private final DestinationTargetService destinationTargetService;
+    private final PortalInstanceService portalInstanceService;
+    private final NexoriPortalInteractionService portalInteractionService;
+    private final TargetSetupDraftService targetSetupDraftService;
     private final int stepIndex;
     private final String targetId;
     private final String displayName;
@@ -57,6 +67,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
     private NexoriTargetWizardPage(
         @Nonnull PlayerRef playerRef,
         @Nonnull DestinationTargetService destinationTargetService,
+        @Nonnull PortalInstanceService portalInstanceService,
+        @Nonnull NexoriPortalInteractionService portalInteractionService,
+        @Nonnull TargetSetupDraftService targetSetupDraftService,
         int stepIndex,
         @Nonnull String targetId,
         @Nonnull String displayName,
@@ -67,6 +80,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
         super(playerRef, CustomPageLifetime.CanDismissOrCloseThroughInteraction, PageData.CODEC);
         this.playerRef = playerRef;
         this.destinationTargetService = destinationTargetService;
+        this.portalInstanceService = portalInstanceService;
+        this.portalInteractionService = portalInteractionService;
+        this.targetSetupDraftService = targetSetupDraftService;
         this.stepIndex = clampStep(stepIndex);
         this.targetId = safe(targetId);
         this.displayName = safe(displayName);
@@ -81,6 +97,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
         @Nonnull PlayerRef playerRef,
         Player player,
         @Nonnull DestinationTargetService destinationTargetService,
+        @Nonnull PortalInstanceService portalInstanceService,
+        @Nonnull NexoriPortalInteractionService portalInteractionService,
+        @Nonnull TargetSetupDraftService targetSetupDraftService,
         int stepIndex,
         @Nonnull String targetId,
         @Nonnull String displayName,
@@ -99,6 +118,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
             new NexoriTargetWizardPage(
                 playerRef,
                 destinationTargetService,
+                portalInstanceService,
+                portalInteractionService,
+                targetSetupDraftService,
                 stepIndex,
                 targetId,
                 displayName,
@@ -126,7 +148,7 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
         commands.set("#StepProgressText.Text", "Step " + (stepIndex + 1) + " of " + (LAST_STEP + 1));
         commands.set("#StepTitleText.Text", switch (stepIndex) {
             case STEP_KIND -> "Choose what kind of arrival target you want to create.";
-            case STEP_DETAILS -> "Give this target a simple id, name, and arrival point.";
+            case STEP_DETAILS -> "Give this target a display name.";
             case STEP_REVIEW -> "Review the current world and live position/orientation before saving.";
             default -> "Nexori Target Wizard";
         });
@@ -143,20 +165,14 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
         commands.set("#SelectedKindMetaText.Text", switch (selectedKind) {
             case NATURAL_SPAWN -> "Use the world's real natural spawn when the player arrives.";
             case COORDINATE -> "Capture your current live position and facing direction as the destination.";
-            case PORTAL -> "Create an arrival target that lands at a portal-style position in this world.";
+            case PORTAL -> "Portal targets are created automatically when you place a Nexori portal.";
         });
 
-        commands.set("#TargetIdField #Input.Value", targetId);
         commands.set("#DisplayNameField #Input.Value", displayName);
-        commands.set("#ArrivalPointField #Input.Value", arrivalPointId);
-        commands.set("#DetailsHintText.Text", selectedKind == DestinationTargetKind.NATURAL_SPAWN
-            ? "Natural spawn targets still need an id and display name, but they do not save explicit coordinates."
-            : "Coordinate and portal targets will capture your current live position and facing direction when you save.");
+        commands.set("#DetailsHintText.Text", "Nexori will generate the internal target id for you. Saving captures your current live position and facing direction.");
 
         commands.set("#ReviewWorldText.Text", world == null ? "<unknown>" : world.getName());
-        commands.set("#ReviewTargetIdText.Text", targetId.isBlank() ? "<missing>" : targetId);
-        commands.set("#ReviewDisplayNameText.Text", displayName.isBlank() ? "<default to id>" : displayName);
-        commands.set("#ReviewArrivalPointText.Text", arrivalPointId.isBlank() ? "<default>" : arrivalPointId);
+        commands.set("#ReviewDisplayNameText.Text", displayName.isBlank() ? "<unnamed coordinate target>" : displayName);
         commands.set("#ReviewKindText.Text", selectedKind.displayName());
         commands.set("#ReviewCaptureText.Text", describeCurrentCapture(store, ref, selectedKind));
 
@@ -172,27 +188,21 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
             "#SaveTargetButton",
             new EventData()
                 .append("Index", Integer.toString(SAVE_TARGET_INDEX))
-                .append("@TargetId", "#TargetIdField #Input.Value")
                 .append("@DisplayName", "#DisplayNameField #Input.Value")
-                .append("@ArrivalPoint", "#ArrivalPointField #Input.Value")
         );
         events.addEventBinding(
             CustomUIEventBindingType.Activating,
             "#NextStepButton",
             new EventData()
                 .append("Index", Integer.toString(NEXT_STEP_INDEX))
-                .append("@TargetId", "#TargetIdField #Input.Value")
                 .append("@DisplayName", "#DisplayNameField #Input.Value")
-                .append("@ArrivalPoint", "#ArrivalPointField #Input.Value")
         );
         events.addEventBinding(
             CustomUIEventBindingType.Activating,
             "#PrevStepButton",
             new EventData()
                 .append("Index", Integer.toString(PREVIOUS_STEP_INDEX))
-                .append("@TargetId", "#TargetIdField #Input.Value")
                 .append("@DisplayName", "#DisplayNameField #Input.Value")
-                .append("@ArrivalPoint", "#ArrivalPointField #Input.Value")
         );
         events.addEventBinding(
             CustomUIEventBindingType.Activating,
@@ -217,9 +227,9 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
             return;
         }
 
-        String nextTargetId = safe(data.targetId).trim();
+        String nextTargetId = safe(targetId).trim();
         String nextDisplayName = safe(data.displayName).trim();
-        String nextArrivalPointId = safe(data.arrivalPointId).trim();
+        String nextArrivalPointId = safe(arrivalPointId).trim();
         DestinationTargetKind selectedKind = resolveSelectedKind();
 
         try {
@@ -234,18 +244,36 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
                         reopen(ref, store, player, stepIndex, nextTargetId, nextDisplayName, nextArrivalPointId, selectedKind.name(), "Could not resolve the current world for this target.");
                         return;
                     }
+                    String effectiveTargetId = nextTargetId.isBlank()
+                        ? generateTargetId(selectedKind)
+                        : nextTargetId;
                     DestinationTargetDefinition target = destinationTargetService.upsert(new DestinationTargetDefinition(
-                        nextTargetId,
+                        effectiveTargetId,
                         nextDisplayName,
                         selectedKind,
                         world.getName(),
-                        nextArrivalPointId,
+                        "",
                         "",
                         buildMetadataJson(selectedKind, store, ref)
                     ));
-                    reopen(ref, store, player, STEP_KIND, "", "", "", selectedKind.name(), "Saved Nexori destination target " + target.id() + " in world " + target.worldName() + ".");
+                    targetSetupDraftService.clear(playerRef.getUuid());
+                    NexoriTargetManagerPage.open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        destinationTargetService,
+                        portalInstanceService,
+                        portalInteractionService,
+                        targetSetupDraftService,
+                        target.id(),
+                        "Saved Nexori destination target " + target.id() + " in world " + target.worldName() + "."
+                    );
                 }
-                case RESET_INDEX -> reopen(ref, store, player, STEP_KIND, "", "", "", DestinationTargetKind.NATURAL_SPAWN.name(), "");
+                case RESET_INDEX -> {
+                    targetSetupDraftService.clear(playerRef.getUuid());
+                    reopen(ref, store, player, STEP_KIND, "", "", "", DestinationTargetKind.COORDINATE.name(), "");
+                }
                 default -> {
                 }
             }
@@ -272,30 +300,16 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
             )
             .add()
             .append(
-                new KeyedCodec<>("@TargetId", Codec.STRING),
-                (pageData, targetId) -> pageData.targetId = targetId,
-                pageData -> pageData.targetId
-            )
-            .add()
-            .append(
                 new KeyedCodec<>("@DisplayName", Codec.STRING),
                 (pageData, displayName) -> pageData.displayName = displayName,
                 pageData -> pageData.displayName
-            )
-            .add()
-            .append(
-                new KeyedCodec<>("@ArrivalPoint", Codec.STRING),
-                (pageData, arrivalPointId) -> pageData.arrivalPointId = arrivalPointId,
-                pageData -> pageData.arrivalPointId
             )
             .add()
             .build();
 
         private String indexRaw = "";
         private String actionRaw = "";
-        private String targetId = "";
         private String displayName = "";
-        private String arrivalPointId = "";
     }
 
     private void reopen(
@@ -309,12 +323,16 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
         @Nonnull String selectedKindId,
         @Nonnull String statusText
     ) {
+        saveDraft(stepIndex, targetId, displayName, arrivalPointId, selectedKindId);
         open(
             ref,
             store,
             playerRef,
             player,
             destinationTargetService,
+            portalInstanceService,
+            portalInteractionService,
+            targetSetupDraftService,
             stepIndex,
             targetId,
             displayName,
@@ -327,16 +345,23 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
     @Nonnull
     private DestinationTargetKind resolveSelectedKind() {
         try {
-            return DestinationTargetKind.parse(selectedKindId.isBlank() ? DestinationTargetKind.NATURAL_SPAWN.name() : selectedKindId);
+            DestinationTargetKind parsed = DestinationTargetKind.parse(selectedKindId.isBlank() ? DestinationTargetKind.NATURAL_SPAWN.name() : selectedKindId);
+            return parsed == DestinationTargetKind.COORDINATE ? parsed : DestinationTargetKind.COORDINATE;
         } catch (IllegalArgumentException ignored) {
-            return DestinationTargetKind.NATURAL_SPAWN;
+            return DestinationTargetKind.COORDINATE;
         }
     }
 
     @Nonnull
     private DestinationTargetKind cycleKind(@Nonnull DestinationTargetKind current, int delta) {
-        DestinationTargetKind[] values = DestinationTargetKind.values();
-        return values[Math.floorMod(current.ordinal() + delta, values.length)];
+        int index = 0;
+        for (int i = 0; i < WIZARD_KINDS.length; i++) {
+            if (WIZARD_KINDS[i] == current) {
+                index = i;
+                break;
+            }
+        }
+        return WIZARD_KINDS[Math.floorMod(index + delta, WIZARD_KINDS.length)];
     }
 
     @Nonnull
@@ -442,5 +467,32 @@ public final class NexoriTargetWizardPage extends InteractiveCustomUIPage<Nexori
 
     private static int clampStep(int stepIndex) {
         return Math.max(STEP_KIND, Math.min(LAST_STEP, stepIndex));
+    }
+
+    private void saveDraft(
+        int stepIndex,
+        @Nonnull String targetId,
+        @Nonnull String displayName,
+        @Nonnull String arrivalPointId,
+        @Nonnull String selectedKindId
+    ) {
+        targetSetupDraftService.save(
+            playerRef.getUuid(),
+            new TargetSetupDraft(stepIndex, targetId, displayName, arrivalPointId, selectedKindId)
+        );
+    }
+
+    @Nonnull
+    private String generateTargetId(@Nonnull DestinationTargetKind kind) {
+        String prefix = switch (kind) {
+            case COORDINATE -> "coordinate";
+            case NATURAL_SPAWN -> "spawn";
+            case PORTAL -> "portal";
+        };
+        String candidate;
+        do {
+            candidate = prefix + "." + UUID.randomUUID().toString().substring(0, 8).toLowerCase();
+        } while (destinationTargetService.find(candidate).isPresent());
+        return candidate;
     }
 }

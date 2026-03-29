@@ -77,7 +77,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoritargetwizard"));
         ctx.sendMessage(Message.raw("- /nexoritargetlist"));
         ctx.sendMessage(Message.raw("- /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>"));
-        ctx.sendMessage(Message.raw("  COORDINATE and PORTAL use your current position and look direction."));
+        ctx.sendMessage(Message.raw("  Intended for COORDINATE targets only. NATURAL_SPAWN and PORTAL are auto-generated."));
+        ctx.sendMessage(Message.raw("  /nexoritargetwizard now opens the target manager and keeps one saved draft per player."));
         ctx.sendMessage(Message.raw("- /nexoritargetshow <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoritargetremove <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalgive [amount]"));

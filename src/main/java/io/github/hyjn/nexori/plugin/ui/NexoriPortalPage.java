@@ -43,7 +43,8 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
     private static final int STEP_SELECT_SERVER = 0;
     private static final int STEP_SELECT_TARGET = 1;
     private static final int STEP_SELECT_PROFILE = 2;
-    private static final int STEP_REVIEW = 3;
+    private static final int STEP_PORTAL_DETAILS = 3;
+    private static final int STEP_REVIEW = 4;
     private static final int LAST_STEP = STEP_REVIEW;
 
     private static final int PREVIOUS_STEP_INDEX = 1;
@@ -73,6 +74,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
     private final String selectedDestinationAddress;
     private final String selectedTargetId;
     private final String selectedTravelProfileId;
+    private final String selectedPortalDisplayName;
     private final String statusText;
 
     private NexoriPortalPage(
@@ -90,6 +92,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull String selectedDestinationAddress,
         @Nonnull String selectedTargetId,
         @Nonnull String selectedTravelProfileId,
+        @Nonnull String selectedPortalDisplayName,
         @Nonnull String statusText
     ) {
         super(playerRef, CustomPageLifetime.CanDismissOrCloseThroughInteraction, PageData.CODEC);
@@ -107,6 +110,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         this.selectedDestinationAddress = safe(selectedDestinationAddress).trim().toLowerCase();
         this.selectedTargetId = safe(selectedTargetId).trim().toLowerCase();
         this.selectedTravelProfileId = safe(selectedTravelProfileId).trim().toLowerCase();
+        this.selectedPortalDisplayName = safe(selectedPortalDisplayName).trim();
         this.statusText = safe(statusText);
     }
 
@@ -126,6 +130,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull String selectedDestinationAddress,
         @Nonnull String selectedTargetId,
         @Nonnull String selectedTravelProfileId,
+        @Nonnull String selectedPortalDisplayName,
         @Nonnull String statusText
     ) {
         return new NexoriPortalPage(
@@ -143,6 +148,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             selectedDestinationAddress,
             selectedTargetId,
             selectedTravelProfileId,
+            selectedPortalDisplayName,
             statusText
         );
     }
@@ -165,6 +171,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull String selectedDestinationAddress,
         @Nonnull String selectedTargetId,
         @Nonnull String selectedTravelProfileId,
+        @Nonnull String selectedPortalDisplayName,
         @Nonnull String statusText
     ) {
         PageManager pages = player == null ? null : player.getPageManager();
@@ -190,6 +197,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                 selectedDestinationAddress,
                 selectedTargetId,
                 selectedTravelProfileId,
+                selectedPortalDisplayName,
                 statusText
             )
         );
@@ -213,6 +221,16 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             .orElse(null);
         String effectiveTargetId = resolveSelectedTargetId(discovery, effectiveDestinationAddress, binding);
         TravelProfileType effectiveTravelProfile = resolveSelectedTravelProfile(binding);
+        String effectivePortalDisplayName = resolveSelectedPortalDisplayName(portal.orElse(null));
+        boolean hasSavedBinding = binding != null;
+        boolean hasUnsavedDraftChanges = hasSavedBinding && hasUnsavedDraftChanges(
+            binding,
+            portal.orElse(null),
+            effectiveDestinationAddress,
+            effectiveTargetId,
+            effectiveTravelProfile.id(),
+            effectivePortalDisplayName
+        );
 
         commands.append("Pages/Nexori/NexoriPortal.ui");
         commands.set("#PortalLocationText.Text", worldName + " @ (" + blockPosition.getX() + ", " + blockPosition.getY() + ", " + blockPosition.getZ() + ")");
@@ -230,11 +248,16 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             .orElse("Missing"));
         commands.set("#StatusText.Text", statusText);
         commands.set("#StatusText.Visible", !statusText.isBlank());
+        commands.set("#DraftWarningText.Visible", hasUnsavedDraftChanges);
+        commands.set("#DraftWarningText.Text", hasUnsavedDraftChanges
+            ? "Draft changes are not live yet. Players will keep using the saved portal setup until you press Save Portal Setup."
+            : "");
         commands.set("#StepProgressText.Text", "Step " + (stepIndex + 1) + " of " + (LAST_STEP + 1));
         commands.set("#StepTitleText.Text", switch (stepIndex) {
             case STEP_SELECT_SERVER -> "Select the trusted destination server for this portal.";
             case STEP_SELECT_TARGET -> "Discover and choose the remote destination target.";
             case STEP_SELECT_PROFILE -> "Choose how this portal should carry the player's inventory.";
+            case STEP_PORTAL_DETAILS -> "Choose the display name owners should see for this portal.";
             case STEP_REVIEW -> "Review the current setup and save the portal binding.";
             default -> "Nexori Portal Setup";
         });
@@ -242,6 +265,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         commands.set("#ServerStep.Visible", stepIndex == STEP_SELECT_SERVER);
         commands.set("#TargetStep.Visible", stepIndex == STEP_SELECT_TARGET);
         commands.set("#ProfileStep.Visible", stepIndex == STEP_SELECT_PROFILE);
+        commands.set("#PortalDetailsStep.Visible", stepIndex == STEP_PORTAL_DETAILS);
         commands.set("#ReviewStep.Visible", stepIndex == STEP_REVIEW);
 
         commands.set("#PrevStepButton.Visible", stepIndex > STEP_SELECT_SERVER);
@@ -266,9 +290,13 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         commands.set("#SelectedProfileText.Text", effectiveTravelProfile.displayName());
         commands.set("#SelectedProfileMetaText.Text", effectiveTravelProfile.description());
 
+        commands.set("#PortalDisplayNameField #Input.Value", effectivePortalDisplayName);
+        commands.set("#PortalDetailsHintText.Text", "This name is shown to owners in setup screens. Nexori keeps the technical portal target id internal.");
+
         commands.set("#ReviewDestinationText.Text", effectiveDestinationAddress.isBlank() ? "<not selected>" : effectiveDestinationAddress);
         commands.set("#ReviewTargetText.Text", effectiveTargetId.isBlank() ? "<not selected>" : effectiveTargetId);
         commands.set("#ReviewProfileText.Text", effectiveTravelProfile.displayName() + " (" + effectiveTravelProfile.id() + ")");
+        commands.set("#ReviewPortalNameText.Text", effectivePortalDisplayName.isBlank() ? "<unnamed portal>" : effectivePortalDisplayName);
         commands.set("#ReviewBindingStateText.Text", binding == null
             ? "This portal does not have a saved collision binding yet."
             : "Current binding: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId());
@@ -277,8 +305,8 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         commands.set("#ClearBindingButton.Visible", binding != null);
         commands.set("#TogglePortalButton.Visible", portal.isPresent());
         commands.set("#TogglePortalButtonLabel.Text", portal.filter(PortalInstanceDefinition::enabled).isPresent()
-            ? "Disable Portal"
-            : "Enable Portal");
+            ? "Disable Portal Travel"
+            : "Enable Portal Travel");
 
         bindIndex(events, "#PrevStepButton", PREVIOUS_STEP_INDEX);
         bindIndex(events, "#NextStepButton", NEXT_STEP_INDEX);
@@ -292,6 +320,28 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         bindIndex(events, "#BindPortalButton", SAVE_BINDING_INDEX);
         bindIndex(events, "#ClearBindingButton", CLEAR_BINDING_INDEX);
         bindIndex(events, "#TogglePortalButton", TOGGLE_ENABLED_INDEX);
+
+        events.addEventBinding(
+            CustomUIEventBindingType.Activating,
+            "#BindPortalButton",
+            new EventData()
+                .append("Index", Integer.toString(SAVE_BINDING_INDEX))
+                .append("@PortalDisplayName", "#PortalDisplayNameField #Input.Value")
+        );
+        events.addEventBinding(
+            CustomUIEventBindingType.Activating,
+            "#PrevStepButton",
+            new EventData()
+                .append("Index", Integer.toString(PREVIOUS_STEP_INDEX))
+                .append("@PortalDisplayName", "#PortalDisplayNameField #Input.Value")
+        );
+        events.addEventBinding(
+            CustomUIEventBindingType.Activating,
+            "#NextStepButton",
+            new EventData()
+                .append("Index", Integer.toString(NEXT_STEP_INDEX))
+                .append("@PortalDisplayName", "#PortalDisplayNameField #Input.Value")
+        );
     }
 
     @Override
@@ -320,35 +370,41 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             .orElse(null);
         String effectiveTargetId = resolveSelectedTargetId(discovery, effectiveDestinationAddress, binding);
         TravelProfileType effectiveTravelProfile = resolveSelectedTravelProfile(binding);
+        String effectivePortalDisplayName = safe(data.portalDisplayName).trim();
+        if (effectivePortalDisplayName.isBlank()) {
+            effectivePortalDisplayName = resolveSelectedPortalDisplayName(portal.orElse(null));
+        }
 
         try {
             switch (index) {
                 case PREVIOUS_STEP_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex - 1,
-                    effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), ""
+                    effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case NEXT_STEP_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex + 1,
-                    effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), ""
+                    effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case DESTINATION_PREVIOUS_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     cycleDestination(configuredPeers, effectiveDestinationAddress, -1), "",
-                    effectiveTravelProfile.id(), ""
+                    effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case DESTINATION_NEXT_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     cycleDestination(configuredPeers, effectiveDestinationAddress, 1), "",
-                    effectiveTravelProfile.id(), ""
+                    effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case DISCOVER_INDEX -> {
                     if (effectiveDestinationAddress.isBlank()) {
-                        reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "Select a destination server first.");
+                        reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, "Select a destination server first.");
                         return;
                     }
                     PortalInstanceDefinition resolvedPortal = portal.orElse(null);
-                    saveDraft(resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id());
+                    saveDraft(resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName);
                     Transform transform = captureCurrentTransform(store, ref);
+                    String resumeTravelProfileId = effectiveTravelProfile.id();
+                    String resumePortalDisplayName = effectivePortalDisplayName;
                     destinationTargetDiscoveryService.discover(
                         playerRef,
                         ConfiguredPeer.parse(effectiveDestinationAddress),
@@ -356,9 +412,9 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                         transform,
                         (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> {
                             PortalSetupDraft resumeDraft = resolvedPortal == null
-                                ? new PortalSetupDraft("", stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id())
+                                ? new PortalSetupDraft("", stepIndex, effectiveDestinationAddress, effectiveTargetId, resumeTravelProfileId, resumePortalDisplayName)
                                 : portalSetupDraftService.find(resumePlayerRef.getUuid(), resolvedPortal.portalId())
-                                    .orElse(new PortalSetupDraft(resolvedPortal.portalId(), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id()));
+                                    .orElse(new PortalSetupDraft(resolvedPortal.portalId(), stepIndex, effectiveDestinationAddress, effectiveTargetId, resumeTravelProfileId, resumePortalDisplayName));
                             NexoriPortalPage.open(
                                 resumeRef,
                                 resumeStore,
@@ -377,6 +433,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                                 resumeDraft.selectedDestinationAddress(),
                                 resumeDraft.selectedTargetId(),
                                 resumeDraft.selectedTravelProfileId(),
+                                resumeDraft.portalDisplayName(),
                                 "Destination targets refreshed from " + effectiveDestinationAddress + "."
                             );
                         }
@@ -386,22 +443,22 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                 case TARGET_PREVIOUS_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     effectiveDestinationAddress, cycleTarget(discovery, effectiveTargetId, -1),
-                    effectiveTravelProfile.id(), ""
+                    effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case TARGET_NEXT_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     effectiveDestinationAddress, cycleTarget(discovery, effectiveTargetId, 1),
-                    effectiveTravelProfile.id(), ""
+                    effectiveTravelProfile.id(), effectivePortalDisplayName, ""
                 );
                 case PROFILE_PREVIOUS_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     effectiveDestinationAddress, effectiveTargetId,
-                    cycleProfile(effectiveTravelProfile, -1).id(), ""
+                    cycleProfile(effectiveTravelProfile, -1).id(), effectivePortalDisplayName, ""
                 );
                 case PROFILE_NEXT_INDEX -> reopen(
                     ref, store, player, portal.orElse(null), stepIndex,
                     effectiveDestinationAddress, effectiveTargetId,
-                    cycleProfile(effectiveTravelProfile, 1).id(), ""
+                    cycleProfile(effectiveTravelProfile, 1).id(), effectivePortalDisplayName, ""
                 );
                 case SAVE_BINDING_INDEX -> {
                     PortalInstanceDefinition resolvedPortal = portal.orElse(null);
@@ -409,13 +466,18 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                         return;
                     }
                     if (effectiveDestinationAddress.isBlank()) {
-                        reopen(ref, store, player, resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "Select a destination server first.");
+                        reopen(ref, store, player, resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, "Select a destination server first.");
                         return;
                     }
                     if (effectiveTargetId.isBlank()) {
-                        reopen(ref, store, player, resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "Select a discovered destination target first.");
+                        reopen(ref, store, player, resolvedPortal, stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, "Select a discovered destination target first.");
                         return;
                     }
+
+                    resolvedPortal = portalInstanceService.renamePortalAndTarget(
+                        resolvedPortal.autoDestinationTargetId(),
+                        effectivePortalDisplayName
+                    );
 
                     TriggerBindingDefinition saved = triggerBindingService.bindPortalCollision(
                         resolvedPortal.portalId(),
@@ -426,7 +488,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                     );
                     reopen(
                         ref, store, player, resolvedPortal, STEP_REVIEW,
-                        saved.destinationConnectionAddress(), saved.destinationTargetId(), saved.travelProfileId(),
+                        saved.destinationConnectionAddress(), saved.destinationTargetId(), saved.travelProfileId(), resolvedPortal.displayName(),
                         "Saved portal binding to " + saved.destinationConnectionAddress() + " -> " + saved.destinationTargetId() + "."
                     );
                 }
@@ -438,7 +500,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                     boolean removed = triggerBindingService.removePortalCollisionBinding(resolvedPortal.portalId());
                     reopen(
                         ref, store, player, resolvedPortal, STEP_REVIEW,
-                        effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(),
+                        effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName,
                         removed ? "Removed the portal binding." : "This portal did not have a saved binding."
                     );
                 }
@@ -450,19 +512,19 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                     portalInstanceService.setEnabled(resolvedPortal.portalId(), !resolvedPortal.enabled());
                     reopen(
                         ref, store, player, null, STEP_REVIEW,
-                        effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(),
-                        resolvedPortal.enabled() ? "Portal disabled." : "Portal enabled."
+                        effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName,
+                        resolvedPortal.enabled() ? "Portal travel disabled. Admin setup still works." : "Portal travel enabled."
                     );
                 }
                 default -> {
                 }
             }
         } catch (IOException exception) {
-            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "The Nexori portal setup could not be saved: " + exception.getMessage());
+            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, "The Nexori portal setup could not be saved: " + exception.getMessage());
         } catch (IllegalArgumentException exception) {
-            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), exception.getMessage());
+            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, exception.getMessage());
         } catch (Exception exception) {
-            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), "The Nexori portal action failed: " + exception.getMessage());
+            reopen(ref, store, player, portal.orElse(null), stepIndex, effectiveDestinationAddress, effectiveTargetId, effectiveTravelProfile.id(), effectivePortalDisplayName, "The Nexori portal action failed: " + exception.getMessage());
         }
     }
 
@@ -475,9 +537,16 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                 pageData -> pageData.indexRaw
             )
             .add()
+            .append(
+                new KeyedCodec<>("@PortalDisplayName", Codec.STRING),
+                (pageData, portalDisplayName) -> pageData.portalDisplayName = portalDisplayName,
+                pageData -> pageData.portalDisplayName
+            )
+            .add()
             .build();
 
         private String indexRaw = "";
+        private String portalDisplayName = "";
     }
 
     private void reopen(
@@ -489,9 +558,10 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         @Nonnull String selectedDestinationAddress,
         @Nonnull String selectedTargetId,
         @Nonnull String selectedTravelProfileId,
+        @Nonnull String selectedPortalDisplayName,
         @Nonnull String statusText
     ) {
-        saveDraft(portal, stepIndex, selectedDestinationAddress, selectedTargetId, selectedTravelProfileId);
+        saveDraft(portal, stepIndex, selectedDestinationAddress, selectedTargetId, selectedTravelProfileId, selectedPortalDisplayName);
         open(
             ref,
             store,
@@ -510,6 +580,7 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
             selectedDestinationAddress,
             selectedTargetId,
             selectedTravelProfileId,
+            selectedPortalDisplayName,
             statusText
         );
     }
@@ -519,7 +590,8 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
         int stepIndex,
         @Nonnull String selectedDestinationAddress,
         @Nonnull String selectedTargetId,
-        @Nonnull String selectedTravelProfileId
+        @Nonnull String selectedTravelProfileId,
+        @Nonnull String selectedPortalDisplayName
     ) {
         if (portal == null) {
             return;
@@ -531,9 +603,38 @@ public final class NexoriPortalPage extends InteractiveCustomUIPage<NexoriPortal
                 stepIndex,
                 selectedDestinationAddress,
                 selectedTargetId,
-                selectedTravelProfileId
+                selectedTravelProfileId,
+                selectedPortalDisplayName
             )
         );
+    }
+
+    @Nonnull
+    private String resolveSelectedPortalDisplayName(PortalInstanceDefinition portal) {
+        if (!selectedPortalDisplayName.isBlank()) {
+            return selectedPortalDisplayName;
+        }
+        return portal == null ? "" : portal.displayName();
+    }
+
+    private boolean hasUnsavedDraftChanges(
+        @Nonnull TriggerBindingDefinition binding,
+        PortalInstanceDefinition portal,
+        @Nonnull String effectiveDestinationAddress,
+        @Nonnull String effectiveTargetId,
+        @Nonnull String effectiveTravelProfileId,
+        @Nonnull String effectivePortalDisplayName
+    ) {
+        if (!binding.destinationConnectionAddress().equals(effectiveDestinationAddress)) {
+            return true;
+        }
+        if (!binding.destinationTargetId().equals(effectiveTargetId)) {
+            return true;
+        }
+        if (!binding.travelProfileId().equals(effectiveTravelProfileId)) {
+            return true;
+        }
+        return portal != null && !portal.displayName().equals(effectivePortalDisplayName);
     }
 
     @Nonnull

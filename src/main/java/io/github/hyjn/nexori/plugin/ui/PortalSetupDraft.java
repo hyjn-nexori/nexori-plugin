@@ -7,7 +7,8 @@ public record PortalSetupDraft(
     int stepIndex,
     String selectedDestinationAddress,
     String selectedTargetId,
-    String selectedTravelProfileId
+    String selectedTravelProfileId,
+    String portalDisplayName
 ) {
 
     @Nonnull
@@ -17,7 +18,8 @@ public record PortalSetupDraft(
             Math.max(0, stepIndex),
             safe(selectedDestinationAddress).trim().toLowerCase(),
             safe(selectedTargetId).trim().toLowerCase(),
-            safe(selectedTravelProfileId).trim().toLowerCase()
+            safe(selectedTravelProfileId).trim().toLowerCase(),
+            safe(portalDisplayName).trim()
         );
     }
 

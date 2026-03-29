@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.portal;
 
 import com.hypixel.hytale.component.ComponentAccessor;
 import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Vector3i;
 import com.hypixel.hytale.protocol.BlockPosition;
@@ -88,6 +89,25 @@ public final class NexoriPortalInteractionService {
         );
     }
 
+    public void openAdminPortalPage(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String statusText
+    ) {
+        NexoriPortalPage page = buildAdminPortalPage(playerRef, player, portal, statusText);
+        if (page == null) {
+            return;
+        }
+
+        if (player.getPageManager() == null) {
+            return;
+        }
+        player.getPageManager().openCustomPage(ref, store, page);
+    }
+
     private NexoriPortalPage tryCreateAdminPortalPage(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull ComponentAccessor<EntityStore> accessor,
@@ -109,27 +129,7 @@ public final class NexoriPortalInteractionService {
             : new Vector3i(targetBlock.x, targetBlock.y, targetBlock.z);
 
         Optional<PortalInstanceDefinition> portal = resolvePortal(player.getWorld().getName(), blockPosition);
-        PortalSetupDraft draft = portal
-            .flatMap(found -> portalSetupDraftService.find(playerRef.getUuid(), found.portalId()))
-            .orElse(new PortalSetupDraft("", 0, "", "", ""));
-
-        return NexoriPortalPage.create(
-            playerRef,
-            portalInstanceService,
-            triggerBindingService,
-            configuredPeerService,
-            discoveredDestinationTargetCacheService,
-            destinationTargetDiscoveryService,
-            portalSetupDraftService,
-            player.getWorld().getName(),
-            blockPosition,
-            portal.orElse(null),
-            draft.stepIndex(),
-            draft.selectedDestinationAddress(),
-            draft.selectedTargetId(),
-            draft.selectedTravelProfileId(),
-            ""
-        );
+        return portal.map(found -> buildAdminPortalPage(playerRef, player, found, "")).orElse(null);
     }
 
     private NexoriPortalPage tryHandlePortalTraverse(
@@ -214,5 +214,34 @@ public final class NexoriPortalInteractionService {
             player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
             logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
         }
+    }
+
+    private NexoriPortalPage buildAdminPortalPage(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String statusText
+    ) {
+        PortalSetupDraft draft = portalSetupDraftService.find(playerRef.getUuid(), portal.portalId())
+            .orElse(new PortalSetupDraft(portal.portalId(), 0, "", "", "", portal.displayName()));
+
+        return NexoriPortalPage.create(
+            playerRef,
+            portalInstanceService,
+            triggerBindingService,
+            configuredPeerService,
+            discoveredDestinationTargetCacheService,
+            destinationTargetDiscoveryService,
+            portalSetupDraftService,
+            player.getWorld().getName(),
+            portal.blockPosition(),
+            portal,
+            draft.stepIndex(),
+            draft.selectedDestinationAddress(),
+            draft.selectedTargetId(),
+            draft.selectedTravelProfileId(),
+            draft.portalDisplayName(),
+            statusText
+        );
     }
 }

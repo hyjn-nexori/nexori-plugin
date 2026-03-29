@@ -50,6 +50,7 @@ import io.github.hyjn.nexori.plugin.target.DestinationTargetStore;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuCommand;
 import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
+import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
 
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
@@ -79,6 +80,7 @@ public class NexoriPlugin extends JavaPlugin {
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private NexoriPortalInteractionService portalInteractionService;
     private PortalSetupDraftService portalSetupDraftService;
+    private TargetSetupDraftService targetSetupDraftService;
     private ServerIdentity localIdentity;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -157,6 +159,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureReferralService
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
+            this.targetSetupDraftService = new TargetSetupDraftService();
             this.portalInteractionService = new NexoriPortalInteractionService(
                 this,
                 this.getLogger(),
@@ -259,5 +262,13 @@ public class NexoriPlugin extends JavaPlugin {
 
     public PortalInstanceService getPortalInstanceService() {
         return portalInstanceService;
+    }
+
+    public TargetSetupDraftService getTargetSetupDraftService() {
+        return targetSetupDraftService;
+    }
+
+    public NexoriPortalInteractionService getPortalInteractionService() {
+        return portalInteractionService;
     }
 }

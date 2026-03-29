@@ -23,9 +23,9 @@ public record PortalInstanceDefinition(
         long now = System.currentTimeMillis();
         long normalizedCreatedAt = createdAtEpochMillis <= 0 ? now : createdAtEpochMillis;
         long normalizedUpdatedAt = updatedAtEpochMillis <= 0 ? normalizedCreatedAt : updatedAtEpochMillis;
-        String normalizedWorldName = normalizeOptional(worldName, "default");
-        String normalizedPortalId = normalizeOptional(portalId, locationKey(normalizedWorldName, blockX, blockY, blockZ));
-        String normalizedDisplayName = normalizeOptional(
+        String normalizedWorldName = normalizeLowerOptional(worldName, "default");
+        String normalizedPortalId = normalizeLowerOptional(portalId, locationKey(normalizedWorldName, blockX, blockY, blockZ));
+        String normalizedDisplayName = normalizeDisplayName(
             displayName,
             "Portal @ " + normalizedWorldName + " (" + blockX + ", " + blockY + ", " + blockZ + ")"
         );
@@ -36,7 +36,7 @@ public record PortalInstanceDefinition(
             blockX,
             blockY,
             blockZ,
-            normalizeOptional(autoDestinationTargetId, ""),
+            normalizeLowerOptional(autoDestinationTargetId, ""),
             enabled,
             normalizedCreatedAt,
             normalizedUpdatedAt
@@ -55,15 +55,24 @@ public record PortalInstanceDefinition(
 
     @Nonnull
     public static String locationKey(@Nonnull String worldName, int blockX, int blockY, int blockZ) {
-        return normalizeOptional(worldName, "default") + ":" + blockX + ":" + blockY + ":" + blockZ;
+        return normalizeLowerOptional(worldName, "default") + ":" + blockX + ":" + blockY + ":" + blockZ;
     }
 
     @Nonnull
-    private static String normalizeOptional(String rawValue, @Nonnull String defaultValue) {
+    private static String normalizeLowerOptional(String rawValue, @Nonnull String defaultValue) {
         if (rawValue == null) {
             return defaultValue;
         }
         String normalized = rawValue.trim().toLowerCase(Locale.ROOT);
+        return normalized.isBlank() ? defaultValue : normalized;
+    }
+
+    @Nonnull
+    private static String normalizeDisplayName(String rawValue, @Nonnull String defaultValue) {
+        if (rawValue == null) {
+            return defaultValue;
+        }
+        String normalized = rawValue.trim();
         return normalized.isBlank() ? defaultValue : normalized;
     }
 }

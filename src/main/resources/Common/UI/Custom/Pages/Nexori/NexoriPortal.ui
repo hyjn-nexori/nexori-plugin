@@ -52,13 +52,21 @@ $C.@Container {
         Style: (TextColor: $T.@BodyText);
       }
 
+      Group { Anchor: (Height: 8); }
+
+      Label #DraftWarningText {
+        Text: "";
+        Visible: false;
+        Style: (RenderBold: true, TextColor: #ff8f8f);
+      }
+
       Group { Anchor: (Height: 14); }
 
       Group {
         LayoutMode: Left;
 
         Label #StepProgressText {
-          Text: "Step 1 of 4";
+          Text: "Step 1 of 5";
           Style: (RenderBold: true, TextColor: $T.@StrongText);
         }
 
@@ -225,6 +233,40 @@ $C.@Container {
         }
       }
 
+      Group #PortalDetailsStep {
+        LayoutMode: Top;
+        Visible: false;
+
+        Label {
+          Text: "Portal Display Name";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Height: 8); }
+
+        Group #PortalDisplayNameField {
+          LayoutMode: Left;
+
+          TextField #Input {
+            Anchor: (Width: 360, Height: 36);
+            Padding: (Left: 8);
+            Style: (FontSize: 16);
+            PlaceholderText: "portal display name";
+            PlaceholderStyle: (FontSize: 13, TextColor: #667488);
+            Background: #0F0F1A;
+            MaxLength: 160;
+            Value: "";
+          }
+        }
+
+        Group { Anchor: (Height: 10); }
+
+        Label #PortalDetailsHintText {
+          Text: "";
+          Style: (TextColor: $T.@MutedText);
+        }
+      }
+
       Group #ReviewStep {
         LayoutMode: Top;
         Visible: false;
@@ -283,6 +325,15 @@ $C.@Container {
 
         Group { Anchor: (Height: 6); }
 
+        Group {
+          LayoutMode: Left;
+          Label { Text: "Portal Name:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+          Group { Anchor: (Width: 8); }
+          Label #ReviewPortalNameText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+        }
+
+        Group { Anchor: (Height: 6); }
+
         Label #ReviewBindingStateText {
           Text: "";
           Style: (TextColor: $T.@MutedText);
@@ -294,10 +345,10 @@ $C.@Container {
           LayoutMode: Left;
 
           Button #BindPortalButton {
-            Anchor: (Width: 150);
+            Anchor: (Width: 184);
             Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
             Background: $T.@TabActiveBg;
-            Label { Text: "Save Binding"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+            Label { Text: "Save Portal Setup"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
           }
 
           Group { Anchor: (Width: 8); }

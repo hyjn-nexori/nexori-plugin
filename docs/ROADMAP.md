@@ -22,7 +22,7 @@ The product direction is:
 
 ## What Exists Today
 
-Current `0.3.0` foundation:
+Current `0.4.0` foundation:
 
 - per-server identity generation with Ed25519
 - peer discovery and trust bootstrap
@@ -44,6 +44,10 @@ Current `0.3.0` foundation:
   - `CLEAR_INVENTORY`
   - `APPLY_INVENTORY`
 - manual backup/recover flow for `APPLY_INVENTORY`
+- guided in-game destination target management and creation flows
+- guided in-game portal setup and trigger binding flows
+- per-player and per-portal draft-aware setup resume after discovery travel
+- owner flows that capture current world, position, and facing direction in game
 
 ## Target For 1.0.0
 
@@ -220,10 +224,10 @@ Recommended workflow:
 
 Examples:
 
-- current milestone: `0.3.0`
-- next in-progress line after release: `0.3.1-SNAPSHOT` or `0.4.0-SNAPSHOT`
-- first bugfix after release: `0.3.1`
-- next feature milestone: `0.4.0`
+- current milestone: `0.4.0`
+- next in-progress line after release: `0.4.1-SNAPSHOT` or `0.5.0-SNAPSHOT`
+- first bugfix after release: `0.4.1`
+- next feature milestone: `0.5.0`
 
 ## Release Policy
 

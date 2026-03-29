@@ -23,8 +23,8 @@ public final class NexoriTargetHelpCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoritargetshow <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoritargetremove <targetId>"));
         ctx.sendMessage(Message.raw("Kinds: NATURAL_SPAWN, COORDINATE, PORTAL"));
-        ctx.sendMessage(Message.raw("/nexoritargetwizard opens the guided in-game wizard."));
-        ctx.sendMessage(Message.raw("COORDINATE and PORTAL capture your current position and look direction when you run /nexoritargetadd."));
-        ctx.sendMessage(Message.raw("NATURAL_SPAWN uses the world spawn and does not need saved coordinates."));
+        ctx.sendMessage(Message.raw("/nexoritargetwizard opens the in-game target manager, where you can create, continue, edit, or remove targets."));
+        ctx.sendMessage(Message.raw("/nexoritargetadd is now intended only for COORDINATE targets."));
+        ctx.sendMessage(Message.raw("NATURAL_SPAWN is generated automatically once per world, and PORTAL targets are created automatically when you place a Nexori portal."));
     }
 }

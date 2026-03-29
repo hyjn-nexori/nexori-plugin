@@ -11,7 +11,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
-import io.github.hyjn.nexori.plugin.ui.NexoriTargetWizardPage;
+import io.github.hyjn.nexori.plugin.ui.NexoriTargetManagerPage;
 
 import javax.annotation.Nonnull;
 
@@ -20,7 +20,7 @@ public final class NexoriTargetWizardCommand extends AbstractPlayerCommand {
     private final NexoriPlugin plugin;
 
     public NexoriTargetWizardCommand(@Nonnull NexoriPlugin plugin) {
-        super("nexoritargetwizard", "Opens the Nexori destination target creation wizard.");
+        super("nexoritargetwizard", "Opens the Nexori destination target manager and guided wizard.");
         this.plugin = plugin;
         setPermissionGroup(GameMode.Adventure);
     }
@@ -44,16 +44,15 @@ public final class NexoriTargetWizardCommand extends AbstractPlayerCommand {
             return;
         }
 
-        NexoriTargetWizardPage.open(
+        NexoriTargetManagerPage.open(
             ref,
             store,
             playerRef,
             player,
             plugin.getDestinationTargetService(),
-            0,
-            "",
-            "",
-            "",
+            plugin.getPortalInstanceService(),
+            plugin.getPortalInteractionService(),
+            plugin.getTargetSetupDraftService(),
             "",
             ""
         );

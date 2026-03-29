@@ -58,6 +58,17 @@ public final class PortalInstanceService {
     }
 
     @Nonnull
+    public synchronized Optional<PortalInstanceDefinition> findByAutoDestinationTargetId(@Nonnull String targetId) {
+        if (targetId == null || targetId.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedTargetId = targetId.trim().toLowerCase();
+        return portalsById.values().stream()
+            .filter(portal -> portal.autoDestinationTargetId().equals(normalizedTargetId))
+            .findFirst();
+    }
+
+    @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findByLocation(@Nonnull String worldName, @Nonnull Vector3i blockPosition) {
         String locationKey = PortalInstanceDefinition.locationKey(worldName, blockPosition.getX(), blockPosition.getY(), blockPosition.getZ());
         return portalsById.values().stream()
@@ -162,6 +173,53 @@ public final class PortalInstanceService {
         triggerBindingService.removeBindingsForSource(portal.portalId());
         persist();
         return true;
+    }
+
+    @Nonnull
+    public synchronized PortalInstanceDefinition renamePortalAndTarget(
+        @Nonnull String targetId,
+        @Nonnull String displayName
+    ) throws IOException {
+        String normalizedTargetId = targetId.trim().toLowerCase();
+        String normalizedDisplayName = displayName.trim();
+        if (normalizedTargetId.isBlank()) {
+            throw new IllegalArgumentException("Portal target id cannot be blank.");
+        }
+        if (normalizedDisplayName.isBlank()) {
+            throw new IllegalArgumentException("Portal display name cannot be blank.");
+        }
+
+        PortalInstanceDefinition current = findByAutoDestinationTargetId(normalizedTargetId)
+            .orElseThrow(() -> new IllegalArgumentException("That destination target is not linked to a Nexori portal."));
+        DestinationTargetDefinition target = destinationTargetService.find(normalizedTargetId)
+            .orElseThrow(() -> new IllegalArgumentException("That Nexori destination target does not exist."));
+
+        DestinationTargetDefinition updatedTarget = new DestinationTargetDefinition(
+            target.id(),
+            normalizedDisplayName,
+            target.kind(),
+            target.worldName(),
+            target.arrivalPointId(),
+            target.arrivalMessage(),
+            target.metadataJson()
+        );
+        destinationTargetService.upsert(updatedTarget);
+
+        PortalInstanceDefinition updatedPortal = new PortalInstanceDefinition(
+            current.portalId(),
+            normalizedDisplayName,
+            current.worldName(),
+            current.blockX(),
+            current.blockY(),
+            current.blockZ(),
+            current.autoDestinationTargetId(),
+            current.enabled(),
+            current.createdAtEpochMillis(),
+            System.currentTimeMillis()
+        ).normalized();
+        portalsById.put(updatedPortal.portalId(), updatedPortal);
+        persist();
+        return updatedPortal;
     }
 
     @Nonnull

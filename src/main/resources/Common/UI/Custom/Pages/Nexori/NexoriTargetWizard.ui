@@ -108,27 +108,11 @@ $C.@Container {
         Visible: false;
 
         Label {
-          Text: "Target Details";
+          Text: "Display Name";
           Style: (RenderBold: true, TextColor: $T.@StrongText);
         }
 
         Group { Anchor: (Height: 8); }
-
-        Group #TargetIdField {
-          LayoutMode: Left;
-          TextField #Input {
-            Anchor: (Width: 360, Height: 36);
-            Padding: (Left: 8);
-            Style: (FontSize: 16);
-            PlaceholderText: "target id";
-            PlaceholderStyle: (FontSize: 13, TextColor: #667488);
-            Background: #0F0F1A;
-            MaxLength: 160;
-            Value: "";
-          }
-        }
-
-        Group { Anchor: (Height: 10); }
 
         Group #DisplayNameField {
           LayoutMode: Left;
@@ -137,22 +121,6 @@ $C.@Container {
             Padding: (Left: 8);
             Style: (FontSize: 16);
             PlaceholderText: "display name";
-            PlaceholderStyle: (FontSize: 13, TextColor: #667488);
-            Background: #0F0F1A;
-            MaxLength: 160;
-            Value: "";
-          }
-        }
-
-        Group { Anchor: (Height: 10); }
-
-        Group #ArrivalPointField {
-          LayoutMode: Left;
-          TextField #Input {
-            Anchor: (Width: 360, Height: 36);
-            Padding: (Left: 8);
-            Style: (FontSize: 16);
-            PlaceholderText: "arrival point id";
             PlaceholderStyle: (FontSize: 13, TextColor: #667488);
             Background: #0F0F1A;
             MaxLength: 160;
@@ -183,27 +151,9 @@ $C.@Container {
 
         Group {
           LayoutMode: Left;
-          Label { Text: "Target ID:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
-          Group { Anchor: (Width: 8); }
-          Label #ReviewTargetIdText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
-        }
-
-        Group { Anchor: (Height: 6); }
-
-        Group {
-          LayoutMode: Left;
           Label { Text: "Display Name:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
           Group { Anchor: (Width: 8); }
           Label #ReviewDisplayNameText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
-        }
-
-        Group { Anchor: (Height: 6); }
-
-        Group {
-          LayoutMode: Left;
-          Label { Text: "Arrival Point:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
-          Group { Anchor: (Width: 8); }
-          Label #ReviewArrivalPointText { Text: ""; Style: (TextColor: $T.@PrimaryText); }
         }
 
         Group { Anchor: (Height: 6); }

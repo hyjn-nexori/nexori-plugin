@@ -25,6 +25,9 @@ This repository currently contains the first usable slice of the plugin:
 - configurable Nexori portals with secure trigger bindings
 - built-in travel profiles for keeping, clearing, or applying inventory
 - manual backup/recover commands for `APPLY_INVENTORY`
+- guided in-game owner setup for destination targets and portal binding setup
+- per-player draft-aware setup flows that resume after destination discovery travel
+- target manager UI for listing, editing, and removing owner-managed targets
 
 ## Current Commands
 
@@ -40,6 +43,7 @@ Use these in game:
 /nexoristart
 /nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]
 /nexoritarget
+/nexoritargetwizard
 /nexoritargetlist
 /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>
 /nexoritargetshow <targetId>
@@ -55,6 +59,15 @@ Use these in game:
 /nexorirecover <transferId>
 /nexorimenu
 ```
+
+Normal owner setup now expects:
+
+- `/nexoritargetwizard` for the in-game target manager and guided target creation flow
+- portal interaction with `F` for the guided portal setup flow
+
+The raw command `/nexoritargetadd` is now mainly an advanced/manual path for
+coordinate targets. Natural spawn targets are generated automatically per world,
+and portal targets are generated automatically when a Nexori portal is placed.
 
 Saved data currently lives under the plugin data directory:
 
@@ -95,13 +108,13 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.3.0`.
+The current committed milestone is `0.4.0`.
 
-- `0.3.x` is for fixes and stability on trigger bindings, discovery, and travel profiles
-- `0.4.0` is planned for the first guided in-game owner setup UI
+- `0.4.x` is for fixes and stability on the new owner setup UI
+- `0.5.0` is planned for spawn/portal owner flow polish and more complete no-code loops
 - `1.0.0` is the target for the first non-coder-friendly adventure network kit
 
-The next active development line after this release is `0.4.0-SNAPSHOT`.
+The next active development line after this release is `0.5.0-SNAPSHOT`.
 
 ## Secure Referrals
 
@@ -113,11 +126,12 @@ travel after bootstrap.
 - the payload type is explicit so future protocols can reuse the same envelope
 - the first payload type implemented is `travel.direct`
 
-This is now the foundation for destination targets, portals, discovery, and
-inventory-aware travel profiles without redesigning the security model.
+This is now the foundation for destination targets, portals, discovery,
+inventory-aware travel profiles, and the first complete guided owner setup
+flows without redesigning the security model.
 
-The next milestone is polishing the no-code owner setup flow on top of these
-secure referrals.
+The next milestone is polishing those owner flows and simplifying the remaining
+rough edges in the no-code setup experience.
 
 ## Development Notes
 
