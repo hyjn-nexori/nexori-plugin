@@ -10,6 +10,7 @@ import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
+import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -29,6 +30,7 @@ public final class BootstrapCoordinator {
     private final ServerIdentity localIdentity;
     private final BootstrapStateStore bootstrapStateStore;
     private final ConfiguredPeerService configuredPeerService;
+    private final LocalConnectionAddressService localConnectionAddressService;
     private final BootstrapRunStore bootstrapRunStore;
     private final TrustBundleStore trustBundleStore;
     private final BootstrapPayloadCodec payloadCodec;
@@ -40,6 +42,7 @@ public final class BootstrapCoordinator {
         @Nonnull ServerIdentity localIdentity,
         @Nonnull BootstrapStateStore bootstrapStateStore,
         @Nonnull ConfiguredPeerService configuredPeerService,
+        @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull BootstrapRunStore bootstrapRunStore,
         @Nonnull TrustBundleStore trustBundleStore
     ) {
@@ -48,6 +51,7 @@ public final class BootstrapCoordinator {
         this.localIdentity = localIdentity;
         this.bootstrapStateStore = bootstrapStateStore;
         this.configuredPeerService = configuredPeerService;
+        this.localConnectionAddressService = localConnectionAddressService;
         this.bootstrapRunStore = bootstrapRunStore;
         this.trustBundleStore = trustBundleStore;
         this.payloadCodec = new BootstrapPayloadCodec();
@@ -197,7 +201,12 @@ public final class BootstrapCoordinator {
                 );
                 updatedRun = currentRun.withVerifiedPeer(verifiedPeer);
             } else {
-                logger.atInfo().log("Skipping Nexori proof response because the configured peer resolved back to the origin server.");
+                try {
+                    localConnectionAddressService.save(connectionAddress);
+                    logger.atInfo().log("Captured the local Nexori connection address as " + connectionAddress + ".");
+                } catch (IOException | IllegalArgumentException exception) {
+                    logger.atWarning().withCause(exception).log("Failed to persist the local Nexori connection address " + connectionAddress + ".");
+                }
             }
 
             int nextPeerIndex = updatedRun.currentPeerIndex() + 1;
@@ -228,7 +237,12 @@ public final class BootstrapCoordinator {
 
     private void beginBundleInstallation(@Nonnull BootstrapRun run, @Nonnull PlayerSetupConnectEvent event) throws IOException {
         long nextBundleVersion = bootstrapStateStore.getCurrentState().bundleVersion() + 1;
-        TrustBundle bundle = trustBundleStore.saveVerifiedMembers(localIdentity, run.verifiedPeers(), nextBundleVersion);
+            TrustBundle bundle = trustBundleStore.saveVerifiedMembers(
+                localIdentity,
+                resolveLocalConnectionAddress(run),
+                run.verifiedPeers(),
+                nextBundleVersion
+            );
         List<ConfiguredPeer> installPeers = peersForInstallation(bundle);
 
         if (installPeers.isEmpty()) {
@@ -369,6 +383,31 @@ public final class BootstrapCoordinator {
                 && localIdentity.publicKeyBase64().equals(member.publicKeyBase64());
         }
         return false;
+    }
+
+    @Nonnull
+    private String resolveLocalConnectionAddress(@Nonnull BootstrapRun run) {
+        String persisted = localConnectionAddressService.getConnectionAddressOrBlank();
+        if (!persisted.isBlank()) {
+            return persisted;
+        }
+
+        List<ConfiguredPeer> unmatchedPeers = run.peers().stream()
+            .filter(peer -> run.verifiedPeers().stream().noneMatch(member -> peer.connectionAddress().equalsIgnoreCase(member.connectionAddress())))
+            .toList();
+
+        if (unmatchedPeers.size() == 1) {
+            String inferred = unmatchedPeers.getFirst().connectionAddress();
+            try {
+                localConnectionAddressService.save(inferred);
+                logger.atInfo().log("Inferred the local Nexori connection address as " + inferred + " during bundle installation.");
+            } catch (IOException | IllegalArgumentException exception) {
+                logger.atWarning().withCause(exception).log("Failed to persist the inferred local Nexori connection address " + inferred + ".");
+            }
+            return inferred;
+        }
+
+        return "";
     }
 
     @Nonnull

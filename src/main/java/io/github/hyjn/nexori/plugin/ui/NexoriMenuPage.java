@@ -5,6 +5,8 @@ import com.hypixel.hytale.codec.KeyedCodec;
 import com.hypixel.hytale.codec.builder.BuilderCodec;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.math.vector.Transform;
+import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
 import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBindingType;
 import com.hypixel.hytale.protocol.packets.interface_.Page;
@@ -13,62 +15,94 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.choices.ChoiceElement;
+import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.ui.builder.EventData;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
+import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
+import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
-import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
+import io.github.hyjn.nexori.plugin.policy.ServerPolicySummary;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
+import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
+import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.security.GeneralSecurityException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage.PageData> {
 
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+        .withZone(ZoneId.systemDefault());
+
     private static final int TAB_INDEX_BASE = 1000;
     private static final int PEER_INDEX_BASE = 2000;
-    private static final int ACTION_ADD_INDEX = 3000;
-    private static final int ACTION_START_INDEX = 3001;
-    private static final int ACTION_REMOVE_INDEX = 3002;
+    private static final int PORTAL_INDEX_BASE = 3000;
 
+    private static final int ACTION_ADD_INDEX = 4000;
+    private static final int ACTION_START_INDEX = 4001;
+    private static final int ACTION_REMOVE_INDEX = 4002;
+
+    private static final int ACTION_RULES_TOGGLE_RECOVERY_INDEX = 5000;
+    private static final int ACTION_RULES_LIMIT_DECREASE_INDEX = 5001;
+    private static final int ACTION_RULES_LIMIT_INCREASE_INDEX = 5002;
+    private static final int ACTION_RULES_REFRESH_SELECTED_INDEX = 5003;
+    private static final int ACTION_RULES_APPLY_SELECTED_INDEX = 5004;
+
+    private static final int ACTION_OPEN_TARGET_MANAGER_INDEX = 6000;
+
+    private final NexoriPlugin plugin;
     private final PlayerRef playerRef;
     private final String adminPermission;
-    private final ConfiguredPeerService configuredPeerService;
-    private final BootstrapCoordinator bootstrapCoordinator;
     private final ChoiceElement[] tabElements;
-    private final ConfiguredPeer[] peers;
+    private final List<ConfiguredPeer> peers;
+    private final List<PortalInstanceDefinition> portals;
     private final boolean canManageThisServer;
+    private final MenuTab activeTab;
     private final String selectedPeerAddress;
+    private final String selectedPortalId;
     private final boolean addPeerMode;
     private final String addPeerConnectionAddress;
     private final String statusText;
 
     private NexoriMenuPage(
+        @Nonnull NexoriPlugin plugin,
         @Nonnull PlayerRef playerRef,
         @Nonnull String adminPermission,
-        @Nonnull ConfiguredPeerService configuredPeerService,
-        @Nonnull BootstrapCoordinator bootstrapCoordinator,
         @Nonnull ChoiceElement[] tabElements,
-        @Nonnull ConfiguredPeer[] peers,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull List<PortalInstanceDefinition> portals,
         boolean canManageThisServer,
+        @Nonnull MenuTab activeTab,
         @Nonnull String selectedPeerAddress,
+        @Nonnull String selectedPortalId,
         boolean addPeerMode,
         @Nonnull String addPeerConnectionAddress,
         @Nonnull String statusText
     ) {
         super(playerRef, CustomPageLifetime.CanDismissOrCloseThroughInteraction, PageData.CODEC);
+        this.plugin = plugin;
         this.playerRef = playerRef;
         this.adminPermission = adminPermission;
-        this.configuredPeerService = configuredPeerService;
-        this.bootstrapCoordinator = bootstrapCoordinator;
         this.tabElements = tabElements;
         this.peers = peers;
+        this.portals = portals;
         this.canManageThisServer = canManageThisServer;
+        this.activeTab = activeTab;
         this.selectedPeerAddress = selectedPeerAddress;
+        this.selectedPortalId = selectedPortalId;
         this.addPeerMode = addPeerMode;
         this.addPeerConnectionAddress = addPeerConnectionAddress;
         this.statusText = statusText;
@@ -79,23 +113,25 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
         Player player,
-        @Nonnull String adminPermission,
-        @Nonnull ConfiguredPeerService configuredPeerService,
-        @Nonnull BootstrapCoordinator bootstrapCoordinator
+        @Nonnull NexoriPlugin plugin
     ) {
-        show(
-            ref,
-            store,
-            playerRef,
-            player,
-            adminPermission,
-            configuredPeerService,
-            bootstrapCoordinator,
-            null,
-            false,
-            "",
-            ""
-        );
+        show(ref, store, playerRef, player, plugin, MenuTab.SERVERS, null, null, false, "", "");
+    }
+
+    public static void open(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull MenuTab activeTab,
+        String selectedPeerAddress,
+        String selectedPortalId,
+        boolean addPeerMode,
+        @Nonnull String addPeerConnectionAddress,
+        @Nonnull String statusText
+    ) {
+        show(ref, store, playerRef, player, plugin, activeTab, selectedPeerAddress, selectedPortalId, addPeerMode, addPeerConnectionAddress, statusText);
     }
 
     private static void show(
@@ -103,10 +139,10 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
         Player player,
-        @Nonnull String adminPermission,
-        @Nonnull ConfiguredPeerService configuredPeerService,
-        @Nonnull BootstrapCoordinator bootstrapCoordinator,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull MenuTab activeTab,
         String selectedPeerAddress,
+        String selectedPortalId,
         boolean addPeerMode,
         @Nonnull String addPeerConnectionAddress,
         @Nonnull String statusText
@@ -117,52 +153,48 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             return;
         }
 
-        boolean canManageThisServer = NexoriOperatorAccess.canManage(playerRef, player, adminPermission + ".admin");
+        boolean canManageThisServer = NexoriOperatorAccess.canManage(playerRef, player, plugin.getBasePermission() + ".admin");
         pages.openCustomPage(
             ref,
             store,
-            create(
-                playerRef,
-                adminPermission,
-                configuredPeerService,
-                bootstrapCoordinator,
-                selectedPeerAddress,
-                canManageThisServer,
-                addPeerMode,
-                addPeerConnectionAddress,
-                statusText
-            )
+            create(plugin, playerRef, canManageThisServer, activeTab, selectedPeerAddress, selectedPortalId, addPeerMode && activeTab == MenuTab.SERVERS, addPeerConnectionAddress, statusText)
         );
     }
 
     @Nonnull
     private static NexoriMenuPage create(
+        @Nonnull NexoriPlugin plugin,
         @Nonnull PlayerRef playerRef,
-        @Nonnull String adminPermission,
-        @Nonnull ConfiguredPeerService configuredPeerService,
-        @Nonnull BootstrapCoordinator bootstrapCoordinator,
-        String selectedPeerAddress,
         boolean canManageThisServer,
+        @Nonnull MenuTab activeTab,
+        String selectedPeerAddress,
+        String selectedPortalId,
         boolean addPeerMode,
         @Nonnull String addPeerConnectionAddress,
         @Nonnull String statusText
     ) {
-        List<ConfiguredPeer> savedPeers = configuredPeerService.list();
+        List<ConfiguredPeer> savedPeers = plugin.getConfiguredPeerService().list();
+        List<PortalInstanceDefinition> savedPortals = plugin.getPortalInstanceService().list();
         String resolvedSelectedPeerAddress = resolveSelectedPeerAddress(savedPeers, selectedPeerAddress);
+        String resolvedSelectedPortalId = resolveSelectedPortalId(savedPortals, selectedPortalId);
 
-        ChoiceElement[] tabElements = new ChoiceElement[] {
-            new NexoriTabElement("Peers", true)
-        };
+        MenuTab[] tabs = MenuTab.values();
+        ChoiceElement[] tabElements = new ChoiceElement[tabs.length];
+        for (int index = 0; index < tabs.length; index++) {
+            tabElements[index] = new NexoriTabElement(tabs[index].label, tabs[index] == activeTab);
+        }
 
         return new NexoriMenuPage(
+            plugin,
             playerRef,
-            adminPermission,
-            configuredPeerService,
-            bootstrapCoordinator,
+            plugin.getBasePermission(),
             tabElements,
-            savedPeers.toArray(ConfiguredPeer[]::new),
+            savedPeers,
+            savedPortals,
             canManageThisServer,
+            activeTab,
             resolvedSelectedPeerAddress,
+            resolvedSelectedPortalId,
             addPeerMode,
             addPeerConnectionAddress,
             statusText
@@ -177,7 +209,13 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         @Nonnull Store<EntityStore> store
     ) {
         commands.append("Pages/Nexori/NexoriHome.ui");
-        commands.append("#BodyHost", "Pages/Nexori/NexoriPeersBody.ui");
+
+        switch (activeTab) {
+            case SERVERS -> commands.append("#BodyHost", "Pages/Nexori/NexoriPeersBody.ui");
+            case RULES -> commands.append("#BodyHost", "Pages/Nexori/NexoriRulesBody.ui");
+            case TARGETS -> commands.append("#BodyHost", "Pages/Nexori/NexoriTargetsBody.ui");
+            case PORTALS -> commands.append("#BodyHost", "Pages/Nexori/NexoriPortalsBody.ui");
+        }
 
         for (int i = 0; i < tabElements.length; i++) {
             String selector = "#TabsList[" + i + "]";
@@ -185,7 +223,12 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             bindIndex(events, selector, TAB_INDEX_BASE + i);
         }
 
-        buildPeersBody(commands, events);
+        switch (activeTab) {
+            case SERVERS -> buildServersBody(commands, events);
+            case RULES -> buildRulesBody(commands, events);
+            case TARGETS -> buildTargetsBody(commands, events);
+            case PORTALS -> buildPortalsBody(commands, events);
+        }
     }
 
     @Override
@@ -206,15 +249,35 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         }
 
         Integer index = parseIndex(data.indexRaw);
-        if (index == null || index == TAB_INDEX_BASE) {
+        if (index == null) {
             return;
         }
 
+        if (index >= TAB_INDEX_BASE && index < TAB_INDEX_BASE + MenuTab.values().length) {
+            MenuTab nextTab = MenuTab.values()[index - TAB_INDEX_BASE];
+            reopen(ref, store, player, nextTab, selectedPeerAddress, selectedPortalId, false, "", "");
+            return;
+        }
+
+        switch (activeTab) {
+            case SERVERS -> handleServersIndex(ref, store, player, index);
+            case RULES -> handleRulesIndex(ref, store, player, index);
+            case TARGETS -> handleTargetsIndex(ref, store, player, index);
+            case PORTALS -> handlePortalsIndex(ref, store, player, index);
+        }
+    }
+
+    private void handleServersIndex(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player,
+        int index
+    ) {
         if (index == ACTION_ADD_INDEX) {
             if (!canManageThisServer) {
                 return;
             }
-            show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeerAddress, true, "", "");
+            reopen(ref, store, player, MenuTab.SERVERS, selectedPeerAddress, selectedPortalId, true, "", "");
             return;
         }
 
@@ -223,14 +286,14 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
                 return;
             }
 
-            BootstrapCoordinator.StartResult result = bootstrapCoordinator.start(playerRef);
+            BootstrapCoordinator.StartResult result = plugin.getBootstrapCoordinator().start(playerRef);
             if (result.started()) {
                 PageManager pages = player.getPageManager();
                 if (pages != null) {
                     pages.setPage(ref, store, Page.None);
                 }
             } else {
-                show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeerAddress, false, "", result.message());
+                reopen(ref, store, player, MenuTab.SERVERS, selectedPeerAddress, selectedPortalId, false, "", result.message());
             }
             return;
         }
@@ -246,17 +309,99 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             }
 
             try {
-                configuredPeerService.remove(selectedPeer.connectionAddress());
-                show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, null, false, "", "Removed " + selectedPeer.connectionAddress() + ".");
+                plugin.getConfiguredPeerService().remove(selectedPeer.connectionAddress());
+                reopen(ref, store, player, MenuTab.SERVERS, null, selectedPortalId, false, "", "Removed " + selectedPeer.connectionAddress() + ".");
             } catch (IOException | IllegalArgumentException exception) {
-                show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeerAddress, false, "", "Failed to remove peer: " + exception.getMessage());
+                reopen(ref, store, player, MenuTab.SERVERS, selectedPeerAddress, selectedPortalId, false, "", "Failed to remove peer: " + exception.getMessage());
             }
             return;
         }
 
-        if (index >= PEER_INDEX_BASE && index < PEER_INDEX_BASE + peers.length) {
-            ConfiguredPeer selectedPeer = peers[index - PEER_INDEX_BASE];
-            show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeer.connectionAddress(), false, "", statusText);
+        if (index >= PEER_INDEX_BASE && index < PEER_INDEX_BASE + peers.size()) {
+            ConfiguredPeer selectedPeer = peers.get(index - PEER_INDEX_BASE);
+            reopen(ref, store, player, MenuTab.SERVERS, selectedPeer.connectionAddress(), selectedPortalId, false, "", statusText);
+        }
+    }
+
+    private void handleRulesIndex(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player,
+        int index
+    ) {
+        if (index >= PEER_INDEX_BASE && index < PEER_INDEX_BASE + peers.size()) {
+            ConfiguredPeer selectedPeer = peers.get(index - PEER_INDEX_BASE);
+            reopen(ref, store, player, MenuTab.RULES, selectedPeer.connectionAddress(), selectedPortalId, false, "", "");
+            return;
+        }
+
+        if (!canManageThisServer) {
+            return;
+        }
+
+        InventoryTransferService inventoryTransferService = plugin.getInventoryTransferService();
+        try {
+            switch (index) {
+                case ACTION_RULES_TOGGLE_RECOVERY_INDEX -> {
+                    inventoryTransferService.setRecoveryEnabled(!inventoryTransferService.isRecoveryEnabled());
+                    reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", "Updated this server's recovery rule.");
+                }
+                case ACTION_RULES_LIMIT_DECREASE_INDEX -> {
+                    inventoryTransferService.setMaxBackupsPerPlayer(Math.max(1, inventoryTransferService.getMaxBackupsPerPlayer() - 1));
+                    reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", "Lowered this server's per-player backup limit.");
+                }
+                case ACTION_RULES_LIMIT_INCREASE_INDEX -> {
+                    inventoryTransferService.setMaxBackupsPerPlayer(Math.min(50, inventoryTransferService.getMaxBackupsPerPlayer() + 1));
+                    reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", "Raised this server's per-player backup limit.");
+                }
+                case ACTION_RULES_REFRESH_SELECTED_INDEX -> startPolicyRefresh(ref, store, player);
+                case ACTION_RULES_APPLY_SELECTED_INDEX -> startPolicyApply(ref, store, player);
+                default -> {
+                }
+            }
+        } catch (IOException exception) {
+            reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", "Could not save the local Nexori rules: " + exception.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", exception.getMessage());
+        } catch (GeneralSecurityException exception) {
+            reopen(ref, store, player, MenuTab.RULES, selectedPeerAddress, selectedPortalId, false, "", "The secure Nexori policy sync could not start: " + exception.getMessage());
+        }
+    }
+
+    private void handleTargetsIndex(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player,
+        int index
+    ) {
+        if (index != ACTION_OPEN_TARGET_MANAGER_INDEX) {
+            return;
+        }
+
+        NexoriTargetManagerPage.open(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin.getDestinationTargetService(),
+            plugin.getPortalInstanceService(),
+            plugin.getPortalInteractionService(),
+            plugin.getTargetSetupDraftService(),
+            "",
+            ""
+        );
+    }
+
+    private void handlePortalsIndex(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player,
+        int index
+    ) {
+        if (index >= PORTAL_INDEX_BASE && index < PORTAL_INDEX_BASE + portals.size()) {
+            PortalInstanceDefinition portal = portals.get(index - PORTAL_INDEX_BASE);
+            reopen(ref, store, player, MenuTab.PORTALS, selectedPeerAddress, portal.portalId(), false, "", "");
+            return;
         }
     }
 
@@ -268,43 +413,41 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         @Nonnull PageData data
     ) {
         if (action == Action.CANCEL_ADD_PEER) {
-            show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeerAddress, false, "", "");
+            reopen(ref, store, player, MenuTab.SERVERS, selectedPeerAddress, selectedPortalId, false, "", "");
             return;
         }
 
         if (action == Action.SAVE_PEER) {
             try {
-                ConfiguredPeer savedPeer = configuredPeerService.add(safe(data.connectionAddress).trim());
-                show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, savedPeer.connectionAddress(), false, "", "Saved " + savedPeer.connectionAddress() + ".");
+                ConfiguredPeer savedPeer = plugin.getConfiguredPeerService().add(safe(data.connectionAddress).trim());
+                reopen(ref, store, player, MenuTab.SERVERS, savedPeer.connectionAddress(), selectedPortalId, false, "", "Saved " + savedPeer.connectionAddress() + ".");
             } catch (IOException | IllegalArgumentException exception) {
-                show(ref, store, playerRef, player, adminPermission, configuredPeerService, bootstrapCoordinator, selectedPeerAddress, true, safe(data.connectionAddress).trim(), exception.getMessage());
+                reopen(ref, store, player, MenuTab.SERVERS, selectedPeerAddress, selectedPortalId, true, safe(data.connectionAddress).trim(), exception.getMessage());
             }
         }
     }
 
-    private void buildPeersBody(@Nonnull UICommandBuilder commands, @Nonnull UIEventBuilder events) {
+    private void buildServersBody(@Nonnull UICommandBuilder commands, @Nonnull UIEventBuilder events) {
         commands.set("#AddPeerButton.Visible", canManageThisServer);
-        commands.set("#RunBootstrapButton.Visible", canManageThisServer && peers.length > 0);
-        commands.set("#PeerCountText.Text", peers.length + " saved peer(s)");
+        commands.set("#RunBootstrapButton.Visible", canManageThisServer && !peers.isEmpty());
+        commands.set("#PeerCountText.Text", peers.size() + " saved peer(s)");
 
         bindIndex(events, "#AddPeerButton", ACTION_ADD_INDEX);
         bindIndex(events, "#RunBootstrapButton", ACTION_START_INDEX);
         bindIndex(events, "#RemovePeerButton", ACTION_REMOVE_INDEX);
 
-        for (int i = 0; i < peers.length; i++) {
-            ConfiguredPeer peer = peers[i];
+        for (int i = 0; i < peers.size(); i++) {
+            ConfiguredPeer peer = peers.get(i);
             BundleMember verifiedMember = findVerifiedMember(peer.connectionAddress());
             String description = verifiedMember == null
                 ? "Awaiting proof verification"
                 : "Verified as " + verifiedMember.serverId();
-            ChoiceElement peerElement = new NexoriPeerEntryElement(
+            new NexoriPeerEntryElement(
                 peer.connectionAddress(),
                 description,
                 peer.connectionAddress().equals(selectedPeerAddress)
-            );
-            String selector = "#PeerList[" + i + "]";
-            peerElement.addButton(commands, events, selector, playerRef);
-            bindIndex(events, selector, PEER_INDEX_BASE + i);
+            ).addButton(commands, events, "#PeerList[" + i + "]", playerRef);
+            bindIndex(events, "#PeerList[" + i + "]", PEER_INDEX_BASE + i);
         }
 
         events.addEventBinding(
@@ -320,10 +463,102 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             new EventData().append("Action", Action.CANCEL_ADD_PEER.name())
         );
 
-        applyRightPanel(commands);
+        applyServersRightPanel(commands);
     }
 
-    private void applyRightPanel(@Nonnull UICommandBuilder commands) {
+    private void buildRulesBody(@Nonnull UICommandBuilder commands, @Nonnull UIEventBuilder events) {
+        InventoryTransferService inventoryTransferService = plugin.getInventoryTransferService();
+        ServerPolicySummary cachedPolicy = plugin.getServerPolicyCacheService().find(selectedPeerAddress).orElse(null);
+
+        commands.set("#PeerCountText.Text", peers.size() + " configured server(s)");
+        commands.set("#StatusText.Text", statusText);
+        commands.set("#StatusText.Visible", !statusText.isBlank());
+
+        for (int i = 0; i < peers.size(); i++) {
+            ConfiguredPeer peer = peers.get(i);
+            ServerPolicySummary summary = plugin.getServerPolicyCacheService().find(peer.connectionAddress()).orElse(null);
+            String description = summary == null
+                ? "No confirmed rules cached yet"
+                : "Confirmed " + TIME_FORMAT.format(Instant.ofEpochMilli(summary.confirmedAtEpochMillis()));
+            new NexoriPeerEntryElement(
+                peer.connectionAddress(),
+                description,
+                peer.connectionAddress().equals(selectedPeerAddress)
+            ).addButton(commands, events, "#PeerList[" + i + "]", playerRef);
+            bindIndex(events, "#PeerList[" + i + "]", PEER_INDEX_BASE + i);
+        }
+
+        commands.set("#LocalRecoveryModeText.Text", inventoryTransferService.isRecoveryEnabled() ? "Enabled" : "Disabled");
+        commands.set("#LocalBackupLimitText.Text", inventoryTransferService.getMaxBackupsPerPlayer() + " backup(s) per player");
+        commands.set("#ToggleRecoveryButton.Visible", canManageThisServer);
+        commands.set("#DecreaseBackupLimitButton.Visible", canManageThisServer);
+        commands.set("#IncreaseBackupLimitButton.Visible", canManageThisServer);
+        commands.set("#RefreshSelectedRulesButton.Visible", canManageThisServer && !selectedPeerAddress.isBlank());
+        commands.set("#ApplyLocalRulesButton.Visible", canManageThisServer && !selectedPeerAddress.isBlank());
+
+        commands.set("#SelectedRulePeerAddress.Text", selectedPeerAddress.isBlank() ? "<no server selected>" : selectedPeerAddress);
+        commands.set("#SelectedRulePeerConfirmation.Text", cachedPolicy == null
+            ? "No confirmed rules cached yet for this server."
+            : "Confirmed from " + cachedPolicy.remoteServerId() + " at " + TIME_FORMAT.format(Instant.ofEpochMilli(cachedPolicy.confirmedAtEpochMillis())));
+        commands.set("#SelectedRulePeerRecovery.Text", cachedPolicy == null ? "<unknown>" : cachedPolicy.recoveryEnabled() ? "Enabled" : "Disabled");
+        commands.set("#SelectedRulePeerBackupLimit.Text", cachedPolicy == null ? "<unknown>" : Integer.toString(cachedPolicy.maxBackupsPerPlayer()));
+
+        bindIndex(events, "#ToggleRecoveryButton", ACTION_RULES_TOGGLE_RECOVERY_INDEX);
+        bindIndex(events, "#DecreaseBackupLimitButton", ACTION_RULES_LIMIT_DECREASE_INDEX);
+        bindIndex(events, "#IncreaseBackupLimitButton", ACTION_RULES_LIMIT_INCREASE_INDEX);
+        bindIndex(events, "#RefreshSelectedRulesButton", ACTION_RULES_REFRESH_SELECTED_INDEX);
+        bindIndex(events, "#ApplyLocalRulesButton", ACTION_RULES_APPLY_SELECTED_INDEX);
+    }
+
+    private void buildTargetsBody(@Nonnull UICommandBuilder commands, @Nonnull UIEventBuilder events) {
+        List<DestinationTargetDefinition> targets = plugin.getDestinationTargetService().list();
+        long naturalSpawnCount = targets.stream().filter(target -> target.kind() == DestinationTargetKind.NATURAL_SPAWN).count();
+        long coordinateCount = targets.stream().filter(target -> target.kind() == DestinationTargetKind.COORDINATE).count();
+        long portalCount = targets.stream().filter(target -> target.kind() == DestinationTargetKind.PORTAL).count();
+
+        commands.set("#TargetsSummaryText.Text", targets.size() + " total destination target(s) on this server.");
+        commands.set("#TargetsDetailText.Text", "Natural spawn: " + naturalSpawnCount
+            + " / Coordinate: " + coordinateCount
+            + " / Portal: " + portalCount
+            + ". Use the target manager for create/edit/remove flows.");
+        bindIndex(events, "#OpenTargetManagerButton", ACTION_OPEN_TARGET_MANAGER_INDEX);
+    }
+
+    private void buildPortalsBody(@Nonnull UICommandBuilder commands, @Nonnull UIEventBuilder events) {
+        commands.set("#PortalCountText.Text", portals.size() + " portal(s)");
+        for (int i = 0; i < portals.size(); i++) {
+            PortalInstanceDefinition portal = portals.get(i);
+            String description = portal.worldName()
+                + " @ (" + portal.blockPosition().getX() + ", " + portal.blockPosition().getY() + ", " + portal.blockPosition().getZ() + ")";
+            new NexoriPortalEntryElement(
+                portal.displayName(),
+                description,
+                portal.portalId().equals(selectedPortalId)
+            ).addButton(commands, events, "#PortalList[" + i + "]", playerRef);
+            bindIndex(events, "#PortalList[" + i + "]", PORTAL_INDEX_BASE + i);
+        }
+
+        PortalInstanceDefinition selectedPortal = findSelectedPortal();
+        TriggerBindingDefinition binding = selectedPortal == null
+            ? null
+            : plugin.getTriggerBindingService().findPortalCollisionBinding(selectedPortal.portalId()).orElse(null);
+
+        commands.set("#SelectedPortalEmpty.Visible", selectedPortal == null);
+        commands.set("#SelectedPortalDetail.Visible", selectedPortal != null);
+        commands.set("#SelectedPortalName.Text", selectedPortal == null ? "" : selectedPortal.displayName());
+        commands.set("#SelectedPortalWorld.Text", selectedPortal == null ? "" : selectedPortal.worldName());
+        commands.set("#SelectedPortalPosition.Text", selectedPortal == null
+            ? ""
+            : "(" + selectedPortal.blockPosition().getX() + ", " + selectedPortal.blockPosition().getY() + ", " + selectedPortal.blockPosition().getZ() + ")");
+        commands.set("#SelectedPortalEnabled.Text", selectedPortal == null ? "" : selectedPortal.enabled() ? "Enabled" : "Disabled");
+        commands.set("#SelectedPortalTarget.Text", selectedPortal == null ? "" : selectedPortal.autoDestinationTargetId());
+        commands.set("#SelectedPortalBinding.Text", binding == null
+            ? "This portal does not have a saved collision binding yet."
+            : "Binding: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()
+                + " / profile " + binding.travelProfileId());
+    }
+
+    private void applyServersRightPanel(@Nonnull UICommandBuilder commands) {
         commands.set("#StatusText.Text", statusText);
         commands.set("#StatusText.Visible", !statusText.isBlank());
         commands.set("#DetailsHeader.Text", addPeerMode ? "ADD PEER" : "PEER DETAILS");
@@ -356,14 +591,79 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             ? "Not verified yet"
             : verifiedMember.serverId() + " / " + shorten(verifiedMember.fingerprint()));
         commands.set("#BundleStatusText.Text", "Bundle v"
-            + bootstrapCoordinator.getTrustBundle().bundleVersion()
+            + plugin.getBootstrapCoordinator().getTrustBundle().bundleVersion()
             + " / members "
-            + bootstrapCoordinator.getTrustBundle().members().size());
+            + plugin.getBootstrapCoordinator().getTrustBundle().members().size());
         commands.set("#RemovePeerButton.Visible", canManageThisServer);
     }
 
+    private void startPolicyRefresh(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player
+    ) throws IOException, GeneralSecurityException {
+        ConfiguredPeer selectedPeer = requireSelectedPeer();
+        plugin.getServerPolicySyncService().refresh(
+            playerRef,
+            selectedPeer,
+            player.getWorld().getName(),
+            captureCurrentTransform(store, ref),
+            resumeMenu(MenuTab.RULES, selectedPeer.connectionAddress(), selectedPortalId)
+        );
+        player.sendMessage(Message.raw("Nexori is refreshing rules from " + selectedPeer.connectionAddress() + "..."));
+    }
+
+    private void startPolicyApply(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player
+    ) throws IOException, GeneralSecurityException {
+        ConfiguredPeer selectedPeer = requireSelectedPeer();
+        InventoryTransferService inventoryTransferService = plugin.getInventoryTransferService();
+        plugin.getServerPolicySyncService().apply(
+            playerRef,
+            selectedPeer,
+            player.getWorld().getName(),
+            captureCurrentTransform(store, ref),
+            inventoryTransferService.isRecoveryEnabled(),
+            inventoryTransferService.getMaxBackupsPerPlayer(),
+            resumeMenu(MenuTab.RULES, selectedPeer.connectionAddress(), selectedPortalId)
+        );
+        player.sendMessage(Message.raw("Nexori is applying this server's rules to " + selectedPeer.connectionAddress() + "..."));
+    }
+
+    @Nonnull
+    private UiResumeAction resumeMenu(
+        @Nonnull MenuTab activeTab,
+        @Nonnull String selectedPeerAddress,
+        @Nonnull String selectedPortalId
+    ) {
+        return (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> NexoriMenuPage.open(
+            resumeRef,
+            resumeStore,
+            resumePlayerRef,
+            resumePlayer,
+            plugin,
+            activeTab,
+            selectedPeerAddress,
+            selectedPortalId,
+            false,
+            "",
+            ""
+        );
+    }
+
+    @Nonnull
+    private ConfiguredPeer requireSelectedPeer() {
+        ConfiguredPeer selectedPeer = findSelectedPeer();
+        if (selectedPeer == null) {
+            throw new IllegalStateException("Select a trusted server first.");
+        }
+        return selectedPeer;
+    }
+
     private BundleMember findVerifiedMember(@Nonnull String connectionAddress) {
-        for (BundleMember member : bootstrapCoordinator.getTrustBundle().members()) {
+        for (BundleMember member : plugin.getBootstrapCoordinator().getTrustBundle().members()) {
             if (connectionAddress.equals(member.connectionAddress())) {
                 return member;
             }
@@ -375,6 +675,15 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         for (ConfiguredPeer peer : peers) {
             if (peer.connectionAddress().equals(selectedPeerAddress)) {
                 return peer;
+            }
+        }
+        return null;
+    }
+
+    private PortalInstanceDefinition findSelectedPortal() {
+        for (PortalInstanceDefinition portal : portals) {
+            if (portal.portalId().equals(selectedPortalId)) {
+                return portal;
             }
         }
         return null;
@@ -393,6 +702,32 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
         }
     }
 
+    private void reopen(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        Player player,
+        @Nonnull MenuTab activeTab,
+        String selectedPeerAddress,
+        String selectedPortalId,
+        boolean addPeerMode,
+        @Nonnull String addPeerConnectionAddress,
+        @Nonnull String statusText
+    ) {
+        open(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            activeTab,
+            selectedPeerAddress,
+            selectedPortalId,
+            addPeerMode,
+            addPeerConnectionAddress,
+            statusText
+        );
+    }
+
     @Nonnull
     private static String resolveSelectedPeerAddress(@Nonnull List<ConfiguredPeer> peers, String requestedPeerAddress) {
         String normalizedRequestedPeerAddress = safe(requestedPeerAddress).trim().toLowerCase();
@@ -404,6 +739,37 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
             }
         }
         return peers.isEmpty() ? "" : peers.getFirst().connectionAddress();
+    }
+
+    @Nonnull
+    private static String resolveSelectedPortalId(@Nonnull List<PortalInstanceDefinition> portals, String requestedPortalId) {
+        String normalizedRequestedPortalId = safe(requestedPortalId).trim().toLowerCase();
+        if (!normalizedRequestedPortalId.isBlank()) {
+            for (PortalInstanceDefinition portal : portals) {
+                if (portal.portalId().equals(normalizedRequestedPortalId)) {
+                    return normalizedRequestedPortalId;
+                }
+            }
+        }
+        return portals.isEmpty() ? "" : portals.getFirst().portalId();
+    }
+
+    @Nonnull
+    private Transform captureCurrentTransform(
+        @Nonnull Store<EntityStore> store,
+        @Nonnull Ref<EntityStore> ref
+    ) {
+        TransformComponent transformComponent = store.getComponent(ref, TransformComponent.getComponentType());
+        if (transformComponent == null) {
+            throw new IllegalStateException("Could not read the live player position for Nexori server rules sync.");
+        }
+
+        Vector3f rotation = transformComponent.getRotation();
+        HeadRotation headRotation = store.getComponent(ref, HeadRotation.getComponentType());
+        if (headRotation != null) {
+            rotation = headRotation.getRotation();
+        }
+        return new Transform(transformComponent.getPosition(), rotation);
     }
 
     private static Integer parseIndex(String rawIndex) {
@@ -438,6 +804,19 @@ public final class NexoriMenuPage extends InteractiveCustomUIPage<NexoriMenuPage
     @Nonnull
     private static String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    public enum MenuTab {
+        SERVERS("Servers"),
+        RULES("Rules"),
+        TARGETS("Targets"),
+        PORTALS("Portals");
+
+        private final String label;
+
+        MenuTab(String label) {
+            this.label = label;
+        }
     }
 
     private enum Action {

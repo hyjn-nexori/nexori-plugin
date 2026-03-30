@@ -132,7 +132,20 @@ That means `1.0.0` should include:
 - add admin controls for recovery locks and per-player backup limits
 - keep the low-level backup and recover commands as admin/debug tools
 
-### `0.6.0` Travel Outcomes And Diagnostics
+### `0.6.0` Global Admin UI And Server Rules
+
+- turn the Nexori menu into a true top-level admin UI instead of leaving peer
+  management as a separate island
+- wrap the current owner flows for servers, targets, and portals inside one
+  in-game admin shell
+- add a rules view for per-server Nexori settings such as recovery mode and
+  per-player backup limits
+- support trusted round-trip refresh and apply flows for remote server rules
+  using Nexori referrals instead of a backend
+- make server-wide Nexori settings manageable in game before adding more
+  diagnostics or maintenance surface area
+
+### `0.7.0` Travel Outcomes And Diagnostics
 
 - add clearer travel success/failure states for players and owners
 - improve diagnostics when a portal, binding, target, or inventory transfer
@@ -141,7 +154,7 @@ That means `1.0.0` should include:
   through logs
 - keep the failure paths functional before spending time on visual polish
 
-### `0.7.0` Reset And Maintenance Tools
+### `0.8.0` Reset And Maintenance Tools
 
 - add owner tools to reset or rebootstrap trust safely
 - add maintenance tools for clearing stale discovery cache, drafts, and stuck
@@ -150,14 +163,14 @@ That means `1.0.0` should include:
   network
 - make maintenance flows part of the product instead of ad-hoc manual fixes
 
-### `0.8.0` Hardening
+### `0.9.0` Hardening
 
 - strengthen replay/stale payload protection
 - improve validation around config, bindings, targets, and transfer state
 - add migration handling and upgrade safety for pre-`1.0.0` releases
 - improve compatibility checks so owners get safer upgrades between milestones
 
-### `0.9.0` Docs And Release Prep
+### `0.10.0` Docs And Release Prep
 
 - write setup guides for no-code survival/adventure owners
 - write troubleshooting guides for travel, recovery, and trust bootstrap issues

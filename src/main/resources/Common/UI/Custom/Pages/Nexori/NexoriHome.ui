@@ -16,7 +16,7 @@ $C.@Container {
         LayoutMode: Top;
 
         Label {
-          Text: "Peer list and trust bootstrap for multi-server Hytale networks.";
+          Text: "Global Nexori admin menu for peers, rules, targets, and portal network setup.";
           Style: (TextColor: $T.@BodyText);
         }
       }

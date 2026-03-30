@@ -1,0 +1,318 @@
+$C = "../../Common.ui";
+$T = "NexoriTheme.ui";
+
+Group #RulesBody {
+  LayoutMode: Left;
+
+  Group #PeerColumn {
+    FlexWeight: 4;
+    LayoutMode: Top;
+    Padding: (Full: 12);
+    Background: $T.@MenuPanelBg;
+
+    Label {
+      Text: "TRUSTED SERVERS";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 6);
+    }
+
+    Label #PeerCountText {
+      Text: "0 configured server(s)";
+      Style: (TextColor: $T.@MutedText);
+    }
+
+    Group {
+      Anchor: (Height: 12);
+    }
+
+    Group #PeerList {
+      FlexWeight: 1;
+      LayoutMode: TopScrolling;
+      ScrollbarStyle: $C.@DefaultScrollbarStyle;
+      KeepScrollPosition: true;
+    }
+  }
+
+  Group {
+    Anchor: (Width: 16);
+  }
+
+  Group #RulesColumn {
+    FlexWeight: 5;
+    LayoutMode: Top;
+    Padding: (Full: 12);
+    Background: $T.@MenuPanelBg;
+
+    Label {
+      Text: "SERVER RULES";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 10);
+    }
+
+    Label #StatusText {
+      Text: "";
+      Visible: false;
+      Style: (TextColor: $T.@BodyText);
+    }
+
+    Group {
+      Anchor: (Height: 12);
+    }
+
+    Label {
+      Text: "Local Server";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 8);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Label {
+        Text: "Recovery:";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Label #LocalRecoveryModeText {
+        Text: "";
+        Style: (TextColor: $T.@PrimaryText);
+      }
+    }
+
+    Group {
+      Anchor: (Height: 6);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Label {
+        Text: "Backup Limit:";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Label #LocalBackupLimitText {
+        Text: "";
+        Style: (TextColor: $T.@PrimaryText);
+      }
+    }
+
+    Group {
+      Anchor: (Height: 12);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Button #ToggleRecoveryButton {
+        Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+        Background: $T.@TabActiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label #ToggleRecoveryButtonLabel {
+          Text: "Toggle Recovery";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Button #DecreaseBackupLimitButton {
+        Anchor: (Width: 48);
+        Padding: (Top: 8, Bottom: 8);
+        Background: $T.@TabInactiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label {
+          Text: "-";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+
+      Group {
+        Anchor: (Width: 6);
+      }
+
+      Button #IncreaseBackupLimitButton {
+        Anchor: (Width: 48);
+        Padding: (Top: 8, Bottom: 8);
+        Background: $T.@TabInactiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label {
+          Text: "+";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+    }
+
+    Group {
+      Anchor: (Height: 18);
+    }
+
+    Label {
+      Text: "Selected Remote Server";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 8);
+    }
+
+    Label #SelectedRulePeerAddress {
+      Text: "";
+      Style: (TextColor: $T.@PrimaryText);
+    }
+
+    Group {
+      Anchor: (Height: 6);
+    }
+
+    Label #SelectedRulePeerConfirmation {
+      Text: "";
+      Style: (TextColor: $T.@MutedText);
+    }
+
+    Group {
+      Anchor: (Height: 10);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Label {
+        Text: "Recovery:";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Label #SelectedRulePeerRecovery {
+        Text: "";
+        Style: (TextColor: $T.@PrimaryText);
+      }
+    }
+
+    Group {
+      Anchor: (Height: 6);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Label {
+        Text: "Backup Limit:";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Label #SelectedRulePeerBackupLimit {
+        Text: "";
+        Style: (TextColor: $T.@PrimaryText);
+      }
+    }
+
+    Group {
+      Anchor: (Height: 14);
+    }
+
+    Group {
+      LayoutMode: Left;
+
+      Button #RefreshSelectedRulesButton {
+        Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+        Background: $T.@TabActiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label {
+          Text: "Refresh Selected";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+
+      Group {
+        Anchor: (Width: 8);
+      }
+
+      Button #ApplyLocalRulesButton {
+        Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+        Background: $T.@TabActiveBg;
+        Style: (
+          Hovered: (
+            Background: $T.@ActionHoverBg,
+          ),
+          Pressed: (
+            Background: $T.@ActionPressedBg,
+          )
+        );
+
+        Label {
+          Text: "Apply Local To Selected";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+      }
+    }
+
+    Group {
+      Anchor: (Height: 14);
+    }
+
+    Label #RulesHintText {
+      Anchor: (Width: 520);
+      Text: "Rule sync uses trusted Nexori referrals. The selected remote server must already be in the trust bundle and reachable.";
+      Style: (TextColor: $T.@MutedText, Wrap: true);
+    }
+  }
+}

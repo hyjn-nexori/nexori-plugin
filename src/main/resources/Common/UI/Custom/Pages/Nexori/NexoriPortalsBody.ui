@@ -1,0 +1,177 @@
+$C = "../../Common.ui";
+$T = "NexoriTheme.ui";
+
+Group #PortalsBody {
+  LayoutMode: Left;
+
+  Group #PortalColumn {
+    FlexWeight: 4;
+    LayoutMode: Top;
+    Padding: (Full: 12);
+    Background: $T.@MenuPanelBg;
+
+    Label {
+      Text: "REGISTERED PORTALS";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 6);
+    }
+
+    Label #PortalCountText {
+      Text: "0 portal(s)";
+      Style: (TextColor: $T.@MutedText);
+    }
+
+    Group {
+      Anchor: (Height: 12);
+    }
+
+    Group #PortalList {
+      FlexWeight: 1;
+      LayoutMode: TopScrolling;
+      ScrollbarStyle: $C.@DefaultScrollbarStyle;
+      KeepScrollPosition: true;
+    }
+  }
+
+  Group {
+    Anchor: (Width: 16);
+  }
+
+  Group #PortalDetailsColumn {
+    FlexWeight: 5;
+    LayoutMode: Top;
+    Padding: (Full: 12);
+    Background: $T.@MenuPanelBg;
+
+    Label {
+      Text: "PORTAL DETAILS";
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Group {
+      Anchor: (Height: 10);
+    }
+
+    Label #PortalDetailsStatusText {
+      Text: "Use F on the placed portal block to open its owner setup wizard and edit the binding.";
+      Style: (TextColor: $T.@MutedText);
+    }
+
+    Group {
+      Anchor: (Height: 12);
+    }
+
+    Group #SelectedPortalEmpty {
+      LayoutMode: Top;
+
+      Label {
+        Text: "Pick a placed portal from the list to inspect its saved Nexori state.";
+        Style: (TextColor: $T.@MutedText);
+      }
+    }
+
+    Group #SelectedPortalDetail {
+      LayoutMode: Top;
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Name:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group {
+          Anchor: (Width: 8);
+        }
+
+        Label #SelectedPortalName {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "World:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Label #SelectedPortalWorld {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Position:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Label #SelectedPortalPosition {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Enabled:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Label #SelectedPortalEnabled {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+
+        Label {
+          Text: "Local Target:";
+          Style: (RenderBold: true, TextColor: $T.@StrongText);
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Label #SelectedPortalTarget {
+          Text: "";
+          Style: (TextColor: $T.@PrimaryText);
+        }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Label #SelectedPortalBinding {
+        Text: "";
+        Style: (TextColor: $T.@BodyText);
+      }
+    }
+  }
+}

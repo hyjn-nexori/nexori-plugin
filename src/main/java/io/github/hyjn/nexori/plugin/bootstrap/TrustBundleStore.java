@@ -60,6 +60,7 @@ public final class TrustBundleStore {
     @Nonnull
     public synchronized TrustBundle saveVerifiedMembers(
         @Nonnull ServerIdentity localIdentity,
+        @Nonnull String localConnectionAddress,
         @Nonnull List<BundleMember> remoteMembers,
         long bundleVersion
     ) {
@@ -68,7 +69,7 @@ public final class TrustBundleStore {
             String localServerId = localIdentity.serverId().toString();
             membersByServerId.put(localServerId, new BundleMember(
                 localIdentity.serverId().toString(),
-                "",
+                localConnectionAddress == null ? "" : localConnectionAddress,
                 localIdentity.fingerprint(),
                 localIdentity.publicKeyBase64(),
                 Instant.now().toEpochMilli(),

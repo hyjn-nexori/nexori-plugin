@@ -42,6 +42,10 @@ import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
+import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
+import io.github.hyjn.nexori.plugin.policy.ServerPolicyCacheService;
+import io.github.hyjn.nexori.plugin.policy.ServerPolicyCacheStore;
+import io.github.hyjn.nexori.plugin.policy.ServerPolicySyncService;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalBreakSystem;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalInteractionService;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalPlaceSystem;
@@ -53,6 +57,7 @@ import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetStore;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuCommand;
+import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiCommand;
 import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
 
@@ -74,12 +79,15 @@ public class NexoriPlugin extends JavaPlugin {
     private ConfiguredPeerService configuredPeerService;
     private BootstrapCoordinator bootstrapCoordinator;
     private TrustBundleStore trustBundleStore;
+    private LocalConnectionAddressService localConnectionAddressService;
     private DestinationTargetService destinationTargetService;
     private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private TriggerBindingService triggerBindingService;
     private PortalInstanceService portalInstanceService;
     private SecureReferralService secureReferralService;
     private InventoryTransferService inventoryTransferService;
+    private ServerPolicyCacheService serverPolicyCacheService;
+    private ServerPolicySyncService serverPolicySyncService;
     private SecureTravelService secureTravelService;
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private NexoriPortalInteractionService portalInteractionService;
@@ -104,6 +112,9 @@ public class NexoriPlugin extends JavaPlugin {
             BootstrapState bootstrapState = this.bootstrapStateStore.loadOrCreate();
             this.configuredPeerService = new ConfiguredPeerService(
                 new ConfiguredPeerStore(this.getDataDirectory().resolve("config").resolve("configured-peers.json"))
+            );
+            this.localConnectionAddressService = new LocalConnectionAddressService(
+                this.getDataDirectory().resolve("config").resolve("local-connection-address.txt")
             );
             this.destinationTargetService = new DestinationTargetService(
                 new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json"))
@@ -130,6 +141,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.localIdentity,
                 this.bootstrapStateStore,
                 this.configuredPeerService,
+                this.localConnectionAddressService,
                 bootstrapRunStore,
                 this.trustBundleStore
             );
@@ -146,6 +158,16 @@ public class NexoriPlugin extends JavaPlugin {
                 new InventoryTransferPolicyStore(this.getDataDirectory().resolve("config").resolve("inventory-transfer-policy.json")),
                 new PlayerSaveRepository(this.getLogger()),
                 new InventorySnapshotService(),
+                this.secureReferralService
+            );
+            this.serverPolicyCacheService = new ServerPolicyCacheService(
+                new ServerPolicyCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-server-policies.json"))
+            );
+            this.serverPolicySyncService = new ServerPolicySyncService(
+                this.getLogger(),
+                this.trustBundleStore,
+                this.inventoryTransferService,
+                this.serverPolicyCacheService,
                 this.secureReferralService
             );
             this.secureTravelService = new SecureTravelService(
@@ -182,6 +204,9 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.responseHandler());
             this.secureReferralService.registerHandler(this.inventoryTransferService.queryHandler());
             this.secureReferralService.registerHandler(this.inventoryTransferService.replyHandler());
+            this.secureReferralService.registerHandler(this.serverPolicySyncService.fetchRequestHandler());
+            this.secureReferralService.registerHandler(this.serverPolicySyncService.applyRequestHandler());
+            this.secureReferralService.registerHandler(this.serverPolicySyncService.responseHandler());
             this.portalInteractionService.registerPageSupplier();
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
@@ -205,13 +230,15 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriTargetRemoveCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriStartCommand(this.bootstrapCoordinator, this.getBasePermission() + ".admin"));
             this.getCommandRegistry().registerCommand(new NexoriTravelCommand(this.secureTravelService));
-            this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this, this.configuredPeerService, this.bootstrapCoordinator));
+            this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriMenuHyUiCommand(this));
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.bootstrapCoordinator::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
 
@@ -240,6 +267,10 @@ public class NexoriPlugin extends JavaPlugin {
         return configuredPeerService;
     }
 
+    public LocalConnectionAddressService getLocalConnectionAddressService() {
+        return localConnectionAddressService;
+    }
+
     public BootstrapCoordinator getBootstrapCoordinator() {
         return bootstrapCoordinator;
     }
@@ -264,6 +295,10 @@ public class NexoriPlugin extends JavaPlugin {
         return destinationTargetService;
     }
 
+    public DestinationTargetDiscoveryService getDestinationTargetDiscoveryService() {
+        return destinationTargetDiscoveryService;
+    }
+
     public DiscoveredDestinationTargetCacheService getDiscoveredDestinationTargetCacheService() {
         return discoveredDestinationTargetCacheService;
     }
@@ -280,7 +315,19 @@ public class NexoriPlugin extends JavaPlugin {
         return targetSetupDraftService;
     }
 
+    public PortalSetupDraftService getPortalSetupDraftService() {
+        return portalSetupDraftService;
+    }
+
     public NexoriPortalInteractionService getPortalInteractionService() {
         return portalInteractionService;
+    }
+
+    public ServerPolicyCacheService getServerPolicyCacheService() {
+        return serverPolicyCacheService;
+    }
+
+    public ServerPolicySyncService getServerPolicySyncService() {
+        return serverPolicySyncService;
     }
 }

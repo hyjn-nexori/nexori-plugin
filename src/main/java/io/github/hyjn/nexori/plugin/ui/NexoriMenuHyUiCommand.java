@@ -14,12 +14,12 @@ import io.github.hyjn.nexori.plugin.NexoriPlugin;
 
 import javax.annotation.Nonnull;
 
-public final class NexoriMenuCommand extends AbstractPlayerCommand {
+public final class NexoriMenuHyUiCommand extends AbstractPlayerCommand {
 
     private final NexoriPlugin plugin;
 
-    public NexoriMenuCommand(@Nonnull NexoriPlugin plugin) {
-        super("nexorimenu", "Opens the Nexori admin UI.");
+    public NexoriMenuHyUiCommand(@Nonnull NexoriPlugin plugin) {
+        super("nexorimenuhyui", "Opens the experimental Nexori admin UI built with HyUI.");
         this.plugin = plugin;
         setPermissionGroup(GameMode.Adventure);
     }
@@ -34,10 +34,10 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
     ) {
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
-            context.sendMessage(Message.raw("nexorimenu: could not resolve the live player entity."));
+            context.sendMessage(Message.raw("nexorimenuhyui: could not resolve the live player entity."));
             return;
         }
 
-        NexoriMenuPage.open(ref, store, playerRef, player, plugin);
+        NexoriMenuHyUiPage.open(ref, store, playerRef, player, plugin);
     }
 }
