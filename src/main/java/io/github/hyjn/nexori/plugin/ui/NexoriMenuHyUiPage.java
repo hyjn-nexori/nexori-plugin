@@ -367,12 +367,17 @@ public final class NexoriMenuHyUiPage {
             return;
         }
 
-        GroupBuilder connectBlock = card(RIGHT_W - 32, 150, ITEM_BG);
+        GroupBuilder connectBlock = card(RIGHT_W - 32, 176, ITEM_BG);
         connectBlock.addChild(label("How To Connect To This Server", TITLE, RIGHT_W - 64));
         connectBlock.addChild(spacerY(10));
         connectBlock.addChild(stat("Connection Address", selectedPeer.displayAddress(), RIGHT_W - 16));
         connectBlock.addChild(stat("Host", selectedPeer.host(), RIGHT_W - 16));
         connectBlock.addChild(stat("Port", selectedPeer.portText(), RIGHT_W - 16));
+        connectBlock.addChild(stat(
+            "Saved In Trusted Servers",
+            selectedPeer.configured() ? "Yes" : "No, this entry only exists in the current trust bundle.",
+            RIGHT_W - 16
+        ));
         right.addChild(connectBlock);
         right.addChild(spacerY(14));
 
@@ -404,9 +409,17 @@ public final class NexoriMenuHyUiPage {
                     .withAnchor(new HyUIAnchor().setWidth(220).setHeight(42))
                     .onClick((ignored, ctx) -> {
                         try {
-                            plugin.getConfiguredPeerService().remove(selectedPeer.connectionAddress());
+                            boolean removed = plugin.getConfiguredPeerService().remove(selectedPeer.connectionAddress());
                             plugin.getServerRuleGroupService().removeServerAssignments(selectedPeer.selectionKey());
-                            open(ref, store, playerRef, player, plugin, state.withSelectedPeer("").withStatus(""));
+                            TrustBundle currentBundle = plugin.getBootstrapCoordinator().getTrustBundle();
+                            boolean stillPresentInBundle = isTrustedMember(currentBundle, selectedPeer.connectionAddress());
+                            String nextSelected = stillPresentInBundle ? selectedPeer.selectionKey() : "";
+                            String status = removed
+                                ? stillPresentInBundle
+                                    ? "Removed server " + selectedPeer.connectionAddress() + " from Trusted Servers. It still appears in the current trust bundle until you run Initial Setup again."
+                                    : "Removed server " + selectedPeer.connectionAddress() + "."
+                                : "This server was not saved in Trusted Servers anymore.";
+                            open(ref, store, playerRef, player, plugin, state.withSelectedPeer(nextSelected).withStatus(status));
                         } catch (IOException | IllegalArgumentException exception) {
                             open(ref, store, playerRef, player, plugin, state.withStatus("Failed to remove server: " + exception.getMessage()));
                         }
@@ -452,7 +465,17 @@ public final class NexoriMenuHyUiPage {
                     try {
                         ConfiguredPeer added = plugin.getConfiguredPeerService().add(rawAddress);
                         String nextSelected = isLocalAddress(plugin, added.connectionAddress()) ? LOCAL_SERVER_KEY : added.connectionAddress();
-                        open(ref, store, playerRef, player, plugin, state.withSelectedPeer(nextSelected).withServersPanel(ServersPanel.DETAILS).withPendingServerAddress("").withStatus(""));
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedPeer(nextSelected)
+                                .withServersPanel(ServersPanel.DETAILS)
+                                .withPendingServerAddress("")
+                                .withStatus("Saved server " + added.connectionAddress() + ".")
+                        );
                     } catch (IOException | IllegalArgumentException exception) {
                         open(ref, store, playerRef, player, plugin, state.withServersPanel(ServersPanel.ADD).withPendingServerAddress(rawAddress).withStatus("Could not add server: " + exception.getMessage()));
                     }
@@ -2199,10 +2222,24 @@ public final class NexoriMenuHyUiPage {
                     try {
                         if (assignedHere) {
                             plugin.getServerRuleGroupService().unassignServer(selectedRuleGroup.groupId(), serverEntry.selectionKey());
-                            open(ref, store, playerRef, player, plugin, state.withStatus(""));
+                            open(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                state.withStatus("Removed " + serverEntry.displayAddress() + " from '" + selectedRuleGroup.displayName() + "'.")
+                            );
                         } else {
                             plugin.getServerRuleGroupService().assignServer(selectedRuleGroup.groupId(), serverEntry.selectionKey());
-                            open(ref, store, playerRef, player, plugin, state.withStatus(""));
+                            open(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                state.withStatus("Assigned " + serverEntry.displayAddress() + " to '" + selectedRuleGroup.displayName() + "'.")
+                            );
                         }
                     } catch (IOException | IllegalStateException exception) {
                         open(ref, store, playerRef, player, plugin, state.withStatus("Could not update that assignment: " + exception.getMessage()));
@@ -2225,18 +2262,19 @@ public final class NexoriMenuHyUiPage {
         List<ConfiguredPeer> peers,
         List<ServerEntry> serverEntries
     ) {
+        ServerRuleGroupDefinition currentGroup = resolveCurrentRuleGroup(plugin, state, group);
         List<ServerEntry> assignedServers = serverEntries.stream()
-            .filter(serverEntry -> group.containsServer(serverEntry.selectionKey()))
+            .filter(serverEntry -> currentGroup.containsServer(serverEntry.selectionKey()))
             .toList();
         if (assignedServers.isEmpty()) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Assign at least one server to '" + group.displayName() + "' before you apply it."));
+            open(ref, store, playerRef, player, plugin, state.withStatus("Assign at least one server to '" + currentGroup.displayName() + "' before you apply it."));
             return;
         }
 
         try {
-            if (group.containsServer(LOCAL_SERVER_KEY)) {
-                plugin.getInventoryTransferService().setRecoveryEnabled(group.recoveryEnabled());
-                plugin.getInventoryTransferService().setMaxBackupsPerPlayer(group.maxBackupsPerPlayer());
+            if (currentGroup.containsServer(LOCAL_SERVER_KEY)) {
+                plugin.getInventoryTransferService().setRecoveryEnabled(currentGroup.recoveryEnabled());
+                plugin.getInventoryTransferService().setMaxBackupsPerPlayer(currentGroup.maxBackupsPerPlayer());
             }
         } catch (IOException exception) {
             open(ref, store, playerRef, player, plugin, state.withStatus("Could not apply the local server rules: " + exception.getMessage()));
@@ -2255,12 +2293,12 @@ public final class NexoriMenuHyUiPage {
         }
 
         if (remotePeers.isEmpty()) {
-            open(ref, store, playerRef, player, plugin, state.withStatus(""));
+            open(ref, store, playerRef, player, plugin, state.withStatus("Applied '" + currentGroup.displayName() + "' to the local server only."));
             return;
         }
 
-        player.sendMessage(Message.raw("Nexori is applying '" + group.displayName() + "' to " + remotePeers.size() + " remote server(s)..."));
-        applyRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, group, remotePeers, 0, 0);
+        player.sendMessage(Message.raw("Nexori is applying '" + currentGroup.displayName() + "' to " + remotePeers.size() + " remote server(s)..."));
+        applyRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, 0, 0);
     }
 
     private static void applyRuleGroupAssignmentAtIndex(
@@ -2318,19 +2356,20 @@ public final class NexoriMenuHyUiPage {
         List<ConfiguredPeer> peers,
         List<ServerEntry> serverEntries
     ) {
+        ServerRuleGroupDefinition currentGroup = resolveCurrentRuleGroup(plugin, state, group);
         List<ConfiguredPeer> remotePeers = serverEntries.stream()
-            .filter(serverEntry -> group.containsServer(serverEntry.selectionKey()))
+            .filter(serverEntry -> currentGroup.containsServer(serverEntry.selectionKey()))
             .filter(serverEntry -> !serverEntry.local() && !serverEntry.connectionAddress().isBlank())
             .map(serverEntry -> findSelectedPeer(peers, serverEntry.connectionAddress()))
             .filter(java.util.Objects::nonNull)
             .toList();
         if (remotePeers.isEmpty()) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("There are no remote servers assigned to '" + group.displayName() + "' yet."));
+            open(ref, store, playerRef, player, plugin, state.withStatus("There are no remote servers assigned to '" + currentGroup.displayName() + "' yet."));
             return;
         }
 
-        player.sendMessage(Message.raw("Nexori is refreshing the cached rule status for '" + group.displayName() + "'..."));
-        refreshRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, group, remotePeers, 0);
+        player.sendMessage(Message.raw("Nexori is refreshing the cached rule status for '" + currentGroup.displayName() + "'..."));
+        refreshRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, 0);
     }
 
     private static void refreshRuleGroupAssignmentAtIndex(
@@ -2589,7 +2628,7 @@ public final class NexoriMenuHyUiPage {
                 parsePortText(member.connectionAddress()),
                 member.connectionAddress(),
                 false,
-                true
+                false
             ));
         }
         entries.addAll(remoteEntriesByAddress.values());
@@ -2662,6 +2701,17 @@ public final class NexoriMenuHyUiPage {
             }
         }
         return ruleGroups.isEmpty() ? null : ruleGroups.getFirst();
+    }
+
+    @Nonnull
+    private static ServerRuleGroupDefinition resolveCurrentRuleGroup(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull State state,
+        @Nonnull ServerRuleGroupDefinition fallback
+    ) {
+        return plugin.getServerRuleGroupService()
+            .find(state.selectedRuleGroupId())
+            .orElse(fallback);
     }
 
     private static DestinationTargetDefinition findSelectedTarget(@Nonnull List<DestinationTargetDefinition> targets, @Nonnull String targetId) {
