@@ -1,23 +1,25 @@
 package io.github.hyjn.nexori.plugin.ui;
 
-import com.hypixel.hytale.codec.Codec;
-import com.hypixel.hytale.codec.KeyedCodec;
-import com.hypixel.hytale.codec.builder.BuilderCodec;
+import au.ellie.hyui.builders.ButtonBuilder;
+import au.ellie.hyui.builders.ContainerBuilder;
+import au.ellie.hyui.builders.GroupBuilder;
+import au.ellie.hyui.builders.HyUIAnchor;
+import au.ellie.hyui.builders.HyUIPadding;
+import au.ellie.hyui.builders.HyUIPatchStyle;
+import au.ellie.hyui.builders.HyUIStyle;
+import au.ellie.hyui.builders.LabelBuilder;
+import au.ellie.hyui.builders.PageBuilder;
+import au.ellie.hyui.builders.ReorderableListBuilder;
+import au.ellie.hyui.types.ScrollbarStyle;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
-import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBindingType;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
-import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
-import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
-import com.hypixel.hytale.server.core.ui.builder.EventData;
-import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
-import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -34,32 +36,43 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
-public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriRecoveryPage.PageData> {
+public final class NexoriRecoveryPage {
 
-    private static final int BACKUP_INDEX_BASE = 1000;
-    private static final int ACTION_RECOVER_INDEX = 2000;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
         .withZone(ZoneId.systemDefault());
 
-    private final PlayerRef playerRef;
-    private final InventoryTransferService inventoryTransferService;
-    private final List<InventoryTransferBackupRecord> backups;
-    private final String selectedTransferId;
-    private final String statusText;
+    private static final int PAGE_W = 1480;
+    private static final int PAGE_H = 780;
+    private static final int BODY_W = 1440;
+    private static final int LEFT_W = 436;
+    private static final int RIGHT_W = 988;
+    private static final int PANEL_H = 640;
 
-    private NexoriRecoveryPage(
-        @Nonnull PlayerRef playerRef,
-        @Nonnull InventoryTransferService inventoryTransferService,
-        @Nonnull List<InventoryTransferBackupRecord> backups,
-        @Nonnull String selectedTransferId,
-        @Nonnull String statusText
-    ) {
-        super(playerRef, CustomPageLifetime.CanDismissOrCloseThroughInteraction, PageData.CODEC);
-        this.playerRef = playerRef;
-        this.inventoryTransferService = inventoryTransferService;
-        this.backups = backups;
-        this.selectedTransferId = selectedTransferId;
-        this.statusText = statusText;
+    private static final HyUIPatchStyle CARD_BG = new HyUIPatchStyle().setColor("#17273a");
+    private static final HyUIPatchStyle ITEM_BG = new HyUIPatchStyle().setColor("#20354e");
+    private static final HyUIPatchStyle STATUS_BG = new HyUIPatchStyle().setColor("#2d4f75");
+    private static final HyUIPatchStyle SERVER_BUTTON_BG = new HyUIPatchStyle().setColor("#27405d");
+    private static final HyUIPatchStyle SERVER_BUTTON_SELECTED_BG = new HyUIPatchStyle().setColor("#466f9f");
+    private static final HyUIPatchStyle GOOD_BG = new HyUIPatchStyle().setColor("#1f5c35");
+    private static final HyUIPatchStyle BAD_BG = new HyUIPatchStyle().setColor("#7b3742");
+
+    private static final HyUIStyle TITLE = new HyUIStyle().setFontSize(17).setRenderBold(true).setTextColor("#f1f6ff");
+    private static final HyUIStyle BODY = new HyUIStyle().setFontSize(14).setTextColor("#d6e5f7").setWrap(true);
+    private static final HyUIStyle MUTED = new HyUIStyle().setFontSize(13).setTextColor("#8fa6c4").setWrap(true);
+    private static final HyUIStyle LABEL = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#adc3de");
+    private static final HyUIStyle GOOD = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#7de3a6");
+    private static final HyUIStyle BAD = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#ff8b9a");
+    private static final HyUIStyle INFO = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#8fc7ff");
+    private static final ScrollbarStyle DEFAULT_SCROLLBAR = ScrollbarStyle.defaultExtraSpacingStyle()
+        .withOnlyVisibleWhenHovered(false)
+        .withSize(8)
+        .withSpacing(4)
+        .withBackground(new HyUIPatchStyle().setColor("#16283d"))
+        .withHandle(new HyUIPatchStyle().setColor("#39577b"))
+        .withHoveredHandle(new HyUIPatchStyle().setColor("#5d87bb"))
+        .withDraggedHandle(new HyUIPatchStyle().setColor("#76a3dd"));
+
+    private NexoriRecoveryPage() {
     }
 
     public static void open(
@@ -71,100 +84,221 @@ public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriReco
         String selectedTransferId,
         @Nonnull String statusText
     ) {
-        PageManager pages = player == null ? null : player.getPageManager();
-        if (pages == null) {
+        if (player == null) {
+            playerRef.sendMessage(Message.raw("nexorirecovery: could not resolve the live player entity."));
             return;
         }
 
         List<InventoryTransferBackupRecord> backups = inventoryTransferService.listBackups(playerRef.getUuid());
         String resolvedSelectedTransferId = resolveSelectedTransferId(backups, selectedTransferId);
-        pages.openCustomPage(
+        InventoryTransferBackupRecord selectedBackup = selectedBackup(backups, resolvedSelectedTransferId);
+
+        ContainerBuilder root = ContainerBuilder.decoratedContainer()
+            .withTitleText("NEXORI RECOVERY")
+            .withAnchor(new HyUIAnchor().setWidth(PAGE_W).setHeight(PAGE_H));
+
+        GroupBuilder content = GroupBuilder.group().withLayoutMode("Top").withPadding(HyUIPadding.all(14));
+        content.addChild(label(
+            "Review your recent inventory transfer backups and recover or claim them when a server-to-server trip did not finish the way you expected.",
+            BODY,
+            BODY_W
+        ));
+        content.addChild(spacerY(12));
+        content.addChild(body(
             ref,
             store,
-            new NexoriRecoveryPage(
-                playerRef,
-                inventoryTransferService,
-                backups,
-                resolvedSelectedTransferId,
-                statusText
-            )
-        );
+            playerRef,
+            player,
+            inventoryTransferService,
+            backups,
+            resolvedSelectedTransferId,
+            selectedBackup,
+            statusText
+        ));
+        root.addContentChild(content);
+
+        PageBuilder.pageForPlayer(playerRef)
+            .withLifetime(CustomPageLifetime.CanDismissOrCloseThroughInteraction)
+            .addElement(root)
+            .open(store);
     }
 
-    @Override
-    public void build(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull UICommandBuilder commands,
-        @Nonnull UIEventBuilder events,
-        @Nonnull Store<EntityStore> store
-    ) {
-        InventoryTransferBackupRecord selectedBackup = selectedBackup();
-
-        commands.append("Pages/Nexori/NexoriRecovery.ui");
-        commands.set("#BackupCountText.Text", backups.size() + " recoverable backup(s)");
-        commands.set("#StatusText.Text", statusText);
-        commands.set("#StatusText.Visible", !statusText.isBlank());
-        commands.set("#EmptyHint.Visible", backups.isEmpty());
-        commands.set("#EmptyHint.Text", backups.isEmpty()
-            ? "No Nexori inventory transfer backups are waiting on this server for your player."
-            : "");
-
-        bindIndex(events, "#TryRecoverButton", ACTION_RECOVER_INDEX);
-        commands.set("#TryRecoverButton.Visible", selectedBackup != null);
-        commands.set("#TryRecoverButtonLabel.Text", selectedBackup == null ? "Try Recover" : actionLabel(selectedBackup));
-
-        for (int i = 0; i < backups.size(); i++) {
-            InventoryTransferBackupRecord backup = backups.get(i);
-            new NexoriRecoveryEntryElement(
-                TIME_FORMATTER.format(Instant.ofEpochMilli(backup.createdAtEpochMs())),
-                summarizeInventory(backup),
-                backup.transferId().equals(selectedTransferId)
-            ).addButton(commands, events, "#RecoveryList[" + i + "]", playerRef);
-            bindIndex(events, "#RecoveryList[" + i + "]", BACKUP_INDEX_BASE + i);
-        }
-
-        commands.set("#SelectedTransferId.Text", selectedBackup == null ? "<none>" : selectedBackup.transferId());
-        commands.set("#SelectedCreatedAt.Text", selectedBackup == null ? "<none>" : TIME_FORMATTER.format(Instant.ofEpochMilli(selectedBackup.createdAtEpochMs())));
-        commands.set("#SelectedDestination.Text", selectedBackup == null ? "<none>" : selectedBackup.destinationConnectionAddress());
-        commands.set("#SelectedTarget.Text", selectedBackup == null ? "<none>" : selectedBackup.destinationTargetId());
-        commands.set("#SelectedProfile.Text", selectedBackup == null ? "<none>" : selectedBackup.travelProfileId());
-        commands.set("#SelectedInventoryCount.Text", selectedBackup == null ? "<none>" : summarizeInventory(selectedBackup));
-        commands.set("#SelectedRecoveryHint.Text", selectedBackup == null ? ""
-            : recoveryHint(selectedBackup));
-    }
-
-    @Override
-    public void handleDataEvent(
+    private static GroupBuilder body(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
-        @Nonnull PageData data
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull InventoryTransferService inventoryTransferService,
+        @Nonnull List<InventoryTransferBackupRecord> backups,
+        @Nonnull String selectedTransferId,
+        InventoryTransferBackupRecord selectedBackup,
+        @Nonnull String statusText
     ) {
-        Integer index = parseIndex(data.indexRaw);
-        if (index == null) {
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(PANEL_H));
+
+        GroupBuilder left = card(LEFT_W, PANEL_H, CARD_BG);
+        left.addChild(label("Recent Backups", TITLE, LEFT_W - 32));
+        left.addChild(spacerY(10));
+        left.addChild(label(
+            backups.isEmpty()
+                ? "No Nexori inventory transfer backups are waiting on this server for your player."
+                : backups.size() + " recoverable backup(s) are currently available for this player.",
+            MUTED,
+            LEFT_W - 32
+        ));
+        left.addChild(spacerY(12));
+
+        int listHeight = Math.max(220, PANEL_H - 96);
+        int listContentHeight = Math.max(listHeight, backups.isEmpty() ? 120 : backups.size() * 62 + 24);
+        ReorderableListBuilder list = scrollList(LEFT_W - 32, listHeight, listContentHeight, "recovery-backups-list");
+        if (backups.isEmpty()) {
+            list.addChild(spacerY(12));
+            list.addChild(label("Nothing to recover right now. New backups appear here whenever Nexori preserves inventory during a protected travel flow.", MUTED, LEFT_W - 56));
+        } else {
+            for (InventoryTransferBackupRecord backup : backups) {
+                boolean selected = backup.transferId().equals(selectedTransferId);
+                list.addChild(
+                    (selected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+                        .withText(describeBackupRow(backup))
+                        .withBackground(selected ? SERVER_BUTTON_SELECTED_BG : SERVER_BUTTON_BG)
+                        .withDisabled(selected)
+                        .withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(54))
+                        .onClick((ignored, ctx) -> open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            inventoryTransferService,
+                            backup.transferId(),
+                            statusText
+                        ))
+                );
+                list.addChild(spacerY(8));
+            }
+        }
+        left.addChild(list);
+
+        GroupBuilder right = card(RIGHT_W, PANEL_H, CARD_BG);
+        buildDetails(
+            ref,
+            store,
+            playerRef,
+            player,
+            inventoryTransferService,
+            selectedTransferId,
+            selectedBackup,
+            statusText,
+            right
+        );
+
+        row.addChild(left);
+        row.addChild(spacerX(16));
+        row.addChild(right);
+        return row;
+    }
+
+    private static void buildDetails(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull InventoryTransferService inventoryTransferService,
+        @Nonnull String selectedTransferId,
+        InventoryTransferBackupRecord selectedBackup,
+        @Nonnull String statusText,
+        @Nonnull GroupBuilder right
+    ) {
+        right.addChild(label("Backup Details", TITLE, RIGHT_W - 32));
+        right.addChild(spacerY(10));
+
+        int detailsHostHeight = PANEL_H - 58;
+        int detailsContentHeight = selectedBackup == null
+            ? Math.max(detailsHostHeight, 120 + (statusText.isBlank() ? 0 : 76))
+            : Math.max(
+                detailsHostHeight + 40,
+                (statusText.isBlank() ? 0 : 76)
+                    + 208 + 12
+                    + 84 + 12
+                    + 240
+            );
+        ReorderableListBuilder detailsHost = scrollList(
+            RIGHT_W - 32,
+            detailsHostHeight,
+            detailsContentHeight,
+            "recovery-details-scroll"
+        );
+
+        if (!statusText.isBlank()) {
+            detailsHost.addChild(statusPanel(statusText, RIGHT_W - 32));
+            detailsHost.addChild(spacerY(12));
+        }
+
+        if (selectedBackup == null) {
+            detailsHost.addChild(label("Select a backup on the left to inspect its destination, travel profile, and recovery action.", MUTED, RIGHT_W - 32));
+            right.addChild(detailsHost);
             return;
         }
 
-        Player player = store.getComponent(ref, Player.getComponentType());
-        if (player == null) {
-            return;
-        }
+        GroupBuilder identityBlock = card(RIGHT_W - 32, 208, ITEM_BG);
+        identityBlock.addChild(label("Selected Backup", TITLE, RIGHT_W - 64));
+        identityBlock.addChild(spacerY(10));
+        identityBlock.addChild(coloredStat("Action", actionLabel(selectedBackup), RIGHT_W - 32, backupMode(selectedBackup) == InventoryTransferBackupMode.LOCAL_RESTORE ? GOOD : INFO));
+        identityBlock.addChild(spacerY(6));
+        identityBlock.addChild(stat("Created", TIME_FORMATTER.format(Instant.ofEpochMilli(selectedBackup.createdAtEpochMs())), RIGHT_W - 32));
+        identityBlock.addChild(spacerY(6));
+        identityBlock.addChild(stat("Destination", displayDestination(selectedBackup), RIGHT_W - 32));
+        identityBlock.addChild(spacerY(6));
+        identityBlock.addChild(stat("Target", displayOrNone(selectedBackup.destinationTargetId()), RIGHT_W - 32));
+        identityBlock.addChild(spacerY(6));
+        identityBlock.addChild(stat("Travel Profile", displayOrNone(selectedBackup.travelProfileId()), RIGHT_W - 32));
+        identityBlock.addChild(spacerY(6));
+        identityBlock.addChild(stat("Transfer ID", selectedBackup.transferId(), RIGHT_W - 32));
+        detailsHost.addChild(identityBlock);
+        detailsHost.addChild(spacerY(12));
 
-        if (index >= BACKUP_INDEX_BASE && index < BACKUP_INDEX_BASE + backups.size()) {
-            InventoryTransferBackupRecord selected = backups.get(index - BACKUP_INDEX_BASE);
-            open(ref, store, playerRef, player, inventoryTransferService, selected.transferId(), statusText);
-            return;
-        }
+        GroupBuilder inventoryBlock = card(RIGHT_W - 32, 84, ITEM_BG);
+        inventoryBlock.addChild(label("Inventory Snapshot", TITLE, RIGHT_W - 64));
+        inventoryBlock.addChild(spacerY(10));
+        inventoryBlock.addChild(stat("Captured Inventory", summarizeInventory(selectedBackup), RIGHT_W - 32));
+        detailsHost.addChild(inventoryBlock);
+        detailsHost.addChild(spacerY(12));
 
-        if (index != ACTION_RECOVER_INDEX) {
-            return;
-        }
+        GroupBuilder actionBlock = card(RIGHT_W - 32, 240, ITEM_BG);
+        actionBlock.addChild(label("Recovery Action", TITLE, RIGHT_W - 64));
+        actionBlock.addChild(spacerY(10));
+        actionBlock.addChild(label(recoveryHint(selectedBackup), MUTED, RIGHT_W - 64));
+        actionBlock.addChild(spacerY(18));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+        int actionWidth = 220;
+        actionRow.addChild(spacerX(Math.max(0, ((RIGHT_W - 64) - actionWidth) / 2)));
+        actionRow.addChild(
+            ButtonBuilder.textButton()
+                .withText(actionLabel(selectedBackup))
+                .withAnchor(new HyUIAnchor().setWidth(actionWidth).setHeight(42))
+                .onClick((ignored, ctx) -> attemptRecovery(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    inventoryTransferService,
+                    selectedBackup,
+                    selectedTransferId
+                ))
+        );
+        actionBlock.addChild(actionRow);
+        detailsHost.addChild(actionBlock);
+        right.addChild(detailsHost);
+    }
 
-        InventoryTransferBackupRecord backup = selectedBackup();
-        if (backup == null) {
-            open(ref, store, playerRef, player, inventoryTransferService, selectedTransferId, "Select a backup first.");
-            return;
-        }
-
+    private static void attemptRecovery(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull InventoryTransferService inventoryTransferService,
+        @Nonnull InventoryTransferBackupRecord backup,
+        @Nonnull String selectedTransferId
+    ) {
         try {
             inventoryTransferService.requireRecoveryEnabled();
             inventoryTransferService.requireRecoveryInventoryEmpty(playerRef.getUuid(), player);
@@ -197,45 +331,36 @@ public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriReco
                 open(ref, store, playerRef, player, inventoryTransferService, "", result.message());
             }
         } catch (IllegalArgumentException exception) {
-            open(ref, store, playerRef, player, inventoryTransferService, backup.transferId(), exception.getMessage());
+            open(ref, store, playerRef, player, inventoryTransferService, selectedTransferId, exception.getMessage());
         } catch (IllegalStateException exception) {
-            open(ref, store, playerRef, player, inventoryTransferService, backup.transferId(), exception.getMessage());
+            open(ref, store, playerRef, player, inventoryTransferService, selectedTransferId, exception.getMessage());
         } catch (IOException | GeneralSecurityException exception) {
-            open(ref, store, playerRef, player, inventoryTransferService, backup.transferId(), "Failed to start Nexori inventory recovery: " + exception.getMessage());
+            open(ref, store, playerRef, player, inventoryTransferService, selectedTransferId, "Failed to start Nexori inventory recovery: " + exception.getMessage());
         }
     }
 
-    private InventoryTransferBackupRecord selectedBackup() {
-        for (InventoryTransferBackupRecord backup : backups) {
-            if (backup.transferId().equals(selectedTransferId)) {
-                return backup;
-            }
+    @Nonnull
+    private static GroupBuilder statusPanel(@Nonnull String statusText, int width) {
+        HyUIPatchStyle background = STATUS_BG;
+        HyUIStyle style = INFO;
+        String lowered = statusText.toLowerCase();
+        if (lowered.contains("failed")
+            || lowered.contains("could not")
+            || lowered.contains("disabled")
+            || lowered.contains("not empty")) {
+            background = BAD_BG;
+            style = BAD;
+        } else if (lowered.contains("restored")
+            || lowered.contains("claimed")
+            || lowered.contains("completed")
+            || lowered.contains("already landed")) {
+            background = GOOD_BG;
+            style = GOOD;
         }
-        return backups.isEmpty() ? null : backups.getFirst();
-    }
 
-    private void bindIndex(@Nonnull UIEventBuilder events, @Nonnull String selector, int index) {
-        EventData data = EventData.of("Index", Integer.toString(index));
-        String[] selectorCandidates = new String[] {selector, selector + " #Button"};
-
-        for (String candidate : selectorCandidates) {
-            try {
-                events.addEventBinding(CustomUIEventBindingType.Activating, candidate, data, false);
-                return;
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private Integer parseIndex(String rawIndex) {
-        if (rawIndex == null || rawIndex.isBlank()) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(rawIndex.trim());
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
+        GroupBuilder panel = card(width, 64, background);
+        panel.addChild(label(statusText, style, width - 32));
+        return panel;
     }
 
     @Nonnull
@@ -252,6 +377,40 @@ public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriReco
             }
         }
         return backups.isEmpty() ? "" : backups.getFirst().transferId();
+    }
+
+    private static InventoryTransferBackupRecord selectedBackup(
+        @Nonnull List<InventoryTransferBackupRecord> backups,
+        @Nonnull String selectedTransferId
+    ) {
+        for (InventoryTransferBackupRecord backup : backups) {
+            if (backup.transferId().equals(selectedTransferId)) {
+                return backup;
+            }
+        }
+        return backups.isEmpty() ? null : backups.getFirst();
+    }
+
+    @Nonnull
+    private static String describeBackupRow(@Nonnull InventoryTransferBackupRecord backup) {
+        return TIME_FORMATTER.format(Instant.ofEpochMilli(backup.createdAtEpochMs()))
+            + " | " + actionLabel(backup)
+            + " | " + summarizeInventory(backup);
+    }
+
+    @Nonnull
+    private static String displayDestination(@Nonnull InventoryTransferBackupRecord backup) {
+        if (!backup.destinationConnectionAddress().isBlank()) {
+            return backup.destinationConnectionAddress();
+        }
+        return backupMode(backup) == InventoryTransferBackupMode.LOCAL_RESTORE
+            ? "This server"
+            : "<unknown>";
+    }
+
+    @Nonnull
+    private static String displayOrNone(@Nonnull String value) {
+        return value.isBlank() ? "<none>" : value;
     }
 
     @Nonnull
@@ -278,16 +437,16 @@ public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriReco
     @Nonnull
     private static String actionLabel(@Nonnull InventoryTransferBackupRecord backup) {
         return backupMode(backup) == InventoryTransferBackupMode.LOCAL_RESTORE
-            ? "Claim"
+            ? "Claim Backup"
             : "Try Recover";
     }
 
     @Nonnull
     private static String recoveryHint(@Nonnull InventoryTransferBackupRecord backup) {
         if (backupMode(backup) == InventoryTransferBackupMode.LOCAL_RESTORE) {
-            return "Claim restores this backup directly on this server because it was created before Nexori overwrote an existing destination inventory. Your current inventory must be empty before you claim it.";
+            return "Claim restores this backup directly on this server because Nexori created it before overwriting an existing destination inventory. Your current inventory must be empty before you claim it.";
         }
-        return "Try Recover asks the destination server whether it applied this inventory transfer. If it says no, Nexori restores the backup on this origin server. If it says yes, the backup is cleared because the transfer already landed. Your current inventory must be empty before you try recovery.";
+        return "Try Recover asks the destination server whether this inventory transfer already landed. If it did not, Nexori restores the backup on this origin server. If it did, the backup is cleared because the transfer already succeeded. Your current inventory must be empty before you try recovery.";
     }
 
     @Nonnull
@@ -295,17 +454,52 @@ public final class NexoriRecoveryPage extends InteractiveCustomUIPage<NexoriReco
         return InventoryTransferBackupMode.parse(backup.backupModeId());
     }
 
-    public static final class PageData {
+    private static GroupBuilder card(int width, int height, HyUIPatchStyle bg) {
+        return GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.all(16))
+            .withBackground(bg);
+    }
 
-        private static final BuilderCodec<PageData> CODEC = BuilderCodec.builder(PageData.class, PageData::new)
-            .append(
-                new KeyedCodec<>("Index", Codec.STRING),
-                (pageData, indexRaw) -> pageData.indexRaw = indexRaw,
-                pageData -> pageData.indexRaw
-            )
-            .add()
-            .build();
+    private static ReorderableListBuilder scrollList(int width, int height, int contentHeight, @Nonnull String id) {
+        return ReorderableListBuilder.reorderableList()
+            .withId(id)
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withContentHeight(contentHeight)
+            .withKeepScrollPosition(true)
+            .withPadding(HyUIPadding.all(0))
+            .withBackground(new HyUIPatchStyle().setColor("#132235"))
+            .withScrollbarStyle(DEFAULT_SCROLLBAR);
+    }
 
-        private String indexRaw = "";
+    private static LabelBuilder label(@Nonnull String text, @Nonnull HyUIStyle style, int width) {
+        return LabelBuilder.label()
+            .withText(text)
+            .withAnchor(new HyUIAnchor().setWidth(width))
+            .withStyle(style);
+    }
+
+    private static GroupBuilder stat(@Nonnull String label, @Nonnull String value, int width) {
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(24));
+        row.addChild(LabelBuilder.label().withText(label).withAnchor(new HyUIAnchor().setWidth(180)).withStyle(LABEL));
+        row.addChild(LabelBuilder.label().withText(value).withAnchor(new HyUIAnchor().setWidth(width - 214)).withStyle(BODY));
+        return row;
+    }
+
+    private static GroupBuilder coloredStat(@Nonnull String label, @Nonnull String value, int width, @Nonnull HyUIStyle valueStyle) {
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(24));
+        row.addChild(LabelBuilder.label().withText(label).withAnchor(new HyUIAnchor().setWidth(180)).withStyle(LABEL));
+        row.addChild(LabelBuilder.label().withText(value).withAnchor(new HyUIAnchor().setWidth(width - 214)).withStyle(valueStyle));
+        return row;
+    }
+
+    private static GroupBuilder spacerX(int width) {
+        return GroupBuilder.group().withAnchor(new HyUIAnchor().setWidth(width).setHeight(1));
+    }
+
+    private static GroupBuilder spacerY(int height) {
+        return GroupBuilder.group().withAnchor(new HyUIAnchor().setWidth(1).setHeight(height));
     }
 }
