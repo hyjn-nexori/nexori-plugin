@@ -16,10 +16,10 @@ This repository currently contains the first usable slice of the plugin:
 - per-server identity generation with an Ed25519 keypair
 - local persistence for server identity and bootstrap state
 - short-lived bootstrap sessions for enrollment windows
-- saved peer IPs persisted as JSON in the server data folder
-- a lightweight peer manager UI based on custom pages
+- local bootstrap peer IPs persisted as JSON in the server data folder
 - bootstrap travel that collects public keys, gets a signed proof from each peer,
   and installs the verified trust bundle across enrolled servers
+- bundle-backed trusted network state shared across enrolled servers after setup
 - destination targets stored on the destination server
 - trusted destination target discovery and caching on the origin server
 - configurable Nexori portals with secure trigger bindings
@@ -27,9 +27,13 @@ This repository currently contains the first usable slice of the plugin:
 - in-game recovery UI plus backup/recover flows for `APPLY_INVENTORY`
 - local destination overwrite backups for `APPLY_INVENTORY` claims
 - recovery mode and per-player backup limit controls for admins
+- a top-level HyUI admin shell for servers, rules, and targets
 - guided in-game owner setup for destination targets and portal binding setup
 - per-player draft-aware setup flows that resume after destination discovery travel
-- target manager UI for listing, editing, and removing owner-managed targets
+- HyUI-based portal admin from the main menu and direct `F` interaction
+- HyUI-based player recovery page
+- in-game rule groups with trusted remote refresh/apply flows for server-wide Nexori settings
+- resettable bootstrap runs plus clearer bootstrap reporting and rerun safety checks
 
 ## Current Commands
 
@@ -78,7 +82,10 @@ Saved data currently lives under the plugin data directory:
 - `config/configured-peers.json`
 - `config/discovered-destination-targets.json`
 - `config/destination-targets.json`
+- `config/discovered-server-policies.json`
+- `config/inventory-transfer-policy.json`
 - `config/portal-instances.json`
+- `config/server-rule-groups.json`
 - `config/trigger-bindings.json`
 - `state/bootstrap-state.properties`
 - `state/bootstrap-run.json`
@@ -112,13 +119,13 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.5.0`.
+The current committed milestone is `0.6.0`.
 
-- `0.5.x` is for fixes and stability on the new recovery and inventory transfer flows
-- `0.6.0` is planned for clearer travel outcomes and diagnostics
+- `0.6.x` is for fixes and stability on the HyUI admin shell, trusted network bootstrap flow, and remote server rules
+- `0.7.0` is planned for clearer travel outcomes and diagnostics
 - `1.0.0` is the target for the first non-coder-friendly adventure network kit
 
-The next active development line after this release is `0.6.0-SNAPSHOT`.
+The next active development line after this release is `0.7.0-SNAPSHOT`.
 
 ## Secure Referrals
 
@@ -134,8 +141,8 @@ This is now the foundation for destination targets, portals, discovery,
 inventory-aware travel profiles, guided owner setup flows, and recovery-aware
 inventory transfer without redesigning the security model.
 
-The next milestone is clearer travel outcomes, diagnostics, and maintenance
-flows around the now-functional owner and player happy paths.
+The next milestone is `0.7.0`: clearer travel outcomes and diagnostics around
+the now-functional owner and player happy paths.
 
 ## Development Notes
 

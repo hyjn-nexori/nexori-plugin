@@ -22,7 +22,7 @@ The product direction is:
 
 ## What Exists Today
 
-Current `0.5.0` foundation:
+Current `0.6.0` foundation:
 
 - per-server identity generation with Ed25519
 - peer discovery and trust bootstrap
@@ -46,10 +46,17 @@ Current `0.5.0` foundation:
 - manual and UI-driven backup/recover flow for `APPLY_INVENTORY`
 - local destination overwrite backups and direct local claims
 - admin controls for recovery enable/disable and per-player backup limits
+- top-level HyUI admin shell for servers, rules, and targets
 - guided in-game destination target management and creation flows
 - guided in-game portal setup and trigger binding flows
+- HyUI portal admin entry from both the admin shell and direct portal interaction
+- HyUI recovery page for normal players
 - per-player and per-portal draft-aware setup resume after discovery travel
 - owner flows that capture current world, position, and facing direction in game
+- per-server Nexori rule groups with trusted remote refresh and apply flows
+- bundle-backed trusted network view plus local bootstrap peer editing for rebootstrap
+- resettable bootstrap runs and clearer bootstrap reporting for owners
+- rerun safety checks so active trusted networks only accept bootstrap reruns from verified servers
 
 ## Target For 1.0.0
 
@@ -249,10 +256,10 @@ Recommended workflow:
 
 Examples:
 
-- current release: `0.5.0`
-- next in-progress line after release: `0.5.1-SNAPSHOT` or `0.6.0-SNAPSHOT`
-- first bugfix after release: `0.5.1`
-- next feature milestone: `0.6.0`
+- current release: `0.6.0`
+- next in-progress line after release: `0.6.1-SNAPSHOT` or `0.7.0-SNAPSHOT`
+- first bugfix after release: `0.6.1`
+- next feature milestone: `0.7.0`
 
 ## Release Policy
 
