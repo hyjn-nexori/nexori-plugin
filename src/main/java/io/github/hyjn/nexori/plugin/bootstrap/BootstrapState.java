@@ -5,11 +5,13 @@ public record BootstrapState(
     String sessionId,
     long sessionExpiresAtEpochMillis,
     long bundleVersion,
-    String bundleHash
+    String bundleHash,
+    String lastRunMessage,
+    boolean lastRunFailed
 ) {
 
     public static BootstrapState initial() {
-        return new BootstrapState(false, "", 0L, 0L, "");
+        return new BootstrapState(false, "", 0L, 0L, "", "", false);
     }
 
     public boolean hasActiveSession() {

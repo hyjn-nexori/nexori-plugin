@@ -72,8 +72,7 @@ public final class TrustBundleStore {
                 localConnectionAddress == null ? "" : localConnectionAddress,
                 localIdentity.fingerprint(),
                 localIdentity.publicKeyBase64(),
-                Instant.now().toEpochMilli(),
-                true
+                Instant.now().toEpochMilli()
             ));
             for (BundleMember remoteMember : remoteMembers) {
                 if (localServerId.equals(remoteMember.serverId())) {

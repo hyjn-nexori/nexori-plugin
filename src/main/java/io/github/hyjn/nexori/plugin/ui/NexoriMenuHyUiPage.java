@@ -284,31 +284,22 @@ public final class NexoriMenuHyUiPage {
         GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(panelHeight));
 
         GroupBuilder left = card(LEFT_W, panelHeight, CARD_BG);
-        left.addChild(label("Trusted Servers", TITLE, LEFT_W - 32));
+        left.addChild(label("Trusted Network", TITLE, LEFT_W - 32));
         left.addChild(spacerY(10));
-        long knownTrustedServers = serverEntries.stream()
-            .filter(entry -> !entry.connectionAddress().isBlank())
-            .count();
         left.addChild(label(
-            knownTrustedServers == 0
-                ? "No trusted servers are known yet."
-                : knownTrustedServers + " trusted server(s) known for this network.",
+            serverEntries.isEmpty()
+                ? "No active trusted network is known on this server yet."
+                : serverEntries.size() + " trusted server(s) in the active network.",
             MUTED,
             LEFT_W - 32
         ));
         left.addChild(spacerY(12));
         GroupBuilder actions = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(38));
-        actions.addChild(spacerX(20));
-        actions.addChild(
-            ButtonBuilder.secondaryTextButton().withText("Add Server")
-                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(38))
-                .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.withSelectedPeer("").withServersPanel(ServersPanel.ADD).withStatus("")))
-        );
-        actions.addChild(spacerX(8));
+        actions.addChild(spacerX(((LEFT_W - 32) - 190) / 2));
         actions.addChild(
             (state.serversPanel() == ServersPanel.SETUP ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
                 .withText("Initial Setup")
-                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(38))
+                .withAnchor(new HyUIAnchor().setWidth(190).setHeight(38))
                 .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.withSelectedPeer("").withServersPanel(ServersPanel.SETUP).withStatus("")))
         );
         left.addChild(actions);
@@ -330,14 +321,12 @@ public final class NexoriMenuHyUiPage {
             }
         } else {
             listHost.addChild(spacerY(12));
-            listHost.addChild(label("Add the servers that belong to this experience, then run Initial Setup.", MUTED, LEFT_W - 48));
+            listHost.addChild(label("Run Initial Setup to build the first trusted network for this server.", MUTED, LEFT_W - 48));
         }
         left.addChild(listHost);
 
         GroupBuilder right = card(RIGHT_W, panelHeight, CARD_BG);
-        if (state.serversPanel() == ServersPanel.ADD) {
-            buildAddServerPanel(ref, store, playerRef, player, plugin, state, right);
-        } else if (state.serversPanel() == ServersPanel.SETUP) {
+        if (state.serversPanel() == ServersPanel.SETUP || state.serversPanel() == ServersPanel.ADD) {
             buildSetupPanel(ref, store, playerRef, player, plugin, state, peers, right);
         } else {
             buildServerDetailsPanel(ref, store, playerRef, player, plugin, state, selectedServer, serverEntries, right);
@@ -360,10 +349,10 @@ public final class NexoriMenuHyUiPage {
         List<ServerEntry> serverEntries,
         GroupBuilder right
     ) {
-        right.addChild(label("Server Details", TITLE, RIGHT_W - 32));
+        right.addChild(label("Trusted Network Details", TITLE, RIGHT_W - 32));
         right.addChild(spacerY(10));
         if (selectedPeer == null) {
-            right.addChild(label("No trusted server selected yet.", MUTED, RIGHT_W - 32));
+            right.addChild(label("No active trusted server selected yet. Open Initial Setup to manage the local bootstrap peers that build this network.", MUTED, RIGHT_W - 32));
             return;
         }
 
@@ -374,8 +363,10 @@ public final class NexoriMenuHyUiPage {
         connectBlock.addChild(stat("Host", selectedPeer.host(), RIGHT_W - 16));
         connectBlock.addChild(stat("Port", selectedPeer.portText(), RIGHT_W - 16));
         connectBlock.addChild(stat(
-            "Saved In Trusted Servers",
-            selectedPeer.configured() ? "Yes" : "No, this entry only exists in the current trust bundle.",
+            "Saved In Bootstrap Peers",
+            selectedPeer.configured()
+                ? "Yes, this server is also saved in this server's local bootstrap peer list."
+                : "No, this server only appears in the active trusted network on this server.",
             RIGHT_W - 16
         ));
         right.addChild(connectBlock);
@@ -385,7 +376,7 @@ public final class NexoriMenuHyUiPage {
         secureBlock.addChild(label("Secure Travel With", TITLE, RIGHT_W - 64));
         secureBlock.addChild(spacerY(10));
         TrustBundle bundle = plugin.getBootstrapCoordinator().getTrustBundle();
-        boolean selectedServerTrusted = isTrustedEntry(bundle, selectedPeer);
+        boolean selectedServerTrusted = isTrustedEntry(plugin, bundle, selectedPeer);
         int secureRowCount = serverEntries.size();
         int secureListContentHeight = Math.max(200, Math.max(1, secureRowCount) * 32 + 32);
         ReorderableListBuilder secureList = scrollList(RIGHT_W - 64, 200, secureListContentHeight, "secure-travel-list", false);
@@ -395,37 +386,11 @@ public final class NexoriMenuHyUiPage {
             if (peer.selectionKey().equals(selectedPeer.selectionKey())) {
                 continue;
             }
-            secureList.addChild(secureLinkRow(peer.displayAddress(), selectedServerTrusted && isTrustedEntry(bundle, peer)));
+            secureList.addChild(secureLinkRow(peer.displayAddress(), selectedServerTrusted && isTrustedEntry(plugin, bundle, peer)));
             secureList.addChild(spacerY(8));
         }
         secureBlock.addChild(secureList);
         right.addChild(secureBlock);
-        right.addChild(spacerY(16));
-        if (selectedPeer.configured() && !selectedPeer.connectionAddress().isBlank()) {
-            right.addChild(
-                ButtonBuilder.textButton()
-                    .withText("Remove Server")
-                    .withBackground(new HyUIPatchStyle().setColor("#a33f4d"))
-                    .withAnchor(new HyUIAnchor().setWidth(220).setHeight(42))
-                    .onClick((ignored, ctx) -> {
-                        try {
-                            boolean removed = plugin.getConfiguredPeerService().remove(selectedPeer.connectionAddress());
-                            plugin.getServerRuleGroupService().removeServerAssignments(selectedPeer.selectionKey());
-                            TrustBundle currentBundle = plugin.getBootstrapCoordinator().getTrustBundle();
-                            boolean stillPresentInBundle = isTrustedMember(currentBundle, selectedPeer.connectionAddress());
-                            String nextSelected = stillPresentInBundle ? selectedPeer.selectionKey() : "";
-                            String status = removed
-                                ? stillPresentInBundle
-                                    ? "Removed server " + selectedPeer.connectionAddress() + " from Trusted Servers. It still appears in the current trust bundle until you run Initial Setup again."
-                                    : "Removed server " + selectedPeer.connectionAddress() + "."
-                                : "This server was not saved in Trusted Servers anymore.";
-                            open(ref, store, playerRef, player, plugin, state.withSelectedPeer(nextSelected).withStatus(status));
-                        } catch (IOException | IllegalArgumentException exception) {
-                            open(ref, store, playerRef, player, plugin, state.withStatus("Failed to remove server: " + exception.getMessage()));
-                        }
-                    })
-            );
-        }
     }
 
     private static void buildAddServerPanel(
@@ -505,18 +470,43 @@ public final class NexoriMenuHyUiPage {
         GroupBuilder right
     ) {
         SetupReport report = buildSetupReport(plugin, peers);
+        TrustBundle bundle = plugin.getBootstrapCoordinator().getTrustBundle();
+        boolean hasActiveTrustedNetwork = bundle.bundleVersion() > 0 && !bundle.bundleHash().isBlank() && !bundle.members().isEmpty();
         right.addChild(label("Initial Setup", TITLE, RIGHT_W - 32));
         right.addChild(spacerY(10));
-        GroupBuilder setupBlock = card(RIGHT_W - 32, 220, ITEM_BG);
+        int detailsHostHeight = bodyHeight(state) - 72;
+        ReorderableListBuilder detailsHost = scrollList(
+            RIGHT_W - 32,
+            detailsHostHeight,
+            Math.max(detailsHostHeight + 40, 860),
+            "server-setup-details-scroll",
+            false
+        );
+
+        if (!state.statusText().isBlank()) {
+            detailsHost.addChild(label(state.statusText(), MUTED, RIGHT_W - 64));
+            detailsHost.addChild(spacerY(10));
+        }
+
+        GroupBuilder setupBlock = card(RIGHT_W - 32, 248, ITEM_BG);
         setupBlock.addChild(label("Setup", TITLE, RIGHT_W - 64));
         setupBlock.addChild(spacerY(8));
         setupBlock.addChild(label(
-            "When Nexori starts on a server, it creates that server's key pair. For secure travel to work, every trusted server in this experience needs the public keys of the others. After you add the servers that belong to this experience under Trusted Servers, run Initial Setup so Nexori can verify them and install the trust bundle they need.",
+            "The list on the left shows the active trusted network from the current Nexori trust bundle. Running Initial Setup uses only the Bootstrap Peers list below on this server, verifies those servers, then rebuilds and redistributes the trust bundle.",
             BODY,
             RIGHT_W - 64
         ));
+        setupBlock.addChild(spacerY(12));
+        setupBlock.addChild(label(
+            "When you want to add or remove servers from the secure network, update the Bootstrap Peers list below and run Initial Setup again. Every server that should remain in the secure network must be in that list, including the server you are on now.",
+            MUTED,
+            RIGHT_W - 64
+        ));
         setupBlock.addChild(spacerY(14));
-        setupBlock.addChild(
+        GroupBuilder setupActions = report.running()
+            ? centeredActionRow(RIGHT_W - 64, 220, 12, 220)
+            : centeredActionRow(RIGHT_W - 64, 220);
+        setupActions.addChild(
             ButtonBuilder.secondaryTextButton()
                 .withText("Run Initial Setup")
                 .withDisabled(peers.isEmpty() || report.running())
@@ -529,12 +519,147 @@ public final class NexoriMenuHyUiPage {
                             pages.setPage(ref, store, Page.None);
                         }
                     } else {
-                        open(ref, store, playerRef, player, plugin, state.withStatus(result.message()));
+                        open(ref, store, playerRef, player, plugin, state.withServersPanel(ServersPanel.SETUP).withStatus(result.message()));
                     }
                 })
         );
-        right.addChild(setupBlock);
-        right.addChild(spacerY(14));
+        if (report.running()) {
+            setupActions.addChild(spacerX(12));
+            setupActions.addChild(
+                ButtonBuilder.textButton()
+                    .withText("Reset Active Run")
+                    .withBackground(new HyUIPatchStyle().setColor("#a33f4d"))
+                    .withAnchor(new HyUIAnchor().setWidth(220).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        BootstrapCoordinator.StartResult result = plugin.getBootstrapCoordinator().resetActiveRun(playerRef);
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withServersPanel(ServersPanel.SETUP).withStatus(result.message())
+                        );
+                    })
+            );
+        }
+        setupBlock.addChild(setupActions);
+        detailsHost.addChild(setupBlock);
+        detailsHost.addChild(spacerY(14));
+
+        GroupBuilder peersBlock = card(RIGHT_W - 32, 284, ITEM_BG);
+        peersBlock.addChild(label("Bootstrap Peers", TITLE, RIGHT_W - 64));
+        peersBlock.addChild(spacerY(8));
+        peersBlock.addChild(label(
+            hasActiveTrustedNetwork && peers.isEmpty()
+                ? "This server already has an active trusted network, but its local Bootstrap Peers list is empty. You can still update the network from here, but add every server that should exist in the next secure network, including the server you are on now."
+                : "These are the local peers this server will use as input for the next Initial Setup run. Add or remove servers here before you rebuild the trusted network.",
+            MUTED,
+            RIGHT_W - 64
+        ));
+        peersBlock.addChild(spacerY(12));
+        GroupBuilder addRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+        addRow.addChild(
+            TextFieldBuilder.textInput()
+                .withId(SERVER_ADDRESS_INPUT_ID)
+                .withValue(state.pendingServerAddress())
+                .withPlaceholderText("host:port")
+                .withMaxLength(255)
+                .withAnchor(new HyUIAnchor().setWidth(520).setHeight(42))
+                .withBackground("#101926")
+        );
+        addRow.addChild(spacerX(12));
+        addRow.addChild(
+            ButtonBuilder.textButton()
+                .withText("Add Server")
+                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(42))
+                .onClick((ignored, ctx) -> {
+                    String rawAddress = ctx.getValue(SERVER_ADDRESS_INPUT_ID, String.class).orElse(state.pendingServerAddress()).trim();
+                    try {
+                        ConfiguredPeer added = plugin.getConfiguredPeerService().add(rawAddress);
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withServersPanel(ServersPanel.SETUP)
+                                .withPendingServerAddress("")
+                                .withStatus("Added bootstrap peer " + added.connectionAddress() + ".")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withServersPanel(ServersPanel.SETUP)
+                                .withPendingServerAddress(rawAddress)
+                                .withStatus("Could not add bootstrap peer: " + exception.getMessage())
+                        );
+                    }
+                })
+        );
+        peersBlock.addChild(addRow);
+        peersBlock.addChild(spacerY(12));
+        ReorderableListBuilder bootstrapPeerList = scrollList(
+            RIGHT_W - 64,
+            128,
+            Math.max(140, peers.isEmpty() ? 80 : peers.size() * 38 + 24),
+            "bootstrap-peers-list",
+            true
+        );
+        if (peers.isEmpty()) {
+            bootstrapPeerList.addChild(spacerY(8));
+            bootstrapPeerList.addChild(label("No bootstrap peers are saved on this server yet.", MUTED, RIGHT_W - 96));
+        } else {
+            for (ConfiguredPeer peer : peers) {
+                GroupBuilder peerRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 96).setHeight(30));
+                peerRow.addChild(LabelBuilder.label().withText(peer.connectionAddress()).withAnchor(new HyUIAnchor().setWidth(540)).withStyle(BODY));
+                peerRow.addChild(spacerX(12));
+                peerRow.addChild(
+                    ButtonBuilder.smallSecondaryTextButton()
+                        .withText("Remove")
+                        .withAnchor(new HyUIAnchor().setWidth(120).setHeight(30))
+                        .onClick((ignored, ctx) -> {
+                            try {
+                                boolean removed = plugin.getConfiguredPeerService().remove(peer.connectionAddress());
+                                open(
+                                    ref,
+                                    store,
+                                    playerRef,
+                                    player,
+                                    plugin,
+                                    state.withServersPanel(ServersPanel.SETUP)
+                                        .withPendingServerAddress("")
+                                        .withStatus(
+                                            removed
+                                                ? "Removed bootstrap peer " + peer.connectionAddress() + ". The active trusted network on the left will not change until you run Initial Setup again."
+                                                : "That bootstrap peer was already removed from this server."
+                                        )
+                                );
+                            } catch (IOException | IllegalArgumentException exception) {
+                                open(
+                                    ref,
+                                    store,
+                                    playerRef,
+                                    player,
+                                    plugin,
+                                    state.withServersPanel(ServersPanel.SETUP)
+                                        .withStatus("Could not remove bootstrap peer: " + exception.getMessage())
+                                );
+                            }
+                        })
+                );
+                bootstrapPeerList.addChild(peerRow);
+                bootstrapPeerList.addChild(spacerY(8));
+            }
+        }
+        peersBlock.addChild(bootstrapPeerList);
+        detailsHost.addChild(peersBlock);
+        detailsHost.addChild(spacerY(14));
+
         GroupBuilder reportBlock = card(RIGHT_W - 32, 220, ITEM_BG);
         reportBlock.addChild(label("Report", TITLE, RIGHT_W - 64));
         reportBlock.addChild(spacerY(8));
@@ -547,7 +672,8 @@ public final class NexoriMenuHyUiPage {
             reportBlock.addChild(spacerY(10));
             reportBlock.addChild(label(report.followUp(), MUTED, RIGHT_W - 64));
         }
-        right.addChild(reportBlock);
+        detailsHost.addChild(reportBlock);
+        right.addChild(detailsHost);
     }
 
     private static GroupBuilder targetsBody(
@@ -1091,8 +1217,8 @@ public final class NexoriMenuHyUiPage {
         PortalSetupDraft draft = plugin.getPortalSetupDraftService().find(playerRef.getUuid(), portal.portalId())
             .orElse(new PortalSetupDraft(portal.portalId(), PORTAL_STEP_SELECT_SERVER, "", "", "", portal.displayName()));
         TriggerBindingDefinition binding = plugin.getTriggerBindingService().findPortalCollisionBinding(portal.portalId()).orElse(null);
-        List<ConfiguredPeer> configuredPeers = plugin.getConfiguredPeerService().list();
-        String destinationAddress = resolvePortalDestinationAddress(draft.selectedDestinationAddress(), binding, configuredPeers);
+        List<ConfiguredPeer> trustedPeers = trustedNetworkPeers(plugin);
+        String destinationAddress = resolvePortalDestinationAddress(draft.selectedDestinationAddress(), binding, trustedPeers);
         DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(destinationAddress).orElse(null);
         String targetId = resolvePortalTargetId(draft.selectedTargetId(), discovery, destinationAddress, binding);
         TravelProfileType travelProfile = resolvePortalTravelProfile(draft.selectedTravelProfileId(), binding);
@@ -1162,8 +1288,8 @@ public final class NexoriMenuHyUiPage {
         }
 
         TriggerBindingDefinition binding = plugin.getTriggerBindingService().findPortalCollisionBinding(portal.portalId()).orElse(null);
-        List<ConfiguredPeer> configuredPeers = plugin.getConfiguredPeerService().list();
-        String destinationAddress = resolvePortalDestinationAddress(state.pendingPortalDestinationAddress(), binding, configuredPeers);
+        List<ConfiguredPeer> trustedPeers = trustedNetworkPeers(plugin);
+        String destinationAddress = resolvePortalDestinationAddress(state.pendingPortalDestinationAddress(), binding, trustedPeers);
         DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(destinationAddress).orElse(null);
         String targetId = resolvePortalTargetId(state.pendingPortalTargetId(), discovery, destinationAddress, binding);
         TravelProfileType travelProfile = resolvePortalTravelProfile(state.pendingPortalTravelProfileId(), binding);
@@ -1206,9 +1332,9 @@ public final class NexoriMenuHyUiPage {
             serverBlock.addChild(stat("Selected Server", destinationAddress.isBlank() ? "<none>" : destinationAddress, RIGHT_W - 16));
             serverBlock.addChild(spacerY(8));
             serverBlock.addChild(label(
-                configuredPeers.isEmpty()
-                    ? "Add and bootstrap a trusted server first before binding this portal."
-                    : "Configured trusted servers on this origin: " + configuredPeers.size(),
+                trustedPeers.isEmpty()
+                    ? "Run Initial Setup first so this server can see the trusted network before binding this portal."
+                    : "Trusted destination servers in this network: " + trustedPeers.size(),
                 MUTED,
                 RIGHT_W - 64
             ));
@@ -1216,18 +1342,18 @@ public final class NexoriMenuHyUiPage {
             GroupBuilder row = centeredActionRow(RIGHT_W - 64, 140, 12, 140);
             row.addChild(
                 ButtonBuilder.secondaryTextButton().withText("Prev Server")
-                    .withDisabled(configuredPeers.isEmpty())
+                    .withDisabled(trustedPeers.isEmpty())
                     .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
                     .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
-                        cyclePortalDestination(configuredPeers, destinationAddress, -1), targetId, travelProfile.id(), portalDisplayName, ""))
+                        cyclePortalDestination(trustedPeers, destinationAddress, -1), targetId, travelProfile.id(), portalDisplayName, ""))
             );
             row.addChild(spacerX(12));
             row.addChild(
                 ButtonBuilder.textButton().withText("Next Server")
-                    .withDisabled(configuredPeers.isEmpty())
+                    .withDisabled(trustedPeers.isEmpty())
                     .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
                     .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
-                        cyclePortalDestination(configuredPeers, destinationAddress, 1), "", travelProfile.id(), portalDisplayName, ""))
+                        cyclePortalDestination(trustedPeers, destinationAddress, 1), "", travelProfile.id(), portalDisplayName, ""))
             );
             serverBlock.addChild(row);
             detailsHost.addChild(serverBlock);
@@ -2282,18 +2408,48 @@ public final class NexoriMenuHyUiPage {
         }
 
         List<ConfiguredPeer> remotePeers = new ArrayList<>();
+        List<String> unresolvedRemoteServers = new ArrayList<>();
+        java.util.LinkedHashMap<String, ConfiguredPeer> trustedPeersByAddress = new java.util.LinkedHashMap<>();
+        for (ConfiguredPeer trustedPeer : trustedNetworkPeers(plugin)) {
+            trustedPeersByAddress.putIfAbsent(trustedPeer.connectionAddress(), trustedPeer);
+        }
         for (ServerEntry serverEntry : assignedServers) {
             if (serverEntry.local() || serverEntry.connectionAddress().isBlank()) {
                 continue;
             }
-            ConfiguredPeer configuredPeer = findSelectedPeer(peers, serverEntry.connectionAddress());
+            ConfiguredPeer configuredPeer = trustedPeersByAddress.get(serverEntry.connectionAddress());
             if (configuredPeer != null) {
                 remotePeers.add(configuredPeer);
+            } else {
+                unresolvedRemoteServers.add(serverEntry.displayAddress());
             }
         }
 
+        if (!unresolvedRemoteServers.isEmpty()) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withStatus(
+                    "These assigned servers are not in this server's trusted network yet: "
+                        + String.join(", ", unresolvedRemoteServers)
+                        + ". Run Initial Setup again if needed before applying this rule group remotely."
+                )
+            );
+            return;
+        }
+
         if (remotePeers.isEmpty()) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Applied '" + currentGroup.displayName() + "' to the local server only."));
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withStatus("Applied '" + currentGroup.displayName() + "' to the local server. No remote servers are assigned to this group yet.")
+            );
             return;
         }
 
@@ -2357,14 +2513,44 @@ public final class NexoriMenuHyUiPage {
         List<ServerEntry> serverEntries
     ) {
         ServerRuleGroupDefinition currentGroup = resolveCurrentRuleGroup(plugin, state, group);
-        List<ConfiguredPeer> remotePeers = serverEntries.stream()
+        List<ServerEntry> assignedRemoteServers = serverEntries.stream()
             .filter(serverEntry -> currentGroup.containsServer(serverEntry.selectionKey()))
             .filter(serverEntry -> !serverEntry.local() && !serverEntry.connectionAddress().isBlank())
-            .map(serverEntry -> findSelectedPeer(peers, serverEntry.connectionAddress()))
-            .filter(java.util.Objects::nonNull)
             .toList();
-        if (remotePeers.isEmpty()) {
+        if (assignedRemoteServers.isEmpty()) {
             open(ref, store, playerRef, player, plugin, state.withStatus("There are no remote servers assigned to '" + currentGroup.displayName() + "' yet."));
+            return;
+        }
+
+        java.util.LinkedHashMap<String, ConfiguredPeer> trustedPeersByAddress = new java.util.LinkedHashMap<>();
+        for (ConfiguredPeer trustedPeer : trustedNetworkPeers(plugin)) {
+            trustedPeersByAddress.putIfAbsent(trustedPeer.connectionAddress(), trustedPeer);
+        }
+
+        List<ConfiguredPeer> remotePeers = new ArrayList<>();
+        List<String> unresolvedRemoteServers = new ArrayList<>();
+        for (ServerEntry serverEntry : assignedRemoteServers) {
+            ConfiguredPeer trustedPeer = trustedPeersByAddress.get(serverEntry.connectionAddress());
+            if (trustedPeer != null) {
+                remotePeers.add(trustedPeer);
+            } else {
+                unresolvedRemoteServers.add(serverEntry.displayAddress());
+            }
+        }
+
+        if (!unresolvedRemoteServers.isEmpty()) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withStatus(
+                    "These assigned remote servers are not in this server's trusted network yet: "
+                        + String.join(", ", unresolvedRemoteServers)
+                        + ". Run Initial Setup again if needed before refreshing this rule group."
+                )
+            );
             return;
         }
 
@@ -2565,73 +2751,27 @@ public final class NexoriMenuHyUiPage {
 
     private static List<ServerEntry> buildServerEntries(@Nonnull NexoriPlugin plugin, @Nonnull List<ConfiguredPeer> peers) {
         List<ServerEntry> entries = new ArrayList<>();
-        Optional<ConfiguredPeer> localPeer = plugin.getLocalConnectionAddressService().getConfiguredPeer();
         TrustBundle bundle = plugin.getBootstrapCoordinator().getTrustBundle();
-        java.util.LinkedHashMap<String, ServerEntry> remoteEntriesByAddress = new java.util.LinkedHashMap<>();
-        boolean localTrusted = false;
-
-        if (localPeer.isPresent()) {
-            localTrusted = bundle.members().stream()
-                .anyMatch(member -> member.connectionAddress() != null
-                    && member.connectionAddress().equalsIgnoreCase(localPeer.get().connectionAddress()));
-        }
-
-        if (localPeer.isPresent()) {
-            ConfiguredPeer peer = localPeer.get();
-            entries.add(new ServerEntry(
-                LOCAL_SERVER_KEY,
-                peer.connectionAddress(),
-                peer.host(),
-                Integer.toString(peer.port()),
-                peer.connectionAddress(),
-                true,
-                localTrusted
-            ));
-        } else {
-            entries.add(new ServerEntry(
-                LOCAL_SERVER_KEY,
-                "Current Server (address not learned yet)",
-                "<unknown>",
-                "<unknown>",
-                "",
-                true,
-                false
-            ));
-        }
-
-        for (ConfiguredPeer peer : peers) {
-            if (localPeer.isPresent() && peer.connectionAddress().equalsIgnoreCase(localPeer.get().connectionAddress())) {
-                continue;
-            }
-            remoteEntriesByAddress.put(peer.connectionAddress(), new ServerEntry(
-                peer.connectionAddress(),
-                peer.connectionAddress(),
-                peer.host(),
-                Integer.toString(peer.port()),
-                peer.connectionAddress(),
-                false,
-                true
-            ));
-        }
-
+        String localServerId = localServerId(plugin);
+        java.util.LinkedHashMap<String, ServerEntry> entriesBySelectionKey = new java.util.LinkedHashMap<>();
         for (BundleMember member : bundle.members()) {
-            if (member.local() || member.connectionAddress() == null || member.connectionAddress().isBlank()) {
+            if (member.connectionAddress() == null || member.connectionAddress().isBlank()) {
                 continue;
             }
-            if (localPeer.isPresent() && member.connectionAddress().equalsIgnoreCase(localPeer.get().connectionAddress())) {
-                continue;
-            }
-            remoteEntriesByAddress.putIfAbsent(member.connectionAddress(), new ServerEntry(
-                member.connectionAddress(),
+            boolean local = localServerId.equals(member.serverId());
+            boolean configured = peers.stream().anyMatch(peer -> peer.connectionAddress().equalsIgnoreCase(member.connectionAddress()));
+            String selectionKey = local ? LOCAL_SERVER_KEY : member.connectionAddress();
+            entriesBySelectionKey.putIfAbsent(selectionKey, new ServerEntry(
+                selectionKey,
                 member.connectionAddress(),
                 parseHost(member.connectionAddress()),
                 parsePortText(member.connectionAddress()),
                 member.connectionAddress(),
-                false,
-                false
+                local,
+                configured
             ));
         }
-        entries.addAll(remoteEntriesByAddress.values());
+        entries.addAll(entriesBySelectionKey.values());
         return entries;
     }
 
@@ -2650,15 +2790,18 @@ public final class NexoriMenuHyUiPage {
     }
 
     private static String normalizeSelectedPeerAddress(@Nonnull String selectedPeerAddress, @Nonnull List<ServerEntry> serverEntries) {
+        if (serverEntries.isEmpty()) {
+            return "";
+        }
         if (selectedPeerAddress.isBlank()) {
-            return LOCAL_SERVER_KEY;
+            return serverEntries.getFirst().selectionKey();
         }
         for (ServerEntry entry : serverEntries) {
             if (entry.selectionKey().equals(selectedPeerAddress) || (!entry.connectionAddress().isBlank() && entry.connectionAddress().equalsIgnoreCase(selectedPeerAddress))) {
                 return entry.selectionKey();
             }
         }
-        return LOCAL_SERVER_KEY;
+        return serverEntries.getFirst().selectionKey();
     }
 
     private static String normalizeSelectedRuleGroupId(@Nonnull String selectedRuleGroupId, @Nonnull List<ServerRuleGroupDefinition> ruleGroups) {
@@ -2741,15 +2884,23 @@ public final class NexoriMenuHyUiPage {
         return new Transform(transformComponent.getPosition(), rotation);
     }
 
-    private static SetupReport buildSetupReport(@Nonnull NexoriPlugin plugin, @Nonnull List<ConfiguredPeer> peers) {
+    private static SetupReport buildSetupReport(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull List<ConfiguredPeer> peers
+    ) {
         BootstrapState bootstrapState = plugin.getBootstrapStateStore().getCurrentState();
         TrustBundle bundle = plugin.getBootstrapCoordinator().getTrustBundle();
+        String localServerId = localServerId(plugin);
+        boolean hasActiveTrustedNetwork = bundle.bundleVersion() > 0
+            && !bundle.bundleHash().isBlank()
+            && !bundle.members().isEmpty();
+        String localConnectionAddress = plugin.getLocalConnectionAddressService().getConnectionAddressOrBlank();
 
-        if (peers.isEmpty()) {
+        if (!hasActiveTrustedNetwork && peers.isEmpty()) {
             return new SetupReport(
-                "Waiting For Servers",
-                "Add the trusted servers for this experience first. Nexori cannot build the secure trust bundle until at least one remote server has been configured.",
-                "",
+                "Waiting For Bootstrap Peers",
+                "This server does not have an active trusted network yet, and its local Bootstrap Peers list is empty.",
+                "Add every server that should be part of the secure network here, including the server you are on now, then run Initial Setup.",
                 false,
                 BAD
             );
@@ -2765,27 +2916,89 @@ public final class NexoriMenuHyUiPage {
             );
         }
 
-        boolean localIncluded = bundle.members().stream().anyMatch(BundleMember::local);
-        List<String> missingPeers = peers.stream()
-            .filter(peer -> bundle.members().stream().noneMatch(member -> peer.connectionAddress().equalsIgnoreCase(member.connectionAddress())))
-            .map(ConfiguredPeer::connectionAddress)
-            .toList();
-
-        if (bundle.bundleVersion() <= 0 || bundle.bundleHash().isBlank() || bundle.members().isEmpty() || !localIncluded) {
+        if (bootstrapState.lastRunFailed() && !bootstrapState.lastRunMessage().isBlank()) {
             return new SetupReport(
-                "Not Completed",
-                "This server does not have a confirmed Nexori trust bundle yet.",
-                "Run Initial Setup after you finish adding the trusted servers that belong to this experience.",
+                "Last Run Failed",
+                bootstrapState.lastRunMessage(),
+                hasActiveTrustedNetwork
+                    ? "The active trusted network on this server was not replaced. Update Bootstrap Peers if needed, then run Initial Setup again from a verified server in that network."
+                    : "No trusted network was installed on this server. Update Bootstrap Peers if needed, then run Initial Setup again.",
                 false,
                 BAD
             );
         }
 
-        if (!missingPeers.isEmpty()) {
+        boolean localIncluded = bundle.members().stream().anyMatch(member -> localServerId.equals(member.serverId()));
+        List<String> activeAddresses = bundle.members().stream()
+            .map(BundleMember::connectionAddress)
+            .filter(address -> address != null && !address.isBlank())
+            .toList();
+        List<String> bootstrapAddresses = peers.stream()
+            .map(ConfiguredPeer::connectionAddress)
+            .toList();
+        List<String> missingFromActiveNetwork = peers.stream()
+            .filter(peer -> activeAddresses.stream().noneMatch(address -> peer.connectionAddress().equalsIgnoreCase(address)))
+            .map(ConfiguredPeer::connectionAddress)
+            .toList();
+        List<String> missingFromBootstrapPeers = activeAddresses.stream()
+            .filter(address -> bootstrapAddresses.stream().noneMatch(peerAddress -> address.equalsIgnoreCase(peerAddress)))
+            .toList();
+        boolean currentServerMissing = !localConnectionAddress.isBlank()
+            && peers.stream().noneMatch(peer -> localConnectionAddress.equalsIgnoreCase(peer.connectionAddress()));
+
+        if (!hasActiveTrustedNetwork) {
+            return new SetupReport(
+                "First Setup Required",
+                "This server does not have its first confirmed Nexori trust bundle yet. The Bootstrap Peers list on the right is only the setup input for this server, and the first successful run must include every server that should belong to the secure network, including this one.",
+                "Nexori can contact the other servers first, but it cannot install the first bundle until this server is also listed in Bootstrap Peers. If the current server is missing, the run stops before the trusted network is created.",
+                false,
+                BAD
+            );
+        }
+
+        if (!localIncluded) {
+            return new SetupReport(
+                "Not Completed",
+                "This server does not have a confirmed Nexori trust bundle yet.",
+                "Run Initial Setup after you finish adding every server that should belong to this secure network.",
+                false,
+                BAD
+            );
+        }
+
+        if (peers.isEmpty()) {
+            return new SetupReport(
+                "Completed",
+                "This server already has the active Nexori trust bundle installed, but its local Bootstrap Peers list is empty.",
+                "Bundle v" + bundle.bundleVersion() + " was last updated at " + TIME_FORMAT.format(Instant.ofEpochMilli(bundle.updatedAtEpochMillis()))
+                    + ". If you want to update the network from here, add every server for the next secure network again, including this one.",
+                false,
+                GOOD
+            );
+        }
+
+        if (currentServerMissing) {
+            return new SetupReport(
+                "Bootstrap Peers Missing This Server",
+                "The active trusted network still works, but this local Bootstrap Peers list does not include the current server address " + localConnectionAddress + ".",
+                "Add this server here if you want this server's next setup input to fully mirror the network you expect to rebuild.",
+                false,
+                INFO
+            );
+        }
+
+        if (!missingFromActiveNetwork.isEmpty() || !missingFromBootstrapPeers.isEmpty()) {
+            StringBuilder followUp = new StringBuilder("Run Initial Setup again to rebuild the trusted network from this server's Bootstrap Peers list.");
+            if (!missingFromActiveNetwork.isEmpty()) {
+                followUp.append(" New here: ").append(String.join(", ", missingFromActiveNetwork)).append('.');
+            }
+            if (!missingFromBootstrapPeers.isEmpty()) {
+                followUp.append(" Missing here: ").append(String.join(", ", missingFromBootstrapPeers)).append('.');
+            }
             return new SetupReport(
                 "Needs Re-run",
-                "The current trust bundle is missing one or more trusted servers: " + String.join(", ", missingPeers),
-                "Run Initial Setup again so every trusted server gets the public keys it needs.",
+                "The local Bootstrap Peers list on this server does not match the active trusted network yet.",
+                followUp.toString(),
                 false,
                 BAD
             );
@@ -2793,7 +3006,7 @@ public final class NexoriMenuHyUiPage {
 
         return new SetupReport(
             "Completed",
-            "Initial setup completed successfully for the currently configured trusted servers. Nexori has a confirmed trust bundle ready for secure travel.",
+            "The local Bootstrap Peers list on this server matches the active trusted network. Nexori is ready for secure travel.",
             "Bundle v" + bundle.bundleVersion() + " was last updated at " + TIME_FORMAT.format(Instant.ofEpochMilli(bundle.updatedAtEpochMillis())) + ".",
             false,
             GOOD
@@ -2804,14 +3017,44 @@ public final class NexoriMenuHyUiPage {
         return bundle.members().stream().anyMatch(member -> connectionAddress.equalsIgnoreCase(member.connectionAddress()));
     }
 
-    private static boolean isTrustedEntry(@Nonnull TrustBundle bundle, @Nonnull ServerEntry entry) {
+    private static boolean isTrustedEntry(@Nonnull NexoriPlugin plugin, @Nonnull TrustBundle bundle, @Nonnull ServerEntry entry) {
         if (entry.local()) {
-            if (entry.connectionAddress().isBlank()) {
-                return bundle.members().stream().anyMatch(member -> member.local() && member.connectionAddress() != null && !member.connectionAddress().isBlank());
-            }
-            return bundle.members().stream().anyMatch(member -> member.local() && entry.connectionAddress().equalsIgnoreCase(member.connectionAddress()));
+            String localServerId = localServerId(plugin);
+            return bundle.members().stream().anyMatch(member -> localServerId.equals(member.serverId()) && member.connectionAddress() != null && !member.connectionAddress().isBlank());
         }
         return !entry.connectionAddress().isBlank() && isTrustedMember(bundle, entry.connectionAddress());
+    }
+
+    @Nonnull
+    private static List<ConfiguredPeer> trustedNetworkPeers(@Nonnull NexoriPlugin plugin) {
+        String localServerId = localServerId(plugin);
+        java.util.LinkedHashMap<String, ConfiguredPeer> peersByAddress = new java.util.LinkedHashMap<>();
+        for (BundleMember member : plugin.getBootstrapCoordinator().getTrustBundle().members()) {
+            if (localServerId.equals(member.serverId())
+                || member.connectionAddress() == null
+                || member.connectionAddress().isBlank()) {
+                continue;
+            }
+            try {
+                ConfiguredPeer peer = ConfiguredPeer.parse(member.connectionAddress());
+                peersByAddress.putIfAbsent(peer.connectionAddress(), peer);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        return List.copyOf(peersByAddress.values());
+    }
+
+    @Nonnull
+    private static Optional<BundleMember> findLocalBundleMember(@Nonnull NexoriPlugin plugin, @Nonnull TrustBundle bundle) {
+        String localServerId = localServerId(plugin);
+        return bundle.members().stream()
+            .filter(member -> localServerId.equals(member.serverId()))
+            .findFirst();
+    }
+
+    @Nonnull
+    private static String localServerId(@Nonnull NexoriPlugin plugin) {
+        return plugin.getLocalIdentity().serverId().toString();
     }
 
     public record State(

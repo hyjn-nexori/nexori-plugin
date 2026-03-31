@@ -35,7 +35,9 @@ public class BootstrapStateStore {
             properties.getProperty("sessionId", ""),
             Long.parseLong(properties.getProperty("sessionExpiresAtEpochMillis", "0")),
             Long.parseLong(properties.getProperty("bundleVersion", "0")),
-            properties.getProperty("bundleHash", "")
+            properties.getProperty("bundleHash", ""),
+            properties.getProperty("lastRunMessage", ""),
+            Boolean.parseBoolean(properties.getProperty("lastRunFailed", "false"))
         );
         return currentState;
     }
@@ -46,7 +48,15 @@ public class BootstrapStateStore {
         }
 
         if (currentState.bootstrapOpen()) {
-            currentState = new BootstrapState(false, "", 0L, currentState.bundleVersion(), currentState.bundleHash());
+            currentState = new BootstrapState(
+                false,
+                "",
+                0L,
+                currentState.bundleVersion(),
+                currentState.bundleHash(),
+                currentState.lastRunMessage(),
+                currentState.lastRunFailed()
+            );
             persistUnchecked(currentState);
         }
         return currentState;
@@ -59,14 +69,30 @@ public class BootstrapStateStore {
             UUID.randomUUID().toString(),
             expiresAt.toEpochMilli(),
             currentState.bundleVersion(),
-            currentState.bundleHash()
+            currentState.bundleHash(),
+            "",
+            false
         );
         persistUnchecked(state);
         return state;
     }
 
     public BootstrapState closeSession() {
-        BootstrapState state = new BootstrapState(false, "", 0L, currentState.bundleVersion(), currentState.bundleHash());
+        BootstrapState state = new BootstrapState(false, "", 0L, currentState.bundleVersion(), currentState.bundleHash(), "", false);
+        persistUnchecked(state);
+        return state;
+    }
+
+    public BootstrapState recordFailure(String message) {
+        BootstrapState state = new BootstrapState(
+            false,
+            "",
+            0L,
+            currentState.bundleVersion(),
+            currentState.bundleHash(),
+            message == null ? "" : message,
+            true
+        );
         persistUnchecked(state);
         return state;
     }
@@ -81,7 +107,9 @@ public class BootstrapStateStore {
             "",
             0L,
             bundleVersion,
-            bundleHash
+            bundleHash,
+            "",
+            false
         );
         persistUnchecked(state);
         return state;
@@ -103,6 +131,8 @@ public class BootstrapStateStore {
         properties.setProperty("sessionExpiresAtEpochMillis", Long.toString(state.sessionExpiresAtEpochMillis()));
         properties.setProperty("bundleVersion", Long.toString(state.bundleVersion()));
         properties.setProperty("bundleHash", state.bundleHash());
+        properties.setProperty("lastRunMessage", state.lastRunMessage());
+        properties.setProperty("lastRunFailed", Boolean.toString(state.lastRunFailed()));
 
         try (OutputStream outputStream = Files.newOutputStream(statePath)) {
             properties.store(outputStream, "Nexori bootstrap state");

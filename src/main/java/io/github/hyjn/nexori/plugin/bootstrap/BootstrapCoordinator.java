@@ -61,7 +61,7 @@ public final class BootstrapCoordinator {
     public StartResult start(@Nonnull PlayerRef playerRef) {
         List<ConfiguredPeer> peers = configuredPeerService.list();
         if (peers.isEmpty()) {
-            return StartResult.failed("Add at least one peer IP before starting Nexori bootstrap.");
+            return StartResult.failed("Add the bootstrap peers for this server first, including this server, before starting Nexori bootstrap.");
         }
 
         BootstrapRun existingRun = bootstrapRunStore.getCurrentRun();
@@ -91,12 +91,35 @@ public final class BootstrapCoordinator {
                 payloadCodec.encode(BootstrapReferralPayload.request(run.startedByPlayerUuid(), challenge, 0, peers.size()))
             );
 
-            logger.atInfo().log("Started Nexori bootstrap session " + state.sessionId() + " with " + peers.size() + " configured peers.");
+            logger.atInfo().log("Started Nexori bootstrap session " + state.sessionId() + " with " + peers.size() + " bootstrap peer(s).");
             return StartResult.started("Started Nexori bootstrap with " + peers.size() + " peer(s).");
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to start Nexori bootstrap.");
             return StartResult.failed("Failed to start Nexori bootstrap: " + exception.getMessage());
         }
+    }
+
+    @Nonnull
+    public StartResult resetActiveRun(@Nonnull PlayerRef playerRef) {
+        BootstrapRun currentRun = bootstrapRunStore.getCurrentRun();
+        BootstrapState currentState = bootstrapStateStore.getCurrentState();
+        if (currentRun == null && !currentState.hasActiveSession()) {
+            return StartResult.failed("There is no active Nexori bootstrap run to reset on this server.");
+        }
+
+        bootstrapRunStore.clear();
+        bootstrapStateStore.closeSession();
+        pendingMessages.remove(playerRef.getUuid());
+        if (currentRun != null) {
+            try {
+                pendingMessages.remove(UUID.fromString(currentRun.startedByPlayerUuid()));
+            } catch (IllegalArgumentException ignored) {
+            }
+            logger.atInfo().log("Reset Nexori bootstrap session " + currentRun.sessionId() + " on the origin server.");
+        } else {
+            logger.atInfo().log("Reset Nexori bootstrap session state on the origin server without a persisted run payload.");
+        }
+        return StartResult.started("Cleared the active Nexori bootstrap state on this origin server. You can run Initial Setup again.");
     }
 
     public void handlePlayerSetupConnect(@Nonnull PlayerSetupConnectEvent event) {
@@ -142,6 +165,10 @@ public final class BootstrapCoordinator {
                 bounceError(event, payload, "The Nexori bootstrap challenge expired.");
                 return;
             }
+            if (!isVerifiedBootstrapOrigin(payload.challenge(), referralSource)) {
+                bounceError(event, payload, "This server already belongs to a trusted Nexori network and will only answer bootstrap reruns from a server that is already verified in that network.");
+                return;
+            }
 
             String signature = identityManager.signChallenge(localIdentity, payload.challenge());
             event.referToServer(
@@ -179,8 +206,7 @@ public final class BootstrapCoordinator {
                 payload.signatureBase64()
             );
             if (!verified) {
-                bootstrapRunStore.clear();
-                queueStatus(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server returned an invalid signature.");
+                failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server returned an invalid signature.");
                 return;
             }
 
@@ -196,8 +222,7 @@ public final class BootstrapCoordinator {
                     connectionAddress,
                     payload.responderFingerprint(),
                     payload.responderPublicKeyBase64(),
-                    Instant.now().toEpochMilli(),
-                    false
+                    Instant.now().toEpochMilli()
                 );
                 updatedRun = currentRun.withVerifiedPeer(verifiedPeer);
             } else {
@@ -230,19 +255,28 @@ public final class BootstrapCoordinator {
             );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to process Nexori proof response.");
-            bootstrapRunStore.clear();
-            queueStatus(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while processing a proof response: " + exception.getMessage());
+            failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while processing a proof response: " + exception.getMessage());
         }
     }
 
     private void beginBundleInstallation(@Nonnull BootstrapRun run, @Nonnull PlayerSetupConnectEvent event) throws IOException {
-        long nextBundleVersion = bootstrapStateStore.getCurrentState().bundleVersion() + 1;
-            TrustBundle bundle = trustBundleStore.saveVerifiedMembers(
-                localIdentity,
-                resolveLocalConnectionAddress(run),
-                run.verifiedPeers(),
-                nextBundleVersion
+        String localConnectionAddress = resolveLocalConnectionAddress(run);
+        if (localConnectionAddress.isBlank()) {
+            failRun(
+                run.startedByPlayerUuid(),
+                "Nexori verified the remote bootstrap peers, but it could not install the first trust bundle because this server was missing from Bootstrap Peers. Add the current server to Bootstrap Peers, keep every server that should belong to the secure network in that list, and run Initial Setup again."
             );
+            return;
+        }
+
+        long nextBundleVersion = bootstrapStateStore.getCurrentState().bundleVersion() + 1;
+        TrustBundle bundle = trustBundleStore.saveVerifiedMembers(
+            localIdentity,
+            localConnectionAddress,
+            run.verifiedPeers(),
+            nextBundleVersion
+        );
+        persistLocalConnectionAddressFromBundle(bundle);
         List<ConfiguredPeer> installPeers = peersForInstallation(bundle);
 
         if (installPeers.isEmpty()) {
@@ -277,6 +311,10 @@ public final class BootstrapCoordinator {
                 bounceError(event, payload, "The Nexori bundle install request expired.");
                 return;
             }
+            if (!isVerifiedBootstrapOrigin(payload.challenge(), referralSource)) {
+                bounceError(event, payload, "This server already belongs to a trusted Nexori network and will only install rerun bundles from a server that is already verified in that network.");
+                return;
+            }
             if (payload.trustBundle() == null) {
                 bounceError(event, payload, "The Nexori bundle install request was missing bundle data.");
                 return;
@@ -287,6 +325,7 @@ public final class BootstrapCoordinator {
             }
 
             TrustBundle installedBundle = trustBundleStore.installBundle(payload.trustBundle());
+            persistLocalConnectionAddressFromBundle(installedBundle);
             bootstrapStateStore.markBundleInstalled(installedBundle.bundleVersion(), installedBundle.bundleHash());
             event.referToServer(
                 referralSource.host,
@@ -317,8 +356,7 @@ public final class BootstrapCoordinator {
 
             TrustBundle currentBundle = trustBundleStore.getCurrentBundle();
             if (currentBundle.bundleHash().isBlank() || !currentBundle.bundleHash().equals(payload.acknowledgedBundleHash())) {
-                bootstrapRunStore.clear();
-                queueStatus(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server acknowledged the wrong trust bundle.");
+                failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server acknowledged the wrong trust bundle.");
                 return;
             }
 
@@ -344,8 +382,7 @@ public final class BootstrapCoordinator {
             );
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to continue Nexori bundle installation.");
-            bootstrapRunStore.clear();
-            queueStatus(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while distributing the trust bundle: " + exception.getMessage());
+            failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while distributing the trust bundle: " + exception.getMessage());
         }
     }
 
@@ -355,8 +392,7 @@ public final class BootstrapCoordinator {
             return;
         }
 
-        bootstrapRunStore.clear();
-        queueStatus(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed on peer "
+        failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed on peer "
             + (currentRun.currentPeer() == null ? "unknown" : currentRun.currentPeer().connectionAddress())
             + ": " + payload.errorMessage());
     }
@@ -374,6 +410,12 @@ public final class BootstrapCoordinator {
         logger.atInfo().log("Completed Nexori bootstrap session " + run.sessionId() + " with bundle " + bundle.bundleHash() + ".");
     }
 
+    private void failRun(@Nonnull String startedByPlayerUuid, @Nonnull String message) {
+        bootstrapRunStore.clear();
+        bootstrapStateStore.recordFailure(message);
+        queueStatus(startedByPlayerUuid, message);
+    }
+
     private boolean bundleContainsLocalIdentity(@Nonnull TrustBundle bundle) {
         for (BundleMember member : bundle.members()) {
             if (!localIdentity.serverId().toString().equals(member.serverId())) {
@@ -381,6 +423,30 @@ public final class BootstrapCoordinator {
             }
             return localIdentity.fingerprint().equals(member.fingerprint())
                 && localIdentity.publicKeyBase64().equals(member.publicKeyBase64());
+        }
+        return false;
+    }
+
+    private boolean isVerifiedBootstrapOrigin(@Nonnull BootstrapChallenge challenge, @Nonnull HostAddress referralSource) {
+        TrustBundle currentBundle = trustBundleStore.getCurrentBundle();
+        if (currentBundle.bundleVersion() <= 0 || currentBundle.bundleHash().isBlank() || currentBundle.members().isEmpty()) {
+            return true;
+        }
+
+        String referralConnectionAddress;
+        try {
+            referralConnectionAddress = ConfiguredPeer.parse(referralSource.host + ":" + referralSource.port).connectionAddress();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+
+        for (BundleMember member : currentBundle.members()) {
+            if (!challenge.originServerId().equals(member.serverId())) {
+                continue;
+            }
+            return member.connectionAddress() != null
+                && !member.connectionAddress().isBlank()
+                && referralConnectionAddress.equalsIgnoreCase(member.connectionAddress());
         }
         return false;
     }
@@ -410,11 +476,36 @@ public final class BootstrapCoordinator {
         return "";
     }
 
+    private void persistLocalConnectionAddressFromBundle(@Nonnull TrustBundle bundle) {
+        for (BundleMember member : bundle.members()) {
+            if (!localIdentity.serverId().toString().equals(member.serverId())) {
+                continue;
+            }
+
+            String connectionAddress = member.connectionAddress() == null ? "" : member.connectionAddress().trim();
+            if (connectionAddress.isBlank()) {
+                throw new IllegalArgumentException("The Nexori bundle does not include a connection address for this server.");
+            }
+
+            try {
+                localConnectionAddressService.save(connectionAddress);
+                logger.atInfo().log("Persisted the local Nexori connection address from the active trust bundle as " + connectionAddress + ".");
+                return;
+            } catch (IOException | IllegalArgumentException exception) {
+                throw new IllegalStateException("Failed to persist the local Nexori connection address from the active trust bundle.", exception);
+            }
+        }
+
+        throw new IllegalArgumentException("The Nexori bundle does not contain this server identity.");
+    }
+
     @Nonnull
     private List<ConfiguredPeer> peersForInstallation(@Nonnull TrustBundle bundle) {
         List<ConfiguredPeer> peers = new ArrayList<>();
         for (BundleMember member : bundle.members()) {
-            if (member.local() || member.connectionAddress() == null || member.connectionAddress().isBlank()) {
+            if (localIdentity.serverId().toString().equals(member.serverId())
+                || member.connectionAddress() == null
+                || member.connectionAddress().isBlank()) {
                 continue;
             }
             try {

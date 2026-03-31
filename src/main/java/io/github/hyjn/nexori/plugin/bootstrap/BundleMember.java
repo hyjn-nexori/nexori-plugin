@@ -5,7 +5,6 @@ public record BundleMember(
     String connectionAddress,
     String fingerprint,
     String publicKeyBase64,
-    long verifiedAtEpochMillis,
-    boolean local
+    long verifiedAtEpochMillis
 ) {
 }
