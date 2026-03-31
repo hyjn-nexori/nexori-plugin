@@ -155,7 +155,7 @@ public final class NexoriMenuHyUiPage {
         @Nonnull State state
     ) {
         if (player == null) {
-            playerRef.sendMessage(Message.raw("nexorimenuhyui: could not resolve the live player entity."));
+            playerRef.sendMessage(Message.raw("nexorimenu: could not resolve the live player entity."));
             return;
         }
 

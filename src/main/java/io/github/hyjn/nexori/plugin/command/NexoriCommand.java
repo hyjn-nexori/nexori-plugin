@@ -74,11 +74,10 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoridiscover <host:port>"));
         ctx.sendMessage(Message.raw("- /nexoridiscovered [host:port]"));
         ctx.sendMessage(Message.raw("- /nexoritarget"));
-        ctx.sendMessage(Message.raw("- /nexoritargetwizard"));
         ctx.sendMessage(Message.raw("- /nexoritargetlist"));
         ctx.sendMessage(Message.raw("- /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>"));
         ctx.sendMessage(Message.raw("  Intended for COORDINATE targets only. NATURAL_SPAWN and PORTAL are auto-generated."));
-        ctx.sendMessage(Message.raw("  /nexoritargetwizard now opens the target manager and keeps one saved draft per player."));
+        ctx.sendMessage(Message.raw("  Use /nexorimenu and open the Targets tab for the guided in-game target manager."));
         ctx.sendMessage(Message.raw("- /nexoritargetshow <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoritargetremove <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalgive [amount]"));
@@ -94,6 +93,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexorirecover <transferId>"));
         ctx.sendMessage(Message.raw("  Travel profiles: KEEP_INVENTORY, CLEAR_INVENTORY, APPLY_INVENTORY"));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
+        ctx.sendMessage(Message.raw("  Opens the main Nexori HyUI admin page for server, rules, and target setup."));
     }
 
     private void sendStatus(CommandContext ctx) {

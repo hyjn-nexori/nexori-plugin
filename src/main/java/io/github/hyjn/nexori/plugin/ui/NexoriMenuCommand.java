@@ -19,7 +19,7 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
     private final NexoriPlugin plugin;
 
     public NexoriMenuCommand(@Nonnull NexoriPlugin plugin) {
-        super("nexorimenu", "Opens the Nexori admin UI.");
+        super("nexorimenu", "Opens the Nexori admin HyUI.");
         this.plugin = plugin;
         setPermissionGroup(GameMode.Adventure);
     }
@@ -38,6 +38,6 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
             return;
         }
 
-        NexoriMenuPage.open(ref, store, playerRef, player, plugin);
+        NexoriMenuHyUiPage.open(ref, store, playerRef, player, plugin);
     }
 }

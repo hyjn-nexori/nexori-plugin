@@ -45,7 +45,6 @@ Use these in game:
 /nexoristart
 /nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]
 /nexoritarget
-/nexoritargetwizard
 /nexoritargetlist
 /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>
 /nexoritargetshow <targetId>
@@ -67,7 +66,7 @@ Use these in game:
 
 Normal owner setup now expects:
 
-- `/nexoritargetwizard` for the in-game target manager and guided target creation flow
+- `/nexorimenu` for the main HyUI admin page, including the Targets tab for guided target creation and portal setup
 - portal interaction with `F` for the guided portal setup flow
 
 The raw command `/nexoritargetadd` is now mainly an advanced/manual path for
