@@ -1,0 +1,56 @@
+$C = "../../Common.ui";
+$T = "NexoriTheme.ui";
+
+$C.@PageOverlay {}
+
+$C.@Container {
+  Anchor: (Width: 1500, Height: 780);
+
+  #Title {
+    Group {
+      $C.@Title {
+        @Text = "NEXORI";
+      }
+
+      Group {
+        LayoutMode: Top;
+
+        Label {
+          Text: "Global Nexori admin menu for peers, rules, targets, and portal network setup.";
+          Style: (TextColor: $T.@BodyText);
+        }
+      }
+    }
+  }
+
+  #Content {
+    LayoutMode: Top;
+    Padding: (Full: 12);
+
+    Group #TabsPanel {
+      LayoutMode: Left;
+      Padding: (Full: 6);
+      Background: $T.@MenuPanelBg;
+
+      Group #TabsList {
+        LayoutMode: Left;
+      }
+    }
+
+    Group {
+      Anchor: (Height: 10);
+    }
+
+    Group #BodyHost {
+      FlexWeight: 1;
+      LayoutMode: Top;
+    }
+
+    Group #ElementList {
+      Anchor: (Width: 0, Height: 0);
+      LayoutMode: Top;
+    }
+  }
+}
+
+$C.@BackButton {}

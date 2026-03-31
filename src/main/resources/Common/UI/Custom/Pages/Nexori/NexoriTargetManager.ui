@@ -1,0 +1,202 @@
+$C = "../../Common.ui";
+$T = "NexoriTheme.ui";
+
+$C.@PageOverlay {}
+
+$C.@Container {
+  Anchor: (Width: 1480, Height: 780);
+
+  #Title {
+    Group {
+      $C.@Title {
+        @Text = "NEXORI TARGETS";
+      }
+
+      Group {
+        LayoutMode: Top;
+
+        Label {
+          Text: "Manage saved destination targets and continue your in-progress setup draft.";
+          Style: (TextColor: $T.@BodyText);
+        }
+      }
+    }
+  }
+
+  #Content {
+    LayoutMode: Left;
+    Padding: (Full: 12);
+
+    Group #TargetsColumn {
+      FlexWeight: 5;
+      LayoutMode: Top;
+      Padding: (Full: 12);
+      Background: $T.@MenuPanelBg;
+
+      Label {
+        Text: "DESTINATION TARGETS";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Label #TargetCountText {
+        Text: "0 destination target(s)";
+        Style: (TextColor: $T.@MutedText);
+      }
+
+      Group { Anchor: (Height: 8); }
+
+      Label #DraftStatusText {
+        Text: "";
+        Visible: false;
+        Style: (TextColor: $T.@BodyText);
+      }
+
+      Group { Anchor: (Height: 12); }
+
+      Group {
+        LayoutMode: Left;
+
+        Button #CreateTargetButton {
+          Anchor: (Width: 150);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabActiveBg;
+          Label { Text: "Create Target"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Button #ContinueDraftButton {
+          Anchor: (Width: 162);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabInactiveBg;
+          Visible: false;
+          Label { Text: "Continue Draft"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+      }
+
+      Group { Anchor: (Height: 12); }
+
+      Group #TargetList {
+        FlexWeight: 1;
+        LayoutMode: TopScrolling;
+        ScrollbarStyle: $C.@DefaultScrollbarStyle;
+        KeepScrollPosition: true;
+      }
+    }
+
+    Group { Anchor: (Width: 16); }
+
+    Group #DetailsColumn {
+      FlexWeight: 4;
+      LayoutMode: Top;
+      Padding: (Full: 12);
+      Background: $T.@MenuPanelBg;
+
+      Label {
+        Text: "TARGET DETAILS";
+        Style: (RenderBold: true, TextColor: $T.@StrongText);
+      }
+
+      Group { Anchor: (Height: 10); }
+
+      Label #StatusText {
+        Text: "";
+        Visible: false;
+        Style: (TextColor: $T.@BodyText);
+      }
+
+      Group { Anchor: (Height: 12); }
+
+      Group {
+        LayoutMode: Left;
+        Label { Text: "Target ID:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        Group { Anchor: (Width: 8); }
+        Label #SelectedTargetId { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+        Label { Text: "Display Name:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        Group { Anchor: (Width: 8); }
+        Label #SelectedDisplayName { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+        Label { Text: "Kind:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        Group { Anchor: (Width: 8); }
+        Label #SelectedKind { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+        Label { Text: "World:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        Group { Anchor: (Width: 8); }
+        Label #SelectedWorld { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      Group {
+        LayoutMode: Left;
+        Label { Text: "Arrival Point:"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        Group { Anchor: (Width: 8); }
+        Label #SelectedArrivalPoint { Text: ""; Style: (TextColor: $T.@PrimaryText); }
+      }
+
+      Group { Anchor: (Height: 12); }
+
+      Label #SelectedPortalHint {
+        Text: "";
+        Visible: false;
+        Style: (TextColor: $T.@MutedText);
+      }
+
+      Group { Anchor: (Height: 16); }
+
+      Group #PortalSetupGroup {
+        LayoutMode: Top;
+        Visible: false;
+
+        Button #OpenPortalSetupButton {
+          Anchor: (Width: 186);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabActiveBg;
+          Label { Text: "Open Portal Setup"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+
+        Group { Anchor: (Height: 16); }
+      }
+
+      Group {
+        LayoutMode: Left;
+
+        Button #EditTargetButton {
+          Anchor: (Width: 120);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@TabActiveBg;
+          Label { Text: "Edit"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+
+        Group { Anchor: (Width: 8); }
+
+        Button #RemoveTargetButton {
+          Anchor: (Width: 146);
+          Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+          Background: $T.@DangerBg;
+          Label { Text: "Remove Target"; Style: (RenderBold: true, TextColor: $T.@StrongText); }
+        }
+      }
+    }
+  }
+}
+
+$C.@BackButton {}

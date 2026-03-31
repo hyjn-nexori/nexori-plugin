@@ -1,0 +1,19 @@
+@MenuPanelBg = #173552(0.72);
+@TileHoverBg = #2d6796(0.92);
+@IconBg = #234867(0.85);
+@EntryHoverBg = #2a5b86(0.38);
+@ActionHoverBg = #3c77a8(0.98);
+@ActionPressedBg = #234a6d(0.98);
+@DangerBg = #812732(0.96);
+@DangerHoverBg = #a73240(0.98);
+@DangerPressedBg = #68202a(0.98);
+
+@PrimaryText = #edf6ff(0.94);
+@BodyText = #d6e7f6(0.90);
+@MutedText = #90a9c0(0.88);
+@StrongText = #ffffff(0.99);
+
+@TabActiveBg = #2c5f8b(0.95);
+@TabInactiveBg = #16314c(0.78);
+@TabActiveText = #ffffff(0.99);
+@TabInactiveText = #bfd5ea(0.88);

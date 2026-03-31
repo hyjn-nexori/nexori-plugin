@@ -1,0 +1,40 @@
+$T = "NexoriTheme.ui";
+
+Button #Button {
+  Padding: (Full: 10);
+  LayoutMode: Left;
+
+  Style: (
+    Hovered: (
+      Background: $T.@EntryHoverBg,
+    )
+  );
+
+  Group #SelectedFill {
+    Anchor: (Top: 0, Bottom: 0, Left: 0, Right: 0);
+    Background: $T.@TileHoverBg;
+    Visible: false;
+  }
+
+  Group #Icon {
+    Anchor: (Width: 48, Height: 48);
+    Background: $T.@IconBg;
+  }
+
+  Group {
+    Anchor: (Width: 12);
+  }
+
+  Group {
+    FlexWeight: 1;
+    LayoutMode: Top;
+
+    Label #Name {
+      Style: (RenderBold: true, TextColor: $T.@StrongText);
+    }
+
+    Label #Description {
+      Style: (TextColor: $T.@MutedText);
+    }
+  }
+}

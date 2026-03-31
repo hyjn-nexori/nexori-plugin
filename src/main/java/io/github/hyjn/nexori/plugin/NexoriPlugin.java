@@ -196,6 +196,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 this.portalInstanceService,
                 this.triggerBindingService,
+                this.configuredPeerService,
+                this.discoveredDestinationTargetCacheService,
+                this.destinationTargetDiscoveryService,
+                this.portalSetupDraftService,
                 this.secureTravelService,
                 this.getBasePermission() + ".admin"
             );

@@ -1,0 +1,19 @@
+$T = "NexoriTheme.ui";
+
+Button #Button {
+  Padding: (Left: 14, Right: 14, Top: 8, Bottom: 8);
+  Background: $T.@TabActiveBg;
+  Style: (
+    Hovered: (
+      Background: $T.@ActionHoverBg,
+    ),
+    Pressed: (
+      Background: $T.@ActionPressedBg,
+    )
+  );
+
+  Label #Label {
+    Text: "Tab";
+    Style: (RenderBold: true, TextColor: $T.@TabActiveText);
+  }
+}
