@@ -111,14 +111,9 @@ public final class NexoriMenuHyUiPage {
     private NexoriMenuHyUiPage() {
     }
 
-    public static void open(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef,
-        Player player,
-        @Nonnull NexoriPlugin plugin
-    ) {
-        open(ref, store, playerRef, player, plugin, new State(
+    @Nonnull
+    private static State defaultState() {
+        return new State(
             Tab.SERVERS,
             "",
             "",
@@ -138,7 +133,17 @@ public final class NexoriMenuHyUiPage {
             "",
             "",
             ""
-        ));
+        );
+    }
+
+    public static void open(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        Player player,
+        @Nonnull NexoriPlugin plugin
+    ) {
+        open(ref, store, playerRef, player, plugin, defaultState());
     }
 
     public static void open(
@@ -199,9 +204,38 @@ public final class NexoriMenuHyUiPage {
             .open(store);
     }
 
+    public static void openPortalSetup(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String statusText
+    ) {
+        openPortalSetup(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            defaultState().withTab(Tab.TARGETS),
+            portal,
+            portal.autoDestinationTargetId(),
+            statusText
+        );
+    }
+
     private static GroupBuilder tabs(Ref<EntityStore> ref, Store<EntityStore> store, PlayerRef playerRef, Player player, NexoriPlugin plugin, State state) {
         GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(42));
-        for (Tab tab : Tab.values()) {
+        Tab[] tabs = Tab.values();
+        int totalTabsWidth = tabs.length * TAB_W + Math.max(0, tabs.length - 1) * 8;
+        int leadingSpace = Math.max(0, (BODY_W - totalTabsWidth) / 2);
+        if (leadingSpace > 0) {
+            row.addChild(spacerX(leadingSpace));
+        }
+        for (int index = 0; index < tabs.length; index++) {
+            Tab tab = tabs[index];
             ButtonBuilder button = (state.tab() == tab ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
                 .withText(tab.label)
                 .withAnchor(new HyUIAnchor().setWidth(TAB_W).setHeight(42))
@@ -218,7 +252,7 @@ public final class NexoriMenuHyUiPage {
                         .withTargetsPanel(TargetsPanel.DETAILS)
                 ));
             row.addChild(button);
-            if (tab != Tab.PORTALS) row.addChild(spacerX(8));
+            if (index + 1 < tabs.length) row.addChild(spacerX(8));
         }
         return row;
     }
@@ -230,12 +264,6 @@ public final class NexoriMenuHyUiPage {
         return switch (state.tab()) {
             case SERVERS -> serversBody(ref, store, playerRef, player, plugin, state, peers, serverEntries, selectedServer);
             case TARGETS -> targetsBody(ref, store, playerRef, player, plugin, state, targets, selectedTarget);
-            case PORTALS -> simpleTwoCol(
-                "Portals", plugin.getPortalInstanceService().list().size() + " registered portal(s) on this server.",
-                "Portal Setup", "Portal-by-portal setup still lives in the proven page opened from placed portals.",
-                ButtonBuilder.secondaryTextButton().withText("Open Current Portal Overview").withAnchor(new HyUIAnchor().setWidth(300).setHeight(42))
-                    .onClick((ignored, ctx) -> NexoriMenuPage.open(ref, store, playerRef, player, plugin, NexoriMenuPage.MenuTab.PORTALS, state.selectedPeerAddress(), "", false, "", ""))
-            , bodyHeight(state));
             case RULES -> rulesBody(ref, store, playerRef, player, plugin, state, peers, serverEntries, ruleGroups, selectedRuleGroup);
         };
     }
@@ -1023,6 +1051,20 @@ public final class NexoriMenuHyUiPage {
             return;
         }
 
+        openPortalSetup(ref, store, playerRef, player, plugin, state, portal, selectedTarget.id(), "");
+    }
+
+    private static void openPortalSetup(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull State state,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String selectedTargetId,
+        @Nonnull String statusText
+    ) {
         PortalSetupDraft draft = plugin.getPortalSetupDraftService().find(playerRef.getUuid(), portal.portalId())
             .orElse(new PortalSetupDraft(portal.portalId(), PORTAL_STEP_SELECT_SERVER, "", "", "", portal.displayName()));
         TriggerBindingDefinition binding = plugin.getTriggerBindingService().findPortalCollisionBinding(portal.portalId()).orElse(null);
@@ -1031,7 +1073,7 @@ public final class NexoriMenuHyUiPage {
         DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(destinationAddress).orElse(null);
         String targetId = resolvePortalTargetId(draft.selectedTargetId(), discovery, destinationAddress, binding);
         TravelProfileType travelProfile = resolvePortalTravelProfile(draft.selectedTravelProfileId(), binding);
-        String portalDisplayName = draft.portalDisplayName().isBlank() ? portal.displayName() : draft.portalDisplayName();
+        String portalDisplayName = resolvePortalDisplayName(draft.portalDisplayName(), portal);
 
         open(
             ref,
@@ -1040,7 +1082,8 @@ public final class NexoriMenuHyUiPage {
             player,
             plugin,
             state
-                .withSelectedTarget(selectedTarget.id())
+                .withTab(Tab.TARGETS)
+                .withSelectedTarget(selectedTargetId)
                 .withTargetsPanel(TargetsPanel.PORTAL_SETUP)
                 .withPendingPortalId(portal.portalId())
                 .withPortalStepIndex(clampPortalStep(draft.stepIndex()))
@@ -1048,7 +1091,7 @@ public final class NexoriMenuHyUiPage {
                 .withPendingPortalTargetId(targetId)
                 .withPendingPortalTravelProfileId(travelProfile.id())
                 .withPendingPortalDisplayName(portalDisplayName)
-                .withStatus("")
+                .withStatus(statusText)
         );
     }
 
@@ -2764,7 +2807,7 @@ public final class NexoriMenuHyUiPage {
     }
 
     public enum Tab {
-        SERVERS("Servers"), RULES("Rules"), TARGETS("Targets"), PORTALS("Portals");
+        SERVERS("Servers"), RULES("Rules"), TARGETS("Targets");
         private final String label;
         Tab(String label) { this.label = label; }
     }

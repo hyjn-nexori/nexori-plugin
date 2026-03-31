@@ -10,9 +10,9 @@ import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.InteractionContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.OpenCustomUIInteraction;
-import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.access.NexoriAdminAccess;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
@@ -20,6 +20,7 @@ import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
+import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiPage;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriPortalPage;
 import io.github.hyjn.nexori.plugin.ui.PortalSetupDraft;
@@ -38,7 +39,7 @@ public final class NexoriPortalInteractionService {
 
     private static final Duration MINIMUM_TIME_IN_WORLD_BEFORE_PORTAL_TRAVEL = Duration.ofMillis(3000L);
 
-    private final JavaPlugin plugin;
+    private final NexoriPlugin plugin;
     private final HytaleLogger logger;
     private final PortalInstanceService portalInstanceService;
     private final TriggerBindingService triggerBindingService;
@@ -51,7 +52,7 @@ public final class NexoriPortalInteractionService {
     private final Map<UUID, Long> lastCollisionHandledAtByPlayer = new ConcurrentHashMap<>();
 
     public NexoriPortalInteractionService(
-        @Nonnull JavaPlugin plugin,
+        @Nonnull NexoriPlugin plugin,
         @Nonnull HytaleLogger logger,
         @Nonnull PortalInstanceService portalInstanceService,
         @Nonnull TriggerBindingService triggerBindingService,
@@ -97,15 +98,7 @@ public final class NexoriPortalInteractionService {
         @Nonnull PortalInstanceDefinition portal,
         @Nonnull String statusText
     ) {
-        NexoriPortalPage page = buildAdminPortalPage(playerRef, player, portal, statusText);
-        if (page == null) {
-            return;
-        }
-
-        if (player.getPageManager() == null) {
-            return;
-        }
-        player.getPageManager().openCustomPage(ref, store, page);
+        NexoriMenuHyUiPage.openPortalSetup(ref, store, playerRef, player, plugin, portal, statusText);
     }
 
     private NexoriPortalPage tryCreateAdminPortalPage(
@@ -129,7 +122,12 @@ public final class NexoriPortalInteractionService {
             : new Vector3i(targetBlock.x, targetBlock.y, targetBlock.z);
 
         Optional<PortalInstanceDefinition> portal = resolvePortal(player.getWorld().getName(), blockPosition);
-        return portal.map(found -> buildAdminPortalPage(playerRef, player, found, "")).orElse(null);
+        if (portal.isEmpty()) {
+            return null;
+        }
+
+        openAdminPortalPage(ref, ref.getStore(), playerRef, player, portal.get(), "");
+        return null;
     }
 
     private NexoriPortalPage tryHandlePortalTraverse(
