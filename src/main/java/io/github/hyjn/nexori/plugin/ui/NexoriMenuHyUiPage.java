@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.ui;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import au.ellie.hyui.builders.ButtonBuilder;
 import au.ellie.hyui.builders.ContainerBuilder;
 import au.ellie.hyui.builders.GroupBuilder;
@@ -26,11 +28,16 @@ import com.hypixel.hytale.server.core.modules.entity.component.TransformComponen
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
+import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
+import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.policy.ServerRuleGroupDefinition;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicySummary;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
@@ -46,6 +53,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 public final class NexoriMenuHyUiPage {
 
@@ -61,6 +69,20 @@ public final class NexoriMenuHyUiPage {
     private static final String LOCAL_SERVER_KEY = ServerRuleGroupDefinition.LOCAL_SERVER_KEY;
     private static final String SERVER_ADDRESS_INPUT_ID = "server-address-input";
     private static final String GROUP_NAME_INPUT_ID = "group-name-input";
+    private static final String TARGET_DISPLAY_NAME_INPUT_ID = "target-display-name-input";
+    private static final String PORTAL_DISPLAY_NAME_INPUT_ID = "portal-display-name-input";
+    private static final int TARGET_STEP_KIND = 0;
+    private static final int TARGET_STEP_DETAILS = 1;
+    private static final int TARGET_STEP_REVIEW = 2;
+    private static final int TARGET_LAST_STEP = TARGET_STEP_REVIEW;
+    private static final int PORTAL_STEP_SELECT_SERVER = 0;
+    private static final int PORTAL_STEP_SELECT_TARGET = 1;
+    private static final int PORTAL_STEP_SELECT_PROFILE = 2;
+    private static final int PORTAL_STEP_PORTAL_DETAILS = 3;
+    private static final int PORTAL_STEP_REVIEW = 4;
+    private static final int PORTAL_LAST_STEP = PORTAL_STEP_REVIEW;
+
+    private static final Gson GSON = new Gson();
 
     private static final HyUIPatchStyle CARD_BG = new HyUIPatchStyle().setColor("#17273a");
     private static final HyUIPatchStyle ITEM_BG = new HyUIPatchStyle().setColor("#20354e");
@@ -101,8 +123,19 @@ public final class NexoriMenuHyUiPage {
             "",
             "",
             "",
+            "",
             ServersPanel.DETAILS,
             RulesPanel.DETAILS,
+            TargetsPanel.DETAILS,
+            "",
+            "",
+            0,
+            "",
+            "",
+            0,
+            "",
+            "",
+            "",
             "",
             ""
         ));
@@ -130,6 +163,14 @@ public final class NexoriMenuHyUiPage {
             ? findSelectedServer(serverEntries, selectedPeerAddress)
             : null;
         List<DestinationTargetDefinition> targets = plugin.getDestinationTargetService().list();
+        String selectedTargetId = "";
+        DestinationTargetDefinition selectedTarget = null;
+        if (state.tab() == Tab.TARGETS) {
+            selectedTargetId = state.selectedTargetId().isBlank()
+                ? (state.targetsPanel() == TargetsPanel.DETAILS ? normalizeSelectedTargetId("", targets) : "")
+                : normalizeSelectedTargetId(state.selectedTargetId(), targets);
+            selectedTarget = selectedTargetId.isBlank() ? null : findSelectedTarget(targets, selectedTargetId);
+        }
         List<ServerRuleGroupDefinition> ruleGroups = plugin.getServerRuleGroupService().list();
         String selectedRuleGroupId = state.rulesPanel() == RulesPanel.DETAILS
             ? normalizeSelectedRuleGroupId(state.selectedRuleGroupId(), ruleGroups)
@@ -139,6 +180,7 @@ public final class NexoriMenuHyUiPage {
             : null;
         State normalizedState = state
             .withSelectedPeer(selectedPeerAddress)
+            .withSelectedTarget(selectedTargetId)
             .withSelectedRuleGroup(selectedRuleGroupId);
 
         ContainerBuilder root = ContainerBuilder.decoratedContainer()
@@ -148,7 +190,7 @@ public final class NexoriMenuHyUiPage {
         GroupBuilder content = GroupBuilder.group().withLayoutMode("Top").withPadding(HyUIPadding.all(14));
         content.addChild(tabs(ref, store, playerRef, player, plugin, normalizedState));
         content.addChild(spacerY(12));
-        content.addChild(body(ref, store, playerRef, player, plugin, normalizedState, peers, serverEntries, selectedServer, targets, ruleGroups, selectedRuleGroup));
+        content.addChild(body(ref, store, playerRef, player, plugin, normalizedState, peers, serverEntries, selectedServer, targets, selectedTarget, ruleGroups, selectedRuleGroup));
         root.addContentChild(content);
 
         PageBuilder.pageForPlayer(playerRef)
@@ -163,7 +205,18 @@ public final class NexoriMenuHyUiPage {
             ButtonBuilder button = (state.tab() == tab ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
                 .withText(tab.label)
                 .withAnchor(new HyUIAnchor().setWidth(TAB_W).setHeight(42))
-                .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.withTab(tab).withStatus("").withServersPanel(ServersPanel.DETAILS)));
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withTab(tab)
+                        .withStatus("")
+                        .withServersPanel(ServersPanel.DETAILS)
+                        .withRulesPanel(RulesPanel.DETAILS)
+                        .withTargetsPanel(TargetsPanel.DETAILS)
+                ));
             row.addChild(button);
             if (tab != Tab.PORTALS) row.addChild(spacerX(8));
         }
@@ -172,21 +225,11 @@ public final class NexoriMenuHyUiPage {
 
     private static GroupBuilder body(Ref<EntityStore> ref, Store<EntityStore> store, PlayerRef playerRef, Player player, NexoriPlugin plugin, State state,
                                      List<ConfiguredPeer> peers, List<ServerEntry> serverEntries, ServerEntry selectedServer,
-                                     List<DestinationTargetDefinition> targets, List<ServerRuleGroupDefinition> ruleGroups,
+                                     List<DestinationTargetDefinition> targets, DestinationTargetDefinition selectedTarget, List<ServerRuleGroupDefinition> ruleGroups,
                                      ServerRuleGroupDefinition selectedRuleGroup) {
         return switch (state.tab()) {
             case SERVERS -> serversBody(ref, store, playerRef, player, plugin, state, peers, serverEntries, selectedServer);
-            case TARGETS -> {
-                long natural = targets.stream().filter(t -> t.kind() == DestinationTargetKind.NATURAL_SPAWN).count();
-                long coordinate = targets.stream().filter(t -> t.kind() == DestinationTargetKind.COORDINATE).count();
-                long portal = targets.stream().filter(t -> t.kind() == DestinationTargetKind.PORTAL).count();
-                yield simpleTwoCol(
-                    "Target Summary", "Total: " + targets.size() + "\nNatural Spawn: " + natural + "\nCoordinate: " + coordinate + "\nPortal: " + portal,
-                    "Target Manager", "Use the current target manager while we prove the HyUI shell.",
-                    ButtonBuilder.secondaryTextButton().withText("Open Target Manager").withAnchor(new HyUIAnchor().setWidth(250).setHeight(42))
-                        .onClick((ignored, ctx) -> NexoriTargetManagerPage.open(ref, store, playerRef, player, plugin.getDestinationTargetService(), plugin.getPortalInstanceService(), plugin.getPortalInteractionService(), plugin.getTargetSetupDraftService(), "", ""))
-                , bodyHeight(state));
-            }
+            case TARGETS -> targetsBody(ref, store, playerRef, player, plugin, state, targets, selectedTarget);
             case PORTALS -> simpleTwoCol(
                 "Portals", plugin.getPortalInstanceService().list().size() + " registered portal(s) on this server.",
                 "Portal Setup", "Portal-by-portal setup still lives in the proven page opened from placed portals.",
@@ -454,6 +497,1269 @@ public final class NexoriMenuHyUiPage {
             reportBlock.addChild(label(report.followUp(), MUTED, RIGHT_W - 64));
         }
         right.addChild(reportBlock);
+    }
+
+    private static GroupBuilder targetsBody(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        List<DestinationTargetDefinition> targets,
+        DestinationTargetDefinition selectedTarget
+    ) {
+        int panelHeight = bodyHeight(state);
+        int leftListHeight = Math.max(220, panelHeight - 170);
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(panelHeight));
+
+        GroupBuilder left = card(LEFT_W, panelHeight, CARD_BG);
+        left.addChild(label("Destination Targets", TITLE, LEFT_W - 32));
+        left.addChild(spacerY(10));
+        left.addChild(label(
+            targets.isEmpty()
+                ? "No destination targets exist on this server yet."
+                : targets.size() + " destination target(s) on this server.",
+            MUTED,
+            LEFT_W - 32
+        ));
+        left.addChild(spacerY(12));
+        GroupBuilder actions = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(38));
+        TargetSetupDraft draft = plugin.getTargetSetupDraftService().find(playerRef.getUuid()).orElse(null);
+        int createButtonWidth = draft == null ? 180 : 150;
+        actions.addChild(spacerX(draft == null ? ((LEFT_W - 32) - createButtonWidth) / 2 : 6));
+        actions.addChild(
+            ButtonBuilder.secondaryTextButton().withText("Create Target")
+                .withAnchor(new HyUIAnchor().setWidth(createButtonWidth).setHeight(38))
+                .onClick((ignored, ctx) -> {
+                    plugin.getTargetSetupDraftService().clear(playerRef.getUuid());
+                    open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state
+                            .withTargetsPanel(TargetsPanel.CREATE)
+                            .withTargetStepIndex(TARGET_STEP_KIND)
+                            .withPendingTargetId("")
+                            .withPendingTargetDisplayName("")
+                            .withSelectedTarget("")
+                            .withStatus("")
+                    );
+                })
+        );
+        if (draft != null) {
+            actions.addChild(spacerX(8));
+            actions.addChild(
+                ButtonBuilder.textButton().withText("Continue Draft")
+                    .withAnchor(new HyUIAnchor().setWidth(180).setHeight(38))
+                    .onClick((ignored, ctx) -> open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state
+                            .withTargetsPanel(TargetsPanel.CREATE)
+                            .withTargetStepIndex(clampTargetStep(draft.stepIndex()))
+                            .withSelectedTarget("")
+                            .withPendingTargetId(draft.targetId())
+                            .withPendingTargetDisplayName(draft.displayName())
+                            .withStatus("")
+                    ))
+            );
+        }
+        left.addChild(actions);
+        left.addChild(spacerY(12));
+
+        int targetListContentHeight = Math.max(leftListHeight, targets.isEmpty() ? 120 : targets.size() * 62 + 24);
+        ReorderableListBuilder listHost = scrollList(LEFT_W - 32, leftListHeight, targetListContentHeight, "targets-list", true);
+        if (!targets.isEmpty()) {
+            for (DestinationTargetDefinition target : targets) {
+                boolean selected = selectedTarget != null && selectedTarget.id().equals(target.id());
+                listHost.addChild(
+                    (selected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+                        .withText(target.displayName())
+                        .withBackground(selected ? SERVER_BUTTON_SELECTED_BG : SERVER_BUTTON_BG)
+                        .withDisabled(selected)
+                        .withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(54))
+                        .onClick((ignored, ctx) -> open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state
+                                .withSelectedTarget(target.id())
+                                .withTargetsPanel(TargetsPanel.DETAILS)
+                                .withStatus("")
+                        ))
+                );
+                listHost.addChild(spacerY(8));
+            }
+        } else {
+            listHost.addChild(spacerY(12));
+            listHost.addChild(label("Create coordinate targets from your current position, or place portals to generate portal targets automatically.", MUTED, LEFT_W - 48));
+        }
+        left.addChild(listHost);
+
+        GroupBuilder right = card(RIGHT_W, panelHeight, CARD_BG);
+        if (state.targetsPanel() == TargetsPanel.CREATE) {
+            buildTargetCreatePanel(ref, store, playerRef, player, plugin, state, right);
+        } else if (state.targetsPanel() == TargetsPanel.PORTAL_SETUP) {
+            buildPortalSetupPanel(ref, store, playerRef, player, plugin, state, selectedTarget, right);
+        } else {
+            right.addChild(label("Target Details", TITLE, RIGHT_W - 32));
+            right.addChild(spacerY(10));
+            if (!state.statusText().isBlank()) {
+                right.addChild(label(state.statusText(), MUTED, RIGHT_W - 32));
+                right.addChild(spacerY(10));
+            }
+
+            if (selectedTarget == null) {
+                right.addChild(label("Select a destination target on the left to inspect it or continue its setup.", MUTED, RIGHT_W - 32));
+            } else {
+                buildTargetDetailsPanel(ref, store, playerRef, player, plugin, state, selectedTarget, right);
+            }
+        }
+
+        row.addChild(left);
+        row.addChild(spacerX(16));
+        row.addChild(right);
+        return row;
+    }
+
+    private static void buildTargetDetailsPanel(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        DestinationTargetDefinition selectedTarget,
+        GroupBuilder right
+    ) {
+        GroupBuilder detailsBlock = card(RIGHT_W - 32, 190, ITEM_BG);
+        detailsBlock.addChild(label("Current Target", TITLE, RIGHT_W - 64));
+        detailsBlock.addChild(spacerY(10));
+        detailsBlock.addChild(stat("Target ID", selectedTarget.id(), RIGHT_W - 16));
+        detailsBlock.addChild(stat("Display Name", selectedTarget.displayName(), RIGHT_W - 16));
+        detailsBlock.addChild(stat("Kind", selectedTarget.kind().displayName(), RIGHT_W - 16));
+        detailsBlock.addChild(stat("World", selectedTarget.worldName(), RIGHT_W - 16));
+        right.addChild(detailsBlock);
+        right.addChild(spacerY(14));
+
+        if (selectedTarget.kind() == DestinationTargetKind.COORDINATE) {
+            GroupBuilder actionsBlock = card(RIGHT_W - 32, 120, ITEM_BG);
+            actionsBlock.addChild(label("Coordinate Actions", TITLE, RIGHT_W - 64));
+            actionsBlock.addChild(spacerY(12));
+            GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+            actionRow.addChild(spacerX(((RIGHT_W - 64) - (170 + 12 + 190)) / 2));
+            actionRow.addChild(
+                ButtonBuilder.secondaryTextButton().withText("Edit")
+                    .withAnchor(new HyUIAnchor().setWidth(170).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        plugin.getTargetSetupDraftService().save(
+                            playerRef.getUuid(),
+                            new TargetSetupDraft(1, selectedTarget.id(), selectedTarget.displayName(), selectedTarget.arrivalPointId(), selectedTarget.kind().name())
+                        );
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state
+                                .withTargetsPanel(TargetsPanel.CREATE)
+                                .withTargetStepIndex(TARGET_STEP_DETAILS)
+                                .withPendingTargetId(selectedTarget.id())
+                                .withPendingTargetDisplayName(selectedTarget.displayName())
+                                .withSelectedTarget(selectedTarget.id())
+                                .withStatus("")
+                        );
+                    })
+            );
+            actionRow.addChild(spacerX(12));
+            actionRow.addChild(
+                ButtonBuilder.textButton().withText("Remove Target")
+                    .withBackground(new HyUIPatchStyle().setColor("#a33f4d"))
+                    .withAnchor(new HyUIAnchor().setWidth(190).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        try {
+                            plugin.getDestinationTargetService().remove(selectedTarget.id());
+                            open(ref, store, playerRef, player, plugin, state.withSelectedTarget("").withStatus("Removed destination target " + selectedTarget.id() + "."));
+                        } catch (IOException exception) {
+                            open(ref, store, playerRef, player, plugin, state.withStatus("Failed to remove that destination target: " + exception.getMessage()));
+                        }
+                    })
+            );
+            actionsBlock.addChild(actionRow);
+            right.addChild(actionsBlock);
+            return;
+        }
+
+        GroupBuilder infoBlock = card(RIGHT_W - 32, selectedTarget.kind() == DestinationTargetKind.PORTAL ? 170 : 140, ITEM_BG);
+        infoBlock.addChild(label(selectedTarget.kind() == DestinationTargetKind.PORTAL ? "Portal Target" : "Natural Spawn Target", TITLE, RIGHT_W - 64));
+        infoBlock.addChild(spacerY(10));
+        infoBlock.addChild(label(
+            selectedTarget.kind() == DestinationTargetKind.PORTAL
+                ? "Portal targets are created automatically when you place a Nexori portal. Open the portal setup to rename it or change its travel binding."
+                : "Natural spawn targets are generated automatically, one per world, and cannot be edited or removed from this screen.",
+            MUTED,
+            RIGHT_W - 64
+        ));
+        if (selectedTarget.kind() == DestinationTargetKind.PORTAL) {
+            infoBlock.addChild(spacerY(14));
+            GroupBuilder actions = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+            actions.addChild(spacerX(((RIGHT_W - 64) - 230) / 2));
+            actions.addChild(
+                ButtonBuilder.textButton().withText("Open Portal Setup")
+                    .withAnchor(new HyUIAnchor().setWidth(230).setHeight(42))
+                    .onClick((ignored, ctx) -> openPortalSetupFromTarget(ref, store, playerRef, player, plugin, state, selectedTarget))
+            );
+            infoBlock.addChild(actions);
+        }
+        right.addChild(infoBlock);
+    }
+
+    private static void buildTargetCreatePanel(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        GroupBuilder right
+    ) {
+        int stepIndex = clampTargetStep(state.targetStepIndex());
+        String displayName = state.pendingTargetDisplayName();
+        boolean editingExistingTarget = !state.pendingTargetId().isBlank();
+
+        right.addChild(label(editingExistingTarget ? "Edit Target" : "Create Target", TITLE, RIGHT_W - 32));
+        right.addChild(spacerY(10));
+        right.addChild(label("Step " + (stepIndex + 1) + " of " + (TARGET_LAST_STEP + 1), INFO, RIGHT_W - 32));
+        right.addChild(spacerY(8));
+
+        if (!state.statusText().isBlank()) {
+            right.addChild(label(state.statusText(), MUTED, RIGHT_W - 32));
+            right.addChild(spacerY(10));
+        }
+
+        if (stepIndex == TARGET_STEP_KIND) {
+            GroupBuilder typeBlock = card(RIGHT_W - 32, 190, ITEM_BG);
+            typeBlock.addChild(label("Target Type", TITLE, RIGHT_W - 64));
+            typeBlock.addChild(spacerY(10));
+            typeBlock.addChild(stat("Kind", DestinationTargetKind.COORDINATE.displayName(), RIGHT_W - 16));
+            typeBlock.addChild(spacerY(8));
+            typeBlock.addChild(label(
+                editingExistingTarget
+                    ? "This target already exists. Saving here keeps the same target id and updates its display name plus the current live position and facing direction."
+                    : "Manual target creation in this menu is for coordinate targets. Nexori captures your current live position and facing direction when you save. Portal targets still come from placing a portal in the world.",
+                BODY,
+                RIGHT_W - 64
+            ));
+            right.addChild(typeBlock);
+        } else if (stepIndex == TARGET_STEP_DETAILS) {
+            GroupBuilder detailsBlock = card(RIGHT_W - 32, 210, ITEM_BG);
+            GroupBuilder centeredHost = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(170));
+            centeredHost.addChild(spacerX((RIGHT_W - 64 - 520) / 2));
+            GroupBuilder centered = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(520).setHeight(170));
+            centered.addChild(label("Display Name", TITLE, 520));
+            centered.addChild(spacerY(10));
+            centered.addChild(
+                TextFieldBuilder.textInput()
+                    .withId(TARGET_DISPLAY_NAME_INPUT_ID)
+                    .withValue(displayName)
+                    .withPlaceholderText("Mountain overlook")
+                    .withMaxLength(120)
+                    .withAnchor(new HyUIAnchor().setWidth(520).setHeight(42))
+                    .withBackground("#101926")
+            );
+            centered.addChild(spacerY(10));
+            centered.addChild(label(
+                "Nexori generates the internal target id automatically. Only the display name matters here.",
+                MUTED,
+                520
+            ));
+            centeredHost.addChild(centered);
+            detailsBlock.addChild(centeredHost);
+            right.addChild(detailsBlock);
+        } else {
+            GroupBuilder reviewBlock = card(RIGHT_W - 32, 240, ITEM_BG);
+            reviewBlock.addChild(label("Review And Save", TITLE, RIGHT_W - 64));
+            reviewBlock.addChild(spacerY(10));
+            reviewBlock.addChild(stat("Kind", DestinationTargetKind.COORDINATE.displayName(), RIGHT_W - 16));
+            if (editingExistingTarget) {
+                reviewBlock.addChild(stat("Target ID", state.pendingTargetId(), RIGHT_W - 16));
+            }
+            reviewBlock.addChild(stat("Display Name", displayName.isBlank() ? "<use generated fallback>" : displayName, RIGHT_W - 16));
+            reviewBlock.addChild(stat("World", player == null || player.getWorld() == null ? "<unknown>" : player.getWorld().getName(), RIGHT_W - 16));
+            reviewBlock.addChild(spacerY(10));
+            reviewBlock.addChild(label("Current live capture", LABEL, RIGHT_W - 64));
+            reviewBlock.addChild(spacerY(6));
+            reviewBlock.addChild(label(describeTargetCapture(store, ref), BODY, RIGHT_W - 64));
+            right.addChild(reviewBlock);
+        }
+
+        right.addChild(spacerY(16));
+        GroupBuilder actionsBlock = card(RIGHT_W - 32, 118, ITEM_BG);
+        actionsBlock.addChild(label("Actions", TITLE, RIGHT_W - 64));
+        actionsBlock.addChild(spacerY(12));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+        int actionCount = 2 + (stepIndex > TARGET_STEP_KIND ? 1 : 0);
+        int totalWidth = 160 + 12 + (stepIndex == TARGET_LAST_STEP ? 180 : 140) + (stepIndex > TARGET_STEP_KIND ? 12 + 140 : 0);
+        actionRow.addChild(spacerX(Math.max(0, ((RIGHT_W - 64) - totalWidth) / 2)));
+        if (stepIndex > TARGET_STEP_KIND) {
+            actionRow.addChild(
+                ButtonBuilder.secondaryTextButton()
+                    .withText("Back")
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        String currentDisplayName = ctx.getValue(TARGET_DISPLAY_NAME_INPUT_ID, String.class)
+                            .orElse(state.pendingTargetDisplayName())
+                            .trim();
+                        reopenTargetCreate(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state,
+                            stepIndex - 1,
+                            currentDisplayName
+                        );
+                    })
+            );
+            actionRow.addChild(spacerX(12));
+        }
+        actionRow.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("Cancel")
+                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(42))
+                .onClick((ignored, ctx) -> {
+                    plugin.getTargetSetupDraftService().clear(playerRef.getUuid());
+                    open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state
+                            .withTargetsPanel(TargetsPanel.DETAILS)
+                            .withTargetStepIndex(0)
+                            .withPendingTargetId("")
+                            .withPendingTargetDisplayName("")
+                            .withStatus("")
+                    );
+                })
+        );
+        actionRow.addChild(spacerX(12));
+        if (stepIndex == TARGET_LAST_STEP) {
+            actionRow.addChild(
+                ButtonBuilder.textButton()
+                    .withText(editingExistingTarget ? "Save Changes" : "Save Target")
+                    .withAnchor(new HyUIAnchor().setWidth(180).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        String currentDisplayName = ctx.getValue(TARGET_DISPLAY_NAME_INPUT_ID, String.class)
+                            .orElse(state.pendingTargetDisplayName())
+                            .trim();
+                        saveInlineTarget(ref, store, playerRef, player, plugin, state, currentDisplayName);
+                    })
+            );
+        } else {
+            actionRow.addChild(
+                ButtonBuilder.textButton()
+                    .withText("Next")
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> {
+                        String currentDisplayName = ctx.getValue(TARGET_DISPLAY_NAME_INPUT_ID, String.class)
+                            .orElse(state.pendingTargetDisplayName())
+                            .trim();
+                        reopenTargetCreate(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state,
+                            stepIndex + 1,
+                            currentDisplayName
+                        );
+                    })
+            );
+        }
+        actionsBlock.addChild(actionRow);
+        right.addChild(actionsBlock);
+    }
+
+    private static void reopenTargetCreate(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        int stepIndex,
+        String displayName
+    ) {
+        plugin.getTargetSetupDraftService().save(
+            playerRef.getUuid(),
+            new TargetSetupDraft(clampTargetStep(stepIndex), state.pendingTargetId(), displayName, "", DestinationTargetKind.COORDINATE.name())
+        );
+        open(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state
+                .withTargetsPanel(TargetsPanel.CREATE)
+                .withTargetStepIndex(clampTargetStep(stepIndex))
+                .withPendingTargetId(state.pendingTargetId())
+                .withPendingTargetDisplayName(displayName)
+                .withStatus("")
+        );
+    }
+
+    private static void saveInlineTarget(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        String displayName
+    ) {
+        try {
+            if (player == null || player.getWorld() == null) {
+                open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state
+                        .withTargetsPanel(TargetsPanel.CREATE)
+                        .withTargetStepIndex(TARGET_STEP_REVIEW)
+                        .withPendingTargetDisplayName(displayName)
+                        .withStatus("Could not resolve the current world for this target.")
+                );
+                return;
+            }
+
+            String targetId = state.pendingTargetId().isBlank() ? generateCoordinateTargetId(plugin) : state.pendingTargetId();
+            DestinationTargetDefinition target = plugin.getDestinationTargetService().upsert(new DestinationTargetDefinition(
+                targetId,
+                displayName,
+                DestinationTargetKind.COORDINATE,
+                player.getWorld().getName(),
+                "",
+                "",
+                buildCoordinateTargetMetadata(store, ref)
+            ));
+            plugin.getTargetSetupDraftService().clear(playerRef.getUuid());
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state
+                    .withTargetsPanel(TargetsPanel.DETAILS)
+                    .withTargetStepIndex(0)
+                    .withPendingTargetId("")
+                    .withPendingTargetDisplayName("")
+                    .withSelectedTarget(target.id())
+                    .withStatus(
+                        state.pendingTargetId().isBlank()
+                            ? "Saved Nexori destination target " + target.id() + " in world " + target.worldName() + "."
+                            : "Updated Nexori destination target " + target.id() + " in world " + target.worldName() + "."
+                    )
+            );
+        } catch (IOException exception) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state
+                    .withTargetsPanel(TargetsPanel.CREATE)
+                    .withTargetStepIndex(TARGET_STEP_REVIEW)
+                    .withPendingTargetId(state.pendingTargetId())
+                    .withPendingTargetDisplayName(displayName)
+                    .withStatus("Failed to save the Nexori destination target: " + exception.getMessage())
+            );
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state
+                    .withTargetsPanel(TargetsPanel.CREATE)
+                    .withTargetStepIndex(TARGET_STEP_REVIEW)
+                    .withPendingTargetId(state.pendingTargetId())
+                    .withPendingTargetDisplayName(displayName)
+                    .withStatus(exception.getMessage())
+            );
+        }
+    }
+
+    private static void openPortalSetupFromTarget(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        DestinationTargetDefinition selectedTarget
+    ) {
+        PortalInstanceDefinition portal = plugin.getPortalInstanceService().findByAutoDestinationTargetId(selectedTarget.id()).orElse(null);
+        if (portal == null) {
+            open(ref, store, playerRef, player, plugin, state.withStatus("Could not resolve the owning portal for this target."));
+            return;
+        }
+
+        PortalSetupDraft draft = plugin.getPortalSetupDraftService().find(playerRef.getUuid(), portal.portalId())
+            .orElse(new PortalSetupDraft(portal.portalId(), PORTAL_STEP_SELECT_SERVER, "", "", "", portal.displayName()));
+        TriggerBindingDefinition binding = plugin.getTriggerBindingService().findPortalCollisionBinding(portal.portalId()).orElse(null);
+        List<ConfiguredPeer> configuredPeers = plugin.getConfiguredPeerService().list();
+        String destinationAddress = resolvePortalDestinationAddress(draft.selectedDestinationAddress(), binding, configuredPeers);
+        DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(destinationAddress).orElse(null);
+        String targetId = resolvePortalTargetId(draft.selectedTargetId(), discovery, destinationAddress, binding);
+        TravelProfileType travelProfile = resolvePortalTravelProfile(draft.selectedTravelProfileId(), binding);
+        String portalDisplayName = draft.portalDisplayName().isBlank() ? portal.displayName() : draft.portalDisplayName();
+
+        open(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state
+                .withSelectedTarget(selectedTarget.id())
+                .withTargetsPanel(TargetsPanel.PORTAL_SETUP)
+                .withPendingPortalId(portal.portalId())
+                .withPortalStepIndex(clampPortalStep(draft.stepIndex()))
+                .withPendingPortalDestinationAddress(destinationAddress)
+                .withPendingPortalTargetId(targetId)
+                .withPendingPortalTravelProfileId(travelProfile.id())
+                .withPendingPortalDisplayName(portalDisplayName)
+                .withStatus("")
+        );
+    }
+
+    private static void buildPortalSetupPanel(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        DestinationTargetDefinition selectedTarget,
+        GroupBuilder right
+    ) {
+        PortalInstanceDefinition portal = resolvePortalForSetup(plugin, state, selectedTarget);
+        int stepIndex = clampPortalStep(state.portalStepIndex());
+        right.addChild(label("Portal Setup", TITLE, RIGHT_W - 32));
+        right.addChild(spacerY(10));
+
+        int detailsHostHeight = bodyHeight(state) - 72;
+        int detailsContentHeight = switch (stepIndex) {
+            case PORTAL_STEP_SELECT_SERVER -> 420;
+            case PORTAL_STEP_SELECT_TARGET -> 520;
+            case PORTAL_STEP_SELECT_PROFILE -> 430;
+            case PORTAL_STEP_PORTAL_DETAILS -> 440;
+            case PORTAL_STEP_REVIEW -> 760;
+            default -> 520;
+        };
+        ReorderableListBuilder detailsHost = scrollList(
+            RIGHT_W - 32,
+            detailsHostHeight,
+            Math.max(detailsHostHeight + 40, detailsContentHeight),
+            "portal-setup-details-scroll",
+            false
+        );
+
+        if (!state.statusText().isBlank()) {
+            detailsHost.addChild(label(state.statusText(), MUTED, RIGHT_W - 64));
+            detailsHost.addChild(spacerY(10));
+        }
+
+        if (portal == null) {
+            detailsHost.addChild(label("Could not resolve the Nexori portal behind this target anymore.", MUTED, RIGHT_W - 64));
+            right.addChild(detailsHost);
+            return;
+        }
+
+        TriggerBindingDefinition binding = plugin.getTriggerBindingService().findPortalCollisionBinding(portal.portalId()).orElse(null);
+        List<ConfiguredPeer> configuredPeers = plugin.getConfiguredPeerService().list();
+        String destinationAddress = resolvePortalDestinationAddress(state.pendingPortalDestinationAddress(), binding, configuredPeers);
+        DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(destinationAddress).orElse(null);
+        String targetId = resolvePortalTargetId(state.pendingPortalTargetId(), discovery, destinationAddress, binding);
+        TravelProfileType travelProfile = resolvePortalTravelProfile(state.pendingPortalTravelProfileId(), binding);
+        String portalDisplayName = resolvePortalDisplayName(state.pendingPortalDisplayName(), portal);
+        boolean hasSavedBinding = binding != null;
+        boolean hasUnsavedDraftChanges = hasSavedBinding && hasUnsavedPortalDraftChanges(
+            binding,
+            portal,
+            destinationAddress,
+            targetId,
+            travelProfile.id(),
+            portalDisplayName
+        );
+
+        GroupBuilder portalSummaryBlock = card(RIGHT_W - 32, 132, ITEM_BG);
+        portalSummaryBlock.addChild(label("Current Portal", TITLE, RIGHT_W - 64));
+        portalSummaryBlock.addChild(spacerY(10));
+        portalSummaryBlock.addChild(stat("Display Name", portal.displayName(), RIGHT_W - 16));
+        portalSummaryBlock.addChild(stat("World", portal.worldName(), RIGHT_W - 16));
+        portalSummaryBlock.addChild(stat("Block", "(" + portal.blockX() + ", " + portal.blockY() + ", " + portal.blockZ() + ")", RIGHT_W - 16));
+        portalSummaryBlock.addChild(stat("Travel", portal.enabled() ? "Enabled" : "Disabled", RIGHT_W - 16));
+        detailsHost.addChild(portalSummaryBlock);
+        detailsHost.addChild(spacerY(14));
+
+        detailsHost.addChild(label("Step " + (stepIndex + 1) + " of " + (PORTAL_LAST_STEP + 1), INFO, RIGHT_W - 64));
+        detailsHost.addChild(spacerY(8));
+        if (hasUnsavedDraftChanges) {
+            detailsHost.addChild(label(
+                "Draft changes are not live yet. Players will keep using the saved portal setup until you press Save Portal Setup.",
+                BAD,
+                RIGHT_W - 64
+            ));
+            detailsHost.addChild(spacerY(10));
+        }
+
+        if (stepIndex == PORTAL_STEP_SELECT_SERVER) {
+            GroupBuilder serverBlock = card(RIGHT_W - 32, 185, ITEM_BG);
+            serverBlock.addChild(label("Select Destination Server", TITLE, RIGHT_W - 64));
+            serverBlock.addChild(spacerY(10));
+            serverBlock.addChild(stat("Selected Server", destinationAddress.isBlank() ? "<none>" : destinationAddress, RIGHT_W - 16));
+            serverBlock.addChild(spacerY(8));
+            serverBlock.addChild(label(
+                configuredPeers.isEmpty()
+                    ? "Add and bootstrap a trusted server first before binding this portal."
+                    : "Configured trusted servers on this origin: " + configuredPeers.size(),
+                MUTED,
+                RIGHT_W - 64
+            ));
+            serverBlock.addChild(spacerY(14));
+            GroupBuilder row = centeredActionRow(RIGHT_W - 64, 140, 12, 140);
+            row.addChild(
+                ButtonBuilder.secondaryTextButton().withText("Prev Server")
+                    .withDisabled(configuredPeers.isEmpty())
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        cyclePortalDestination(configuredPeers, destinationAddress, -1), targetId, travelProfile.id(), portalDisplayName, ""))
+            );
+            row.addChild(spacerX(12));
+            row.addChild(
+                ButtonBuilder.textButton().withText("Next Server")
+                    .withDisabled(configuredPeers.isEmpty())
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        cyclePortalDestination(configuredPeers, destinationAddress, 1), "", travelProfile.id(), portalDisplayName, ""))
+            );
+            serverBlock.addChild(row);
+            detailsHost.addChild(serverBlock);
+        } else if (stepIndex == PORTAL_STEP_SELECT_TARGET) {
+            GroupBuilder targetBlock = card(RIGHT_W - 32, 240, ITEM_BG);
+            targetBlock.addChild(label("Discover And Select Target", TITLE, RIGHT_W - 64));
+            targetBlock.addChild(spacerY(10));
+            targetBlock.addChild(stat("Destination Server", destinationAddress.isBlank() ? "<none>" : destinationAddress, RIGHT_W - 16));
+            targetBlock.addChild(stat("Selected Target", targetId.isBlank() ? "<none>" : targetId, RIGHT_W - 16));
+            targetBlock.addChild(spacerY(8));
+            targetBlock.addChild(label(describePortalTarget(discovery, targetId), MUTED, RIGHT_W - 64));
+            targetBlock.addChild(spacerY(8));
+            targetBlock.addChild(label(
+                discovery == null
+                    ? "No discovery cache found yet for this server. Run discovery first."
+                    : "Cached " + discovery.targets().size() + " remote target(s) from " + discovery.connectionAddress() + ".",
+                MUTED,
+                RIGHT_W - 64
+            ));
+            targetBlock.addChild(spacerY(14));
+            GroupBuilder row = centeredActionRow(RIGHT_W - 64, 140, 12, 160, 12, 140);
+            row.addChild(
+                ButtonBuilder.secondaryTextButton().withText("Prev Target")
+                    .withDisabled(discovery == null || discovery.targets().isEmpty())
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        destinationAddress, cyclePortalTarget(discovery, targetId, -1), travelProfile.id(), portalDisplayName, ""))
+            );
+            row.addChild(spacerX(12));
+            row.addChild(
+                ButtonBuilder.secondaryTextButton().withText("Discover Targets")
+                    .withDisabled(destinationAddress.isBlank())
+                    .withAnchor(new HyUIAnchor().setWidth(160).setHeight(42))
+                    .onClick((ignored, ctx) -> discoverPortalTargets(ref, store, playerRef, player, plugin, state, portal, destinationAddress, targetId, travelProfile.id(), portalDisplayName))
+            );
+            row.addChild(spacerX(12));
+            row.addChild(
+                ButtonBuilder.textButton().withText("Next Target")
+                    .withDisabled(discovery == null || discovery.targets().isEmpty())
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        destinationAddress, cyclePortalTarget(discovery, targetId, 1), travelProfile.id(), portalDisplayName, ""))
+            );
+            targetBlock.addChild(row);
+            detailsHost.addChild(targetBlock);
+        } else if (stepIndex == PORTAL_STEP_SELECT_PROFILE) {
+            GroupBuilder profileBlock = card(RIGHT_W - 32, 200, ITEM_BG);
+            profileBlock.addChild(label("Choose Travel Profile", TITLE, RIGHT_W - 64));
+            profileBlock.addChild(spacerY(10));
+            profileBlock.addChild(stat("Selected Profile", travelProfile.displayName(), RIGHT_W - 16));
+            profileBlock.addChild(spacerY(8));
+            profileBlock.addChild(label(travelProfile.description(), MUTED, RIGHT_W - 64));
+            profileBlock.addChild(spacerY(14));
+            GroupBuilder row = centeredActionRow(RIGHT_W - 64, 150, 12, 150);
+            row.addChild(
+                ButtonBuilder.secondaryTextButton().withText("Prev Profile")
+                    .withAnchor(new HyUIAnchor().setWidth(150).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        destinationAddress, targetId, cyclePortalProfile(travelProfile, -1).id(), portalDisplayName, ""))
+            );
+            row.addChild(spacerX(12));
+            row.addChild(
+                ButtonBuilder.textButton().withText("Next Profile")
+                    .withAnchor(new HyUIAnchor().setWidth(150).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex,
+                        destinationAddress, targetId, cyclePortalProfile(travelProfile, 1).id(), portalDisplayName, ""))
+            );
+            profileBlock.addChild(row);
+            detailsHost.addChild(profileBlock);
+        } else if (stepIndex == PORTAL_STEP_PORTAL_DETAILS) {
+            GroupBuilder detailsBlock = card(RIGHT_W - 32, 210, ITEM_BG);
+            GroupBuilder centeredHost = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(170));
+            centeredHost.addChild(spacerX((RIGHT_W - 64 - 520) / 2));
+            GroupBuilder centered = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(520).setHeight(170));
+            centered.addChild(label("Portal Display Name", TITLE, 520));
+            centered.addChild(spacerY(10));
+            centered.addChild(
+                TextFieldBuilder.textInput()
+                    .withId(PORTAL_DISPLAY_NAME_INPUT_ID)
+                    .withValue(portalDisplayName)
+                    .withPlaceholderText("North gate portal")
+                    .withMaxLength(120)
+                    .withAnchor(new HyUIAnchor().setWidth(520).setHeight(42))
+                    .withBackground("#101926")
+            );
+            centered.addChild(spacerY(10));
+            centered.addChild(label("This name is shown to owners in setup screens. Nexori keeps the technical portal target id internal.", MUTED, 520));
+            centeredHost.addChild(centered);
+            detailsBlock.addChild(centeredHost);
+            detailsHost.addChild(detailsBlock);
+        } else {
+            GroupBuilder reviewBlock = card(RIGHT_W - 32, 240, ITEM_BG);
+            reviewBlock.addChild(label("Review And Save", TITLE, RIGHT_W - 64));
+            reviewBlock.addChild(spacerY(10));
+            reviewBlock.addChild(stat("Destination Server", destinationAddress.isBlank() ? "<not selected>" : destinationAddress, RIGHT_W - 16));
+            reviewBlock.addChild(stat("Remote Target", targetId.isBlank() ? "<not selected>" : targetId, RIGHT_W - 16));
+            reviewBlock.addChild(stat("Travel Profile", travelProfile.displayName(), RIGHT_W - 16));
+            reviewBlock.addChild(stat("Portal Name", portalDisplayName.isBlank() ? "<unnamed portal>" : portalDisplayName, RIGHT_W - 16));
+            reviewBlock.addChild(spacerY(8));
+            reviewBlock.addChild(label(
+                binding == null
+                    ? "This portal does not have a saved collision binding yet."
+                    : "Current binding: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId(),
+                MUTED,
+                RIGHT_W - 64
+            ));
+            detailsHost.addChild(reviewBlock);
+            detailsHost.addChild(spacerY(14));
+
+            GroupBuilder dangerBlock = card(RIGHT_W - 32, 120, ITEM_BG);
+            dangerBlock.addChild(label("Portal Travel", TITLE, RIGHT_W - 64));
+            dangerBlock.addChild(spacerY(12));
+            GroupBuilder row = centeredActionRow(RIGHT_W - 64, 220, 12, 200, 12, 210);
+            row.addChild(
+                ButtonBuilder.secondaryTextButton()
+                    .withText(portal.enabled() ? "Disable Portal Travel" : "Enable Portal Travel")
+                    .withAnchor(new HyUIAnchor().setWidth(220).setHeight(42))
+                    .onClick((ignored, ctx) -> togglePortalEnabled(ref, store, playerRef, player, plugin, state, portal, destinationAddress, targetId, travelProfile.id(), readPortalDisplayName(ctx, portalDisplayName)))
+            );
+            row.addChild(spacerX(12));
+            row.addChild(
+                ButtonBuilder.textButton()
+                    .withText("Clear Binding")
+                    .withBackground(new HyUIPatchStyle().setColor("#a33f4d"))
+                    .withDisabled(binding == null)
+                    .withAnchor(new HyUIAnchor().setWidth(200).setHeight(42))
+                    .onClick((ignored, ctx) -> clearPortalBinding(ref, store, playerRef, player, plugin, state, portal, destinationAddress, targetId, travelProfile.id(), readPortalDisplayName(ctx, portalDisplayName)))
+            );
+            dangerBlock.addChild(row);
+            detailsHost.addChild(dangerBlock);
+        }
+
+        detailsHost.addChild(spacerY(16));
+        GroupBuilder actionsBlock = card(RIGHT_W - 32, 118, ITEM_BG);
+        actionsBlock.addChild(label("Actions", TITLE, RIGHT_W - 64));
+        actionsBlock.addChild(spacerY(12));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 64).setHeight(42));
+        int totalWidth = 160 + 12 + (stepIndex == PORTAL_LAST_STEP ? 210 : 140) + (stepIndex > PORTAL_STEP_SELECT_SERVER ? 12 + 140 : 0);
+        actionRow.addChild(spacerX(Math.max(0, ((RIGHT_W - 64) - totalWidth) / 2)));
+        if (stepIndex > PORTAL_STEP_SELECT_SERVER) {
+            actionRow.addChild(
+                ButtonBuilder.secondaryTextButton()
+                    .withText("Back")
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex - 1,
+                        destinationAddress, targetId, travelProfile.id(), readPortalDisplayName(ctx, portalDisplayName), ""))
+            );
+            actionRow.addChild(spacerX(12));
+        }
+        actionRow.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("Back To Target")
+                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(42))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state
+                        .withTargetsPanel(TargetsPanel.DETAILS)
+                        .withPendingPortalId("")
+                        .withPortalStepIndex(0)
+                        .withPendingPortalDestinationAddress("")
+                        .withPendingPortalTargetId("")
+                        .withPendingPortalTravelProfileId("")
+                        .withPendingPortalDisplayName("")
+                        .withStatus("")
+                ))
+        );
+        actionRow.addChild(spacerX(12));
+        if (stepIndex == PORTAL_LAST_STEP) {
+            actionRow.addChild(
+                ButtonBuilder.textButton()
+                    .withText("Save Portal Setup")
+                    .withAnchor(new HyUIAnchor().setWidth(210).setHeight(42))
+                    .onClick((ignored, ctx) -> savePortalBinding(ref, store, playerRef, player, plugin, state, portal, destinationAddress, targetId, travelProfile.id(), readPortalDisplayName(ctx, portalDisplayName)))
+            );
+        } else {
+            actionRow.addChild(
+                ButtonBuilder.textButton()
+                    .withText("Next")
+                    .withAnchor(new HyUIAnchor().setWidth(140).setHeight(42))
+                    .onClick((ignored, ctx) -> reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, stepIndex + 1,
+                        destinationAddress, targetId, travelProfile.id(), readPortalDisplayName(ctx, portalDisplayName), ""))
+            );
+        }
+        actionsBlock.addChild(actionRow);
+        detailsHost.addChild(actionsBlock);
+        right.addChild(detailsHost);
+    }
+
+    private static void reopenPortalSetup(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        PortalInstanceDefinition portal,
+        int stepIndex,
+        String destinationAddress,
+        String targetId,
+        String travelProfileId,
+        String portalDisplayName,
+        String statusText
+    ) {
+        plugin.getPortalSetupDraftService().save(
+            playerRef.getUuid(),
+            new PortalSetupDraft(
+                portal.portalId(),
+                clampPortalStep(stepIndex),
+                destinationAddress,
+                targetId,
+                travelProfileId,
+                portalDisplayName
+            )
+        );
+        open(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state
+                .withTargetsPanel(TargetsPanel.PORTAL_SETUP)
+                .withPendingPortalId(portal.portalId())
+                .withPortalStepIndex(clampPortalStep(stepIndex))
+                .withPendingPortalDestinationAddress(destinationAddress)
+                .withPendingPortalTargetId(targetId)
+                .withPendingPortalTravelProfileId(travelProfileId)
+                .withPendingPortalDisplayName(portalDisplayName)
+                .withSelectedTarget(portal.autoDestinationTargetId())
+                .withStatus(statusText)
+        );
+    }
+
+    private static void discoverPortalTargets(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        PortalInstanceDefinition portal,
+        String destinationAddress,
+        String targetId,
+        String travelProfileId,
+        String portalDisplayName
+    ) {
+        try {
+            if (destinationAddress.isBlank()) {
+                reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_SELECT_TARGET, destinationAddress, targetId, travelProfileId, portalDisplayName, "Select a destination server first.");
+                return;
+            }
+            Transform transform = captureCurrentTransform(store, ref);
+            plugin.getPortalSetupDraftService().save(
+                playerRef.getUuid(),
+                new PortalSetupDraft(portal.portalId(), PORTAL_STEP_SELECT_TARGET, destinationAddress, targetId, travelProfileId, portalDisplayName)
+            );
+            plugin.getDestinationTargetDiscoveryService().discover(
+                playerRef,
+                ConfiguredPeer.parse(destinationAddress),
+                player.getWorld().getName(),
+                transform,
+                (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> open(
+                    resumeRef,
+                    resumeStore,
+                    resumePlayerRef,
+                    resumePlayer,
+                    plugin,
+                    state
+                        .withTab(Tab.TARGETS)
+                        .withSelectedTarget(portal.autoDestinationTargetId())
+                        .withTargetsPanel(TargetsPanel.PORTAL_SETUP)
+                        .withPendingPortalId(portal.portalId())
+                        .withPortalStepIndex(PORTAL_STEP_SELECT_TARGET)
+                        .withPendingPortalDestinationAddress(destinationAddress)
+                        .withPendingPortalTargetId(targetId)
+                        .withPendingPortalTravelProfileId(travelProfileId)
+                        .withPendingPortalDisplayName(portalDisplayName)
+                        .withStatus("Destination targets refreshed from " + destinationAddress + ".")
+                )
+            );
+            player.sendMessage(Message.raw("Nexori is discovering destination targets from " + destinationAddress + "..."));
+        } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_SELECT_TARGET, destinationAddress, targetId, travelProfileId, portalDisplayName, "The Nexori portal discovery failed: " + exception.getMessage());
+        }
+    }
+
+    private static void savePortalBinding(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        PortalInstanceDefinition portal,
+        String destinationAddress,
+        String targetId,
+        String travelProfileId,
+        String portalDisplayName
+    ) {
+        try {
+            if (destinationAddress.isBlank()) {
+                reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW, destinationAddress, targetId, travelProfileId, portalDisplayName, "Select a destination server first.");
+                return;
+            }
+            if (targetId.isBlank()) {
+                reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW, destinationAddress, targetId, travelProfileId, portalDisplayName, "Select a discovered destination target first.");
+                return;
+            }
+
+            PortalInstanceDefinition renamedPortal = plugin.getPortalInstanceService().renamePortalAndTarget(portal.autoDestinationTargetId(), portalDisplayName);
+            TriggerBindingDefinition saved = plugin.getTriggerBindingService().bindPortalCollision(
+                renamedPortal.portalId(),
+                destinationAddress,
+                targetId,
+                travelProfileId,
+                "{}"
+            );
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, renamedPortal, PORTAL_STEP_REVIEW,
+                saved.destinationConnectionAddress(), saved.destinationTargetId(), saved.travelProfileId(), renamedPortal.displayName(),
+                "Saved portal binding to " + saved.destinationConnectionAddress() + " -> " + saved.destinationTargetId() + "."
+            );
+        } catch (IOException | IllegalArgumentException exception) {
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW, destinationAddress, targetId, travelProfileId, portalDisplayName, exception.getMessage());
+        }
+    }
+
+    private static void clearPortalBinding(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        PortalInstanceDefinition portal,
+        String destinationAddress,
+        String targetId,
+        String travelProfileId,
+        String portalDisplayName
+    ) {
+        try {
+            boolean removed = plugin.getTriggerBindingService().removePortalCollisionBinding(portal.portalId());
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW,
+                destinationAddress, targetId, travelProfileId, portalDisplayName,
+                removed ? "Removed the portal binding." : "This portal did not have a saved binding."
+            );
+        } catch (IOException exception) {
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW, destinationAddress, targetId, travelProfileId, portalDisplayName, "Failed to clear the portal binding: " + exception.getMessage());
+        }
+    }
+
+    private static void togglePortalEnabled(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        PortalInstanceDefinition portal,
+        String destinationAddress,
+        String targetId,
+        String travelProfileId,
+        String portalDisplayName
+    ) {
+        try {
+            PortalInstanceDefinition updated = plugin.getPortalInstanceService().setEnabled(portal.portalId(), !portal.enabled());
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, updated, PORTAL_STEP_REVIEW,
+                destinationAddress, targetId, travelProfileId, portalDisplayName,
+                portal.enabled() ? "Portal travel disabled. Admin setup still works." : "Portal travel enabled."
+            );
+        } catch (IOException exception) {
+            reopenPortalSetup(ref, store, playerRef, player, plugin, state, portal, PORTAL_STEP_REVIEW, destinationAddress, targetId, travelProfileId, portalDisplayName, "Failed to update portal travel state: " + exception.getMessage());
+        }
+    }
+
+    private static PortalInstanceDefinition resolvePortalForSetup(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull State state,
+        DestinationTargetDefinition selectedTarget
+    ) {
+        if (!state.pendingPortalId().isBlank()) {
+            PortalInstanceDefinition byId = plugin.getPortalInstanceService().findById(state.pendingPortalId()).orElse(null);
+            if (byId != null) {
+                return byId;
+            }
+        }
+        if (selectedTarget == null || selectedTarget.kind() != DestinationTargetKind.PORTAL) {
+            return null;
+        }
+        return plugin.getPortalInstanceService().findByAutoDestinationTargetId(selectedTarget.id()).orElse(null);
+    }
+
+    @Nonnull
+    private static String resolvePortalDestinationAddress(
+        @Nonnull String draftDestinationAddress,
+        TriggerBindingDefinition binding,
+        @Nonnull List<ConfiguredPeer> configuredPeers
+    ) {
+        if (!draftDestinationAddress.isBlank()) {
+            return draftDestinationAddress;
+        }
+        if (binding != null && !binding.destinationConnectionAddress().isBlank()) {
+            return binding.destinationConnectionAddress();
+        }
+        return configuredPeers.isEmpty() ? "" : configuredPeers.getFirst().connectionAddress();
+    }
+
+    @Nonnull
+    private static String resolvePortalTargetId(
+        @Nonnull String draftTargetId,
+        DiscoveredDestinationTargetSet discovery,
+        @Nonnull String destinationAddress,
+        TriggerBindingDefinition binding
+    ) {
+        if (!draftTargetId.isBlank()) {
+            return draftTargetId;
+        }
+        if (binding != null
+            && !destinationAddress.isBlank()
+            && binding.destinationConnectionAddress().equalsIgnoreCase(destinationAddress)
+            && !binding.destinationTargetId().isBlank()) {
+            return binding.destinationTargetId();
+        }
+        if (discovery == null || discovery.targets().isEmpty()) {
+            return "";
+        }
+        return discovery.targets().getFirst().id();
+    }
+
+    @Nonnull
+    private static TravelProfileType resolvePortalTravelProfile(
+        @Nonnull String draftTravelProfileId,
+        TriggerBindingDefinition binding
+    ) {
+        if (!draftTravelProfileId.isBlank()) {
+            return TravelProfileType.parse(draftTravelProfileId);
+        }
+        if (binding != null && !binding.travelProfileId().isBlank()) {
+            return TravelProfileType.parse(binding.travelProfileId());
+        }
+        return TravelProfileType.KEEP_INVENTORY;
+    }
+
+    @Nonnull
+    private static String resolvePortalDisplayName(@Nonnull String draftDisplayName, @Nonnull PortalInstanceDefinition portal) {
+        return draftDisplayName.isBlank() ? portal.displayName() : draftDisplayName.trim();
+    }
+
+    private static boolean hasUnsavedPortalDraftChanges(
+        @Nonnull TriggerBindingDefinition binding,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String destinationAddress,
+        @Nonnull String targetId,
+        @Nonnull String travelProfileId,
+        @Nonnull String portalDisplayName
+    ) {
+        if (!binding.destinationConnectionAddress().equals(destinationAddress)) {
+            return true;
+        }
+        if (!binding.destinationTargetId().equals(targetId)) {
+            return true;
+        }
+        if (!binding.travelProfileId().equals(travelProfileId)) {
+            return true;
+        }
+        return !portal.displayName().equals(portalDisplayName);
+    }
+
+    @Nonnull
+    private static String describePortalTarget(DiscoveredDestinationTargetSet discovery, @Nonnull String targetId) {
+        if (discovery == null || discovery.targets().isEmpty()) {
+            return "Discover the destination server to browse its available arrival targets.";
+        }
+        for (DiscoveredDestinationTargetSummary target : discovery.targets()) {
+            if (target.id().equals(targetId)) {
+                return target.displayName() + " / " + target.kind() + " / " + target.worldName();
+            }
+        }
+        return targetId.isBlank()
+            ? "No discovered target selected yet."
+            : targetId + " (not present in the current discovery cache)";
+    }
+
+    @Nonnull
+    private static String cyclePortalDestination(@Nonnull List<ConfiguredPeer> configuredPeers, @Nonnull String current, int delta) {
+        if (configuredPeers.isEmpty()) {
+            return "";
+        }
+        int index = 0;
+        for (int i = 0; i < configuredPeers.size(); i++) {
+            if (configuredPeers.get(i).connectionAddress().equalsIgnoreCase(current)) {
+                index = i;
+                break;
+            }
+        }
+        int nextIndex = Math.floorMod(index + delta, configuredPeers.size());
+        return configuredPeers.get(nextIndex).connectionAddress();
+    }
+
+    @Nonnull
+    private static String cyclePortalTarget(DiscoveredDestinationTargetSet discovery, @Nonnull String current, int delta) {
+        if (discovery == null || discovery.targets().isEmpty()) {
+            return "";
+        }
+        List<DiscoveredDestinationTargetSummary> targets = discovery.targets();
+        int index = 0;
+        for (int i = 0; i < targets.size(); i++) {
+            if (targets.get(i).id().equalsIgnoreCase(current)) {
+                index = i;
+                break;
+            }
+        }
+        int nextIndex = Math.floorMod(index + delta, targets.size());
+        return targets.get(nextIndex).id();
+    }
+
+    @Nonnull
+    private static TravelProfileType cyclePortalProfile(@Nonnull TravelProfileType current, int delta) {
+        TravelProfileType[] values = TravelProfileType.values();
+        int nextIndex = Math.floorMod(current.ordinal() + delta, values.length);
+        return values[nextIndex];
+    }
+
+    private static int clampPortalStep(int stepIndex) {
+        return Math.max(PORTAL_STEP_SELECT_SERVER, Math.min(PORTAL_LAST_STEP, stepIndex));
+    }
+
+    @Nonnull
+    private static String readPortalDisplayName(@Nonnull au.ellie.hyui.events.UIContext ctx, @Nonnull String fallbackValue) {
+        return ctx.getValue(PORTAL_DISPLAY_NAME_INPUT_ID, String.class)
+            .orElse(fallbackValue)
+            .trim();
+    }
+
+    @Nonnull
+    private static GroupBuilder centeredActionRow(int width, int... segments) {
+        int totalWidth = 0;
+        for (int segment : segments) {
+            totalWidth += segment;
+        }
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width).setHeight(42));
+        row.addChild(spacerX(Math.max(0, (width - totalWidth) / 2)));
+        return row;
+    }
+
+    @Nonnull
+    private static String describeTargetCapture(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref) {
+        try {
+            Transform transform = captureCurrentTransform(store, ref);
+            return "Current capture preview: pos=("
+                + formatDecimal(transform.getPosition().x) + ", "
+                + formatDecimal(transform.getPosition().y) + ", "
+                + formatDecimal(transform.getPosition().z) + ") rot=("
+                + formatDecimal(transform.getRotation().x) + ", "
+                + formatDecimal(transform.getRotation().y) + ", "
+                + formatDecimal(transform.getRotation().z) + ")";
+        } catch (IllegalStateException exception) {
+            return "Could not read the live player position yet.";
+        }
+    }
+
+    @Nonnull
+    private static String buildCoordinateTargetMetadata(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref) {
+        Transform transform = captureCurrentTransform(store, ref);
+        JsonObject root = new JsonObject();
+        JsonObject position = new JsonObject();
+        position.addProperty("x", transform.getPosition().x);
+        position.addProperty("y", transform.getPosition().y);
+        position.addProperty("z", transform.getPosition().z);
+        root.add("position", position);
+
+        JsonObject rotation = new JsonObject();
+        rotation.addProperty("pitch", transform.getRotation().x);
+        rotation.addProperty("yaw", transform.getRotation().y);
+        rotation.addProperty("roll", transform.getRotation().z);
+        root.add("rotation", rotation);
+        return GSON.toJson(root);
+    }
+
+    private static int clampTargetStep(int stepIndex) {
+        return Math.max(TARGET_STEP_KIND, Math.min(TARGET_LAST_STEP, stepIndex));
+    }
+
+    @Nonnull
+    private static String generateCoordinateTargetId(@Nonnull NexoriPlugin plugin) {
+        String candidate;
+        do {
+            candidate = "coordinate." + UUID.randomUUID().toString().substring(0, 8).toLowerCase();
+        } while (plugin.getDestinationTargetService().find(candidate).isPresent());
+        return candidate;
+    }
+
+    @Nonnull
+    private static String formatDecimal(double value) {
+        return String.format(java.util.Locale.ROOT, "%.2f", value);
     }
 
     private static GroupBuilder rulesBody(
@@ -1285,6 +2591,18 @@ public final class NexoriMenuHyUiPage {
         return ruleGroups.isEmpty() ? "" : ruleGroups.getFirst().groupId();
     }
 
+    private static String normalizeSelectedTargetId(@Nonnull String selectedTargetId, @Nonnull List<DestinationTargetDefinition> targets) {
+        if (selectedTargetId.isBlank()) {
+            return targets.isEmpty() ? "" : targets.getFirst().id();
+        }
+        for (DestinationTargetDefinition target : targets) {
+            if (target.id().equalsIgnoreCase(selectedTargetId)) {
+                return target.id();
+            }
+        }
+        return targets.isEmpty() ? "" : targets.getFirst().id();
+    }
+
     private static ServerEntry findSelectedServer(@Nonnull List<ServerEntry> serverEntries, @Nonnull String selectionKey) {
         for (ServerEntry entry : serverEntries) {
             if (entry.selectionKey().equals(selectionKey)) {
@@ -1301,6 +2619,15 @@ public final class NexoriMenuHyUiPage {
             }
         }
         return ruleGroups.isEmpty() ? null : ruleGroups.getFirst();
+    }
+
+    private static DestinationTargetDefinition findSelectedTarget(@Nonnull List<DestinationTargetDefinition> targets, @Nonnull String targetId) {
+        for (DestinationTargetDefinition target : targets) {
+            if (target.id().equalsIgnoreCase(targetId)) {
+                return target;
+            }
+        }
+        return targets.isEmpty() ? null : targets.getFirst();
     }
 
     private static boolean isLocalAddress(@Nonnull NexoriPlugin plugin, @Nonnull String connectionAddress) {
@@ -1398,20 +2725,42 @@ public final class NexoriMenuHyUiPage {
         @Nonnull Tab tab,
         @Nonnull String selectedPeerAddress,
         @Nonnull String selectedRuleGroupId,
+        @Nonnull String selectedTargetId,
         @Nonnull String statusText,
         @Nonnull ServersPanel serversPanel,
         @Nonnull RulesPanel rulesPanel,
+        @Nonnull TargetsPanel targetsPanel,
         @Nonnull String pendingServerAddress,
-        @Nonnull String pendingRuleGroupName
+        @Nonnull String pendingRuleGroupName,
+        int targetStepIndex,
+        @Nonnull String pendingTargetDisplayName,
+        @Nonnull String pendingTargetId,
+        int portalStepIndex,
+        @Nonnull String pendingPortalId,
+        @Nonnull String pendingPortalDestinationAddress,
+        @Nonnull String pendingPortalTargetId,
+        @Nonnull String pendingPortalTravelProfileId,
+        @Nonnull String pendingPortalDisplayName
     ) {
-        public State withTab(@Nonnull Tab tab) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withSelectedPeer(@Nonnull String selectedPeerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withSelectedRuleGroup(@Nonnull String selectedRuleGroupId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withStatus(@Nonnull String statusText) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withServersPanel(@Nonnull ServersPanel serversPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withRulesPanel(@Nonnull RulesPanel rulesPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withPendingServerAddress(@Nonnull String pendingServerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
-        public State withPendingRuleGroupName(@Nonnull String pendingRuleGroupName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, statusText, serversPanel, rulesPanel, pendingServerAddress, pendingRuleGroupName); }
+        public State withTab(@Nonnull Tab tab) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withSelectedPeer(@Nonnull String selectedPeerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withSelectedRuleGroup(@Nonnull String selectedRuleGroupId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withSelectedTarget(@Nonnull String selectedTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withStatus(@Nonnull String statusText) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withServersPanel(@Nonnull ServersPanel serversPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withRulesPanel(@Nonnull RulesPanel rulesPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withTargetsPanel(@Nonnull TargetsPanel targetsPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingServerAddress(@Nonnull String pendingServerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingRuleGroupName(@Nonnull String pendingRuleGroupName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withTargetStepIndex(int targetStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingTargetDisplayName(@Nonnull String pendingTargetDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingTargetId(@Nonnull String pendingTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPortalStepIndex(int portalStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingPortalId(@Nonnull String pendingPortalId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingPortalDestinationAddress(@Nonnull String pendingPortalDestinationAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingPortalTargetId(@Nonnull String pendingPortalTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingPortalTravelProfileId(@Nonnull String pendingPortalTravelProfileId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
+        public State withPendingPortalDisplayName(@Nonnull String pendingPortalDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName); }
     }
 
     public enum Tab {
@@ -1430,6 +2779,12 @@ public final class NexoriMenuHyUiPage {
         DETAILS,
         ADD,
         VISUALIZE
+    }
+
+    public enum TargetsPanel {
+        DETAILS,
+        CREATE,
+        PORTAL_SETUP
     }
 
     private record SetupReport(@Nonnull String status, @Nonnull String detail, @Nonnull String followUp, boolean running, @Nonnull HyUIStyle statusStyle) {
