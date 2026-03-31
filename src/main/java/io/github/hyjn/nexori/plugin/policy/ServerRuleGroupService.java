@@ -1,0 +1,171 @@
+package io.github.hyjn.nexori.plugin.policy;
+
+import javax.annotation.Nonnull;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+public final class ServerRuleGroupService {
+
+    private final ServerRuleGroupStore store;
+    private final Map<String, ServerRuleGroupDefinition> groupsById = new LinkedHashMap<>();
+
+    public ServerRuleGroupService(@Nonnull ServerRuleGroupStore store) throws IOException {
+        this.store = store;
+        for (ServerRuleGroupDefinition group : store.loadOrCreate()) {
+            ServerRuleGroupDefinition normalized = group.normalized();
+            groupsById.put(normalized.groupId(), normalized);
+        }
+    }
+
+    @Nonnull
+    public synchronized List<ServerRuleGroupDefinition> list() {
+        return groupsById.values().stream()
+            .sorted(Comparator.comparing(ServerRuleGroupDefinition::displayName, String.CASE_INSENSITIVE_ORDER))
+            .toList();
+    }
+
+    @Nonnull
+    public synchronized Optional<ServerRuleGroupDefinition> find(@Nonnull String groupId) {
+        if (groupId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(groupsById.get(groupId.trim().toLowerCase()));
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition create(
+        @Nonnull String displayName,
+        boolean recoveryEnabled,
+        int maxBackupsPerPlayer
+    ) throws IOException {
+        String trimmedName = displayName == null ? "" : displayName.trim();
+        if (trimmedName.isBlank()) {
+            throw new IllegalArgumentException("A rule group needs a display name.");
+        }
+
+        ServerRuleGroupDefinition created = new ServerRuleGroupDefinition(
+            "group." + UUID.randomUUID().toString().replace("-", ""),
+            trimmedName,
+            recoveryEnabled,
+            maxBackupsPerPlayer,
+            List.of()
+        ).normalized();
+        groupsById.put(created.groupId(), created);
+        persist();
+        return created;
+    }
+
+    public synchronized boolean remove(@Nonnull String groupId) throws IOException {
+        ServerRuleGroupDefinition removed = groupsById.remove(groupId.trim().toLowerCase());
+        persist();
+        return removed != null;
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition rename(@Nonnull String groupId, @Nonnull String displayName) throws IOException {
+        ServerRuleGroupDefinition current = requireGroup(groupId);
+        String trimmedName = displayName == null ? "" : displayName.trim();
+        if (trimmedName.isBlank()) {
+            throw new IllegalArgumentException("A rule group needs a display name.");
+        }
+        ServerRuleGroupDefinition updated = current.withDisplayName(trimmedName);
+        groupsById.put(updated.groupId(), updated);
+        persist();
+        return updated;
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition setRecoveryEnabled(@Nonnull String groupId, boolean enabled) throws IOException {
+        ServerRuleGroupDefinition current = requireGroup(groupId);
+        ServerRuleGroupDefinition updated = current.withRecoveryEnabled(enabled);
+        groupsById.put(updated.groupId(), updated);
+        persist();
+        return updated;
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition setMaxBackupsPerPlayer(@Nonnull String groupId, int maxBackupsPerPlayer) throws IOException {
+        ServerRuleGroupDefinition current = requireGroup(groupId);
+        ServerRuleGroupDefinition updated = current.withMaxBackupsPerPlayer(maxBackupsPerPlayer);
+        groupsById.put(updated.groupId(), updated);
+        persist();
+        return updated;
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition assignServer(@Nonnull String groupId, @Nonnull String serverSelectionKey) throws IOException {
+        ServerRuleGroupDefinition current = requireGroup(groupId);
+        String normalizedKey = ServerRuleGroupDefinition.normalizeServerKey(serverSelectionKey);
+        if (normalizedKey.isBlank()) {
+            throw new IllegalArgumentException("That server key is blank.");
+        }
+
+        Optional<ServerRuleGroupDefinition> existingAssignment = findAssignedGroup(normalizedKey);
+        if (existingAssignment.isPresent() && !existingAssignment.get().groupId().equals(current.groupId())) {
+            throw new IllegalStateException(
+                "That server already belongs to the rule group '" + existingAssignment.get().displayName() + "'."
+            );
+        }
+
+        ServerRuleGroupDefinition updated = current.assignServer(normalizedKey);
+        groupsById.put(updated.groupId(), updated);
+        persist();
+        return updated;
+    }
+
+    @Nonnull
+    public synchronized ServerRuleGroupDefinition unassignServer(@Nonnull String groupId, @Nonnull String serverSelectionKey) throws IOException {
+        ServerRuleGroupDefinition current = requireGroup(groupId);
+        ServerRuleGroupDefinition updated = current.unassignServer(serverSelectionKey);
+        groupsById.put(updated.groupId(), updated);
+        persist();
+        return updated;
+    }
+
+    public synchronized void removeServerAssignments(@Nonnull String serverSelectionKey) throws IOException {
+        String normalizedKey = ServerRuleGroupDefinition.normalizeServerKey(serverSelectionKey);
+        if (normalizedKey.isBlank()) {
+            return;
+        }
+
+        boolean changed = false;
+        for (ServerRuleGroupDefinition group : new ArrayList<>(groupsById.values())) {
+            if (group.containsServer(normalizedKey)) {
+                groupsById.put(group.groupId(), group.unassignServer(normalizedKey));
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            persist();
+        }
+    }
+
+    @Nonnull
+    public synchronized Optional<ServerRuleGroupDefinition> findAssignedGroup(@Nonnull String serverSelectionKey) {
+        String normalizedKey = ServerRuleGroupDefinition.normalizeServerKey(serverSelectionKey);
+        if (normalizedKey.isBlank()) {
+            return Optional.empty();
+        }
+
+        return groupsById.values().stream()
+            .filter(group -> group.containsServer(normalizedKey))
+            .findFirst();
+    }
+
+    @Nonnull
+    private ServerRuleGroupDefinition requireGroup(@Nonnull String groupId) {
+        return find(groupId)
+            .orElseThrow(() -> new IllegalArgumentException("That rule group does not exist."));
+    }
+
+    private void persist() throws IOException {
+        store.save(new ArrayList<>(list()));
+    }
+}

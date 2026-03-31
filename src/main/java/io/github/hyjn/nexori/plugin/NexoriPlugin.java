@@ -45,6 +45,8 @@ import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicyCacheService;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicyCacheStore;
+import io.github.hyjn.nexori.plugin.policy.ServerRuleGroupService;
+import io.github.hyjn.nexori.plugin.policy.ServerRuleGroupStore;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicySyncService;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalBreakSystem;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalInteractionService;
@@ -88,6 +90,7 @@ public class NexoriPlugin extends JavaPlugin {
     private InventoryTransferService inventoryTransferService;
     private ServerPolicyCacheService serverPolicyCacheService;
     private ServerPolicySyncService serverPolicySyncService;
+    private ServerRuleGroupService serverRuleGroupService;
     private SecureTravelService secureTravelService;
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
     private NexoriPortalInteractionService portalInteractionService;
@@ -162,6 +165,9 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.serverPolicyCacheService = new ServerPolicyCacheService(
                 new ServerPolicyCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-server-policies.json"))
+            );
+            this.serverRuleGroupService = new ServerRuleGroupService(
+                new ServerRuleGroupStore(this.getDataDirectory().resolve("config").resolve("server-rule-groups.json"))
             );
             this.serverPolicySyncService = new ServerPolicySyncService(
                 this.getLogger(),
@@ -329,5 +335,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ServerPolicySyncService getServerPolicySyncService() {
         return serverPolicySyncService;
+    }
+
+    public ServerRuleGroupService getServerRuleGroupService() {
+        return serverRuleGroupService;
     }
 }
