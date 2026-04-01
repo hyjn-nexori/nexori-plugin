@@ -11,6 +11,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -72,41 +73,41 @@ public final class DiagnosticsCollectSessionStore {
                 .thenComparing(DiagnosticsCollectSession::sessionId));
     }
 
-    public synchronized void saveManifest(@Nonnull String sessionId, @Nonnull String remoteServerId, @Nonnull DiagnosticsCollectManifest manifest) {
-        writeJson(manifestFile(sessionId, remoteServerId), manifest);
+    public synchronized void saveManifest(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId, @Nonnull DiagnosticsCollectManifest manifest) {
+        writeJson(manifestFile(sessionId, sourceKind, sourceServerId), manifest);
     }
 
     @Nonnull
-    public synchronized Optional<DiagnosticsCollectManifest> loadManifest(@Nonnull String sessionId, @Nonnull String remoteServerId) {
-        return readJson(manifestFile(sessionId, remoteServerId), DiagnosticsCollectManifest.class);
+    public synchronized Optional<DiagnosticsCollectManifest> loadManifest(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        return readJson(manifestFile(sessionId, sourceKind, sourceServerId), DiagnosticsCollectManifest.class);
     }
 
-    public synchronized void saveServerProgress(@Nonnull String sessionId, @Nonnull DiagnosticsCollectServerProgress progress) {
-        writeJson(progressFile(sessionId, progress.remoteServerId()), progress);
-    }
-
-    @Nonnull
-    public synchronized Optional<DiagnosticsCollectServerProgress> loadServerProgress(@Nonnull String sessionId, @Nonnull String remoteServerId) {
-        return readJson(progressFile(sessionId, remoteServerId), DiagnosticsCollectServerProgress.class);
+    public synchronized void saveSourceProgress(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceProgress progress) {
+        writeJson(progressFile(sessionId, progress.sourceKind(), progress.sourceServerId()), progress);
     }
 
     @Nonnull
-    public Path rawPartFile(@Nonnull String sessionId, @Nonnull String remoteServerId, @Nonnull String fileId) {
-        Path file = rawDir(sessionId, remoteServerId).resolve(fileId + ".part");
+    public synchronized Optional<DiagnosticsCollectSourceProgress> loadSourceProgress(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        return readJson(progressFile(sessionId, sourceKind, sourceServerId), DiagnosticsCollectSourceProgress.class);
+    }
+
+    @Nonnull
+    public Path rawPartFile(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId, @Nonnull String fileId) {
+        Path file = rawDir(sessionId, sourceKind, sourceServerId).resolve(fileId + ".part");
         ensureParent(file);
         return file;
     }
 
     @Nonnull
-    public Path rawFinalFile(@Nonnull String sessionId, @Nonnull String remoteServerId, @Nonnull String fileId) {
-        Path file = rawDir(sessionId, remoteServerId).resolve(fileId + ".jsonl");
+    public Path rawFinalFile(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId, @Nonnull String fileId) {
+        Path file = rawDir(sessionId, sourceKind, sourceServerId).resolve(fileId + ".jsonl");
         ensureParent(file);
         return file;
     }
 
-    public synchronized void finalizeRawFile(@Nonnull String sessionId, @Nonnull String remoteServerId, @Nonnull String fileId) {
-        Path part = rawPartFile(sessionId, remoteServerId, fileId);
-        Path target = rawFinalFile(sessionId, remoteServerId, fileId);
+    public synchronized void finalizeRawFile(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId, @Nonnull String fileId) {
+        Path part = rawPartFile(sessionId, sourceKind, sourceServerId, fileId);
+        Path target = rawFinalFile(sessionId, sourceKind, sourceServerId, fileId);
         if (!Files.exists(part)) {
             return;
         }
@@ -128,6 +129,37 @@ public final class DiagnosticsCollectSessionStore {
         return dir;
     }
 
+    @Nonnull
+    public Path outputFile(@Nonnull String sessionId, @Nonnull String fileName) {
+        Path file = sessionDir(sessionId).resolve("output").resolve(fileName);
+        ensureParent(file);
+        return file;
+    }
+
+    public synchronized void writeOutputJson(@Nonnull String sessionId, @Nonnull String fileName, @Nonnull Object value) {
+        writeJson(outputFile(sessionId, fileName), value);
+    }
+
+    public synchronized void writeOutputText(@Nonnull String sessionId, @Nonnull String fileName, @Nonnull String raw) {
+        Path file = outputFile(sessionId, fileName);
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        try {
+            Files.writeString(tmp, raw, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException exception) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to persist Nexori diagnostics collect output to " + file, exception);
+        } finally {
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
     private Path activeLockFile() {
         return collectDir.resolve("active.lock.json");
     }
@@ -136,22 +168,27 @@ public final class DiagnosticsCollectSessionStore {
         return sessionDir(sessionId).resolve("session.json");
     }
 
-    private Path manifestFile(@Nonnull String sessionId, @Nonnull String remoteServerId) {
-        Path file = sessionDir(sessionId).resolve("manifests").resolve(remoteServerId + ".json");
+    private Path manifestFile(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        Path file = sessionDir(sessionId).resolve("manifests").resolve(sourceKey(sourceKind, sourceServerId) + ".json");
         ensureParent(file);
         return file;
     }
 
-    private Path progressFile(@Nonnull String sessionId, @Nonnull String remoteServerId) {
-        Path file = sessionDir(sessionId).resolve("progress").resolve(remoteServerId + ".json");
+    private Path progressFile(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        Path file = sessionDir(sessionId).resolve("progress").resolve(sourceKey(sourceKind, sourceServerId) + ".json");
         ensureParent(file);
         return file;
     }
 
-    private Path rawDir(@Nonnull String sessionId, @Nonnull String remoteServerId) {
-        Path dir = sessionDir(sessionId).resolve("raw").resolve(remoteServerId);
+    private Path rawDir(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        Path dir = sessionDir(sessionId).resolve("raw").resolve(sourceKey(sourceKind, sourceServerId));
         ensureDir(dir);
         return dir;
+    }
+
+    @Nonnull
+    private String sourceKey(@Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId) {
+        return sourceKind == DiagnosticsCollectSourceKind.LOCAL ? "local" : sourceServerId;
     }
 
     private <T> Optional<T> readJson(@Nonnull Path file, @Nonnull Class<T> type) {

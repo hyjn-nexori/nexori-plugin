@@ -4,8 +4,9 @@ import javax.annotation.Nonnull;
 import java.util.List;
 
 public record DiagnosticsCollectManifest(
-    @Nonnull String remoteServerId,
-    @Nonnull String remoteConnectionAddress,
+    @Nonnull DiagnosticsCollectSourceKind sourceKind,
+    @Nonnull String sourceServerId,
+    @Nonnull String sourceConnectionAddress,
     long windowStartEpochMs,
     long windowEndEpochMs,
     @Nonnull List<DiagnosticsCollectManifestEntry> entries,

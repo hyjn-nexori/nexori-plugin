@@ -4,9 +4,10 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.List;
 
-public record DiagnosticsCollectServerProgress(
-    @Nonnull String remoteServerId,
-    @Nonnull String remoteConnectionAddress,
+public record DiagnosticsCollectSourceProgress(
+    @Nonnull DiagnosticsCollectSourceKind sourceKind,
+    @Nonnull String sourceServerId,
+    @Nonnull String sourceConnectionAddress,
     @Nonnull DiagnosticsCollectStatus status,
     long estimatedBytes,
     long downloadedBytes,

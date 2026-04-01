@@ -2946,9 +2946,9 @@ public final class NexoriMenuHyUiPage {
             collectorBlock.addChild(spacerY(10));
         }
 
-        for (DiagnosticsCollectService.CollectServerRow serverRow : collectView.servers()) {
+        for (DiagnosticsCollectService.CollectSourceRow serverRow : collectView.sources()) {
             GroupBuilder serverCard = card(RIGHT_W - 96, 56, SERVER_BUTTON_BG);
-            serverCard.addChild(label(serverRow.remoteConnectionAddress() + " | " + serverRow.status(), LABEL, RIGHT_W - 128));
+            serverCard.addChild(label(serverRow.sourceConnectionAddress() + " | " + serverRow.status(), LABEL, RIGHT_W - 128));
             serverCard.addChild(spacerY(4));
             serverCard.addChild(label(
                 formatBytes(serverRow.downloadedBytes()) + " / " + formatBytes(serverRow.estimatedBytes())
@@ -3093,7 +3093,7 @@ public final class NexoriMenuHyUiPage {
             }
             height += 10;
         }
-        height += collectView.servers().size() * 64;
+        height += collectView.sources().size() * 64;
         height += 48; // footer copy
         height += 16; // bottom padding
         return Math.max(320, height);

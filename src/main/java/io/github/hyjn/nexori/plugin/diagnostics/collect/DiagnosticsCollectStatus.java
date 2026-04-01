@@ -5,6 +5,8 @@ public enum DiagnosticsCollectStatus {
     PLANNING,
     READY,
     RUNNING,
+    READY_TO_CONSOLIDATE,
+    CONSOLIDATING,
     COMPLETED,
     FAILED,
     CANCELLED

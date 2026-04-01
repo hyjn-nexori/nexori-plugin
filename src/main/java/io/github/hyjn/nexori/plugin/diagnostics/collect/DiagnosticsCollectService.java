@@ -67,6 +67,7 @@ public final class DiagnosticsCollectService {
     private final TrustBundleStore trustBundleStore;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsCollectSessionStore sessionStore;
+    private final DiagnosticsCollectConsolidator consolidator;
     private final Path journalDir;
     private final Map<UUID, PendingCollectReturn> pendingReturns = new ConcurrentHashMap<>();
     private final SecureReferralHandler manifestRequestHandler = new ManifestRequestHandler();
@@ -87,6 +88,7 @@ public final class DiagnosticsCollectService {
         this.trustBundleStore = trustBundleStore;
         this.secureReferralService = secureReferralService;
         this.sessionStore = new DiagnosticsCollectSessionStore(pluginDataDirectory);
+        this.consolidator = new DiagnosticsCollectConsolidator();
         this.journalDir = pluginDataDirectory.resolve("state").resolve("diagnostics").resolve("journal");
         Files.createDirectories(journalDir);
     }
@@ -116,7 +118,7 @@ public final class DiagnosticsCollectService {
             latestSession.orElse(null),
             lock.orElse(null),
             staleLock,
-            buildRemoteRows(latestSession.orElse(null))
+            buildSourceRows(latestSession.orElse(null))
         );
     }
 
@@ -137,8 +139,12 @@ public final class DiagnosticsCollectService {
         List<RemotePeer> remotes = trustedRemotePeers();
         String sessionId = UUID.randomUUID().toString();
         DiagnosticsCollectWindow window = windowPreset.resolve(System.currentTimeMillis());
-        List<DiagnosticsCollectServerProgress> servers = remotes.stream()
-            .map(remote -> new DiagnosticsCollectServerProgress(
+        DiagnosticsCollectSourceProgress localSource = planLocalSource(sessionId, window.startEpochMs(), window.endEpochMs());
+        List<DiagnosticsCollectSourceProgress> sources = new ArrayList<>();
+        sources.add(localSource);
+        sources.addAll(remotes.stream()
+            .map(remote -> new DiagnosticsCollectSourceProgress(
+                DiagnosticsCollectSourceKind.REMOTE,
                 remote.serverId(),
                 remote.connectionAddress(),
                 DiagnosticsCollectStatus.PENDING,
@@ -150,7 +156,7 @@ public final class DiagnosticsCollectService {
                 null,
                 List.of()
             ))
-            .toList();
+            .toList());
 
         DiagnosticsCollectSession session = new DiagnosticsCollectSession(
             DiagnosticsCollectSession.SCHEMA_VERSION,
@@ -163,13 +169,13 @@ public final class DiagnosticsCollectService {
             window.endEpochMs(),
             playerRef.getUuid().toString(),
             DiagnosticsCollectOriginSnapshot.capture(originWorldName, originTransform),
-            servers,
+            List.copyOf(sources),
             remotes.isEmpty() ? null : remotes.getFirst().serverId(),
             null,
-            0L,
-            0L,
-            0L,
-            0L,
+            localSource.estimatedBytes(),
+            localSource.downloadedBytes(),
+            localSource.estimatedEvents(),
+            localSource.downloadedEvents(),
             null
         );
         persistSession(session);
@@ -201,8 +207,8 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             playerRef.getUuid().toString(),
             DiagnosticsCollectOriginSnapshot.capture(originWorldName, originTransform),
-            session.servers(),
-            session.currentServerId(),
+            session.sources(),
+            session.currentSourceServerId(),
             null,
             session.estimatedTotalBytes(),
             session.downloadedBytes(),
@@ -244,8 +250,8 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             session.originPlayerUuid(),
             session.originSnapshot(),
-            session.servers(),
-            session.currentServerId(),
+            session.sources(),
+            session.currentSourceServerId(),
             null,
             session.estimatedTotalBytes(),
             session.downloadedBytes(),
@@ -275,8 +281,8 @@ public final class DiagnosticsCollectService {
                 session.windowEndEpochMs(),
                 session.originPlayerUuid(),
                 session.originSnapshot(),
-                session.servers(),
-                session.currentServerId(),
+                session.sources(),
+                session.currentSourceServerId(),
                 null,
                 session.estimatedTotalBytes(),
                 session.downloadedBytes(),
@@ -395,19 +401,22 @@ public final class DiagnosticsCollectService {
     }
 
     private void continuePlanning(@Nonnull PlayerRef playerRef, @Nonnull DiagnosticsCollectSession session) throws IOException, GeneralSecurityException {
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            Optional<DiagnosticsCollectManifest> manifest = sessionStore.loadManifest(session.sessionId(), server.remoteServerId());
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            if (source.sourceKind() == DiagnosticsCollectSourceKind.LOCAL) {
+                continue;
+            }
+            Optional<DiagnosticsCollectManifest> manifest = sessionStore.loadManifest(session.sessionId(), source.sourceKind(), source.sourceServerId());
             if (manifest.isPresent()) {
                 if (!manifest.get().complete()) {
-                    RemotePeer remote = findRemotePeer(server.remoteServerId())
-                        .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
+                    RemotePeer remote = findRemotePeer(source.sourceServerId())
+                        .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
                     sendManifestRequest(session, remote, manifest.get().nextEntryIndex(), playerRef);
                     return;
                 }
                 continue;
             }
-            RemotePeer remote = findRemotePeer(server.remoteServerId())
-                .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
+            RemotePeer remote = findRemotePeer(source.sourceServerId())
+                .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
             sendManifestRequest(session, remote, 0, playerRef);
             return;
         }
@@ -417,19 +426,22 @@ public final class DiagnosticsCollectService {
     }
 
     private void continuePlanning(@Nonnull PlayerSetupConnectEvent event, @Nonnull DiagnosticsCollectSession session) throws IOException, GeneralSecurityException {
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            Optional<DiagnosticsCollectManifest> manifest = sessionStore.loadManifest(session.sessionId(), server.remoteServerId());
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            if (source.sourceKind() == DiagnosticsCollectSourceKind.LOCAL) {
+                continue;
+            }
+            Optional<DiagnosticsCollectManifest> manifest = sessionStore.loadManifest(session.sessionId(), source.sourceKind(), source.sourceServerId());
             if (manifest.isPresent()) {
                 if (!manifest.get().complete()) {
-                    RemotePeer remote = findRemotePeer(server.remoteServerId())
-                        .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
+                    RemotePeer remote = findRemotePeer(source.sourceServerId())
+                        .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
                     sendManifestRequest(session, remote, manifest.get().nextEntryIndex(), event);
                     return;
                 }
                 continue;
             }
-            RemotePeer remote = findRemotePeer(server.remoteServerId())
-                .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
+            RemotePeer remote = findRemotePeer(source.sourceServerId())
+                .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
             sendManifestRequest(session, remote, 0, event);
             return;
         }
@@ -439,54 +451,218 @@ public final class DiagnosticsCollectService {
     }
 
     private void continueRunning(@Nonnull PlayerRef playerRef, @Nonnull DiagnosticsCollectSession session) throws IOException, GeneralSecurityException {
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            for (DiagnosticsCollectFileProgress file : server.files()) {
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            for (DiagnosticsCollectFileProgress file : source.files()) {
                 if (file.completed()) {
                     continue;
                 }
-                RemotePeer remote = findRemotePeer(server.remoteServerId())
-                    .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
-                sendChunkRequest(session, server, file, remote, playerRef);
+                if (source.sourceKind() == DiagnosticsCollectSourceKind.LOCAL) {
+                    importLocalSourceFile(playerRef, session, source, file);
+                    return;
+                }
+                RemotePeer remote = findRemotePeer(source.sourceServerId())
+                    .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
+                sendChunkRequest(session, source, file, remote, playerRef);
                 return;
             }
         }
-        DiagnosticsCollectSession completed = completeSession(session.sessionId());
+        DiagnosticsCollectSession completed = consolidateAndCompleteSession(session.sessionId());
         finalizePendingReturn(playerRef.getUuid(), completed == null ? session : completed, "Diagnostics collect completed successfully.", true);
     }
 
     private void continueRunning(@Nonnull PlayerSetupConnectEvent event, @Nonnull DiagnosticsCollectSession session) throws IOException, GeneralSecurityException {
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            for (DiagnosticsCollectFileProgress file : server.files()) {
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            for (DiagnosticsCollectFileProgress file : source.files()) {
                 if (file.completed()) {
                     continue;
                 }
-                DiagnosticsCollectServerProgress runningServer = server.status() == DiagnosticsCollectStatus.RUNNING && file.fileId().equals(server.currentFileId())
-                    ? server
-                    : new DiagnosticsCollectServerProgress(
-                        server.remoteServerId(),
-                        server.remoteConnectionAddress(),
+                if (source.sourceKind() == DiagnosticsCollectSourceKind.LOCAL) {
+                    importLocalSourceFile(event, session, source, file);
+                    return;
+                }
+                DiagnosticsCollectSourceProgress runningSource = source.status() == DiagnosticsCollectStatus.RUNNING && file.fileId().equals(source.currentFileId())
+                    ? source
+                    : new DiagnosticsCollectSourceProgress(
+                        source.sourceKind(),
+                        source.sourceServerId(),
+                        source.sourceConnectionAddress(),
                         DiagnosticsCollectStatus.RUNNING,
-                        server.estimatedBytes(),
-                        server.downloadedBytes(),
-                        server.estimatedEvents(),
-                        server.downloadedEvents(),
+                        source.estimatedBytes(),
+                        source.downloadedBytes(),
+                        source.estimatedEvents(),
+                        source.downloadedEvents(),
                         file.fileId(),
                         null,
-                        server.files()
+                        source.files()
                     );
-                DiagnosticsCollectSession updated = runningServer == server ? session : replaceServer(session, runningServer);
+                DiagnosticsCollectSession updated = runningSource == source ? session : replaceSource(session, runningSource);
                 if (updated != session) {
-                    updated = rewriteSessionRequest(updated, server.remoteServerId(), null, null);
+                    updated = rewriteSessionRequest(updated, source.sourceServerId(), null, null);
                     persistSession(updated);
                 }
-                RemotePeer remote = findRemotePeer(server.remoteServerId())
-                    .orElseThrow(() -> new IllegalStateException("Trusted server " + server.remoteConnectionAddress() + " is no longer available."));
-                sendChunkRequest(updated, runningServer, file, remote, event);
+                RemotePeer remote = findRemotePeer(source.sourceServerId())
+                    .orElseThrow(() -> new IllegalStateException("Trusted server " + source.sourceConnectionAddress() + " is no longer available."));
+                sendChunkRequest(updated, runningSource, file, remote, event);
                 return;
             }
         }
-        DiagnosticsCollectSession completed = completeSession(session.sessionId());
+        DiagnosticsCollectSession completed = consolidateAndCompleteSession(session.sessionId());
         finalizePendingReturn(event.getUuid(), completed == null ? session : completed, "Diagnostics collect completed successfully.", true);
+    }
+
+    @Nonnull
+    private DiagnosticsCollectSourceProgress planLocalSource(
+        @Nonnull String sessionId,
+        long windowStartEpochMs,
+        long windowEndEpochMs
+    ) {
+        DiagnosticsCollectManifest manifest = new DiagnosticsCollectManifest(
+            DiagnosticsCollectSourceKind.LOCAL,
+            localServerId,
+            localConnectionAddress(),
+            windowStartEpochMs,
+            windowEndEpochMs,
+            buildManifestEntries(windowStartEpochMs, windowEndEpochMs),
+            0,
+            true,
+            System.currentTimeMillis()
+        );
+        sessionStore.saveManifest(sessionId, DiagnosticsCollectSourceKind.LOCAL, localServerId, manifest);
+        DiagnosticsCollectSourceProgress localSource = progressFromManifest(
+            new DiagnosticsCollectSourceProgress(
+                DiagnosticsCollectSourceKind.LOCAL,
+                localServerId,
+                localConnectionAddress(),
+                DiagnosticsCollectStatus.READY,
+                0L,
+                0L,
+                0L,
+                0L,
+                null,
+                null,
+                List.of()
+            ),
+            manifest
+        );
+        sessionStore.saveSourceProgress(sessionId, localSource);
+        return localSource;
+    }
+
+    private void importLocalSourceFile(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull DiagnosticsCollectSession session,
+        @Nonnull DiagnosticsCollectSourceProgress source,
+        @Nonnull DiagnosticsCollectFileProgress file
+    ) throws IOException, GeneralSecurityException {
+        DiagnosticsCollectSession updated = importLocalSourceFileInternal(session, source, file);
+        continueRunning(playerRef, updated);
+    }
+
+    private void importLocalSourceFile(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull DiagnosticsCollectSession session,
+        @Nonnull DiagnosticsCollectSourceProgress source,
+        @Nonnull DiagnosticsCollectFileProgress file
+    ) throws IOException, GeneralSecurityException {
+        DiagnosticsCollectSession updated = importLocalSourceFileInternal(session, source, file);
+        continueRunning(event, updated);
+    }
+
+    @Nonnull
+    private DiagnosticsCollectSession importLocalSourceFileInternal(
+        @Nonnull DiagnosticsCollectSession session,
+        @Nonnull DiagnosticsCollectSourceProgress source,
+        @Nonnull DiagnosticsCollectFileProgress file
+    ) throws IOException {
+        SegmentWindowLines windowLines = loadWindowLines(file.fileId(), file.snapshotLineCount());
+        validateLocalSnapshotAgainstProgress(file, windowLines);
+        int relativeStart = Math.toIntExact(file.nextLineInclusive() - file.windowStartLineInclusive());
+        int relativeEnd = Math.toIntExact(file.windowEndLineExclusive() - file.windowStartLineInclusive());
+        if (relativeStart < 0 || relativeStart > relativeEnd || relativeEnd > windowLines.lines().size()) {
+            throw new IllegalStateException("The local diagnostics collect boundaries are outside the requested file window.");
+        }
+
+        StringBuilder ndjson = new StringBuilder();
+        for (int index = relativeStart; index < relativeEnd; index++) {
+            ndjson.append(windowLines.lines().get(index)).append('\n');
+        }
+
+        Path rawPart = sessionStore.rawPartFile(session.sessionId(), source.sourceKind(), source.sourceServerId(), file.fileId());
+        Files.writeString(rawPart, ndjson.toString(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+
+        DiagnosticsCollectFileProgress updatedFile = file.withNextLineInclusive(file.windowEndLineExclusive(), file.lastChunkIndex());
+        DiagnosticsCollectSourceProgress updatedSource = replaceFile(source, updatedFile);
+        boolean sourceCompleted = updatedSource.files().stream().allMatch(DiagnosticsCollectFileProgress::completed);
+        updatedSource = new DiagnosticsCollectSourceProgress(
+            updatedSource.sourceKind(),
+            updatedSource.sourceServerId(),
+            updatedSource.sourceConnectionAddress(),
+            sourceCompleted ? DiagnosticsCollectStatus.COMPLETED : DiagnosticsCollectStatus.RUNNING,
+            updatedSource.estimatedBytes(),
+            updatedSource.downloadedBytes() + ndjson.toString().getBytes(StandardCharsets.UTF_8).length,
+            updatedSource.estimatedEvents(),
+            updatedSource.downloadedEvents() + Math.max(0L, file.windowEndLineExclusive() - file.nextLineInclusive()),
+            sourceCompleted ? null : updatedFile.fileId(),
+            null,
+            updatedSource.files()
+        );
+        DiagnosticsCollectSession updated = replaceSource(session, updatedSource);
+        updated = rewriteSessionRequest(updated, source.sourceServerId(), null, null);
+        updated = recomputeSessionTotals(updated);
+        persistSession(updated);
+        if (updatedFile.completed()) {
+            sessionStore.finalizeRawFile(session.sessionId(), source.sourceKind(), source.sourceServerId(), file.fileId());
+        }
+        return updated;
+    }
+
+    private void validateLocalSnapshotAgainstProgress(
+        @Nonnull DiagnosticsCollectFileProgress file,
+        @Nonnull SegmentWindowLines windowLines
+    ) {
+        DiagnosticsCollectChunkRequestPayload localEquivalent = new DiagnosticsCollectChunkRequestPayload(
+            "local",
+            "local",
+            file.fileId(),
+            file.closed(),
+            file.expectedFileSha256(),
+            file.snapshotLineCount(),
+            file.snapshotByteSize(),
+            file.snapshotEndedAtEpochMs(),
+            file.snapshotPrefixSha256(),
+            file.windowStartLineInclusive(),
+            file.windowEndLineExclusive(),
+            file.nextLineInclusive()
+        );
+        validateChunkRequestAgainstSnapshot(localEquivalent, windowLines);
+    }
+
+    @Nullable
+    private DiagnosticsCollectSession consolidateAndCompleteSession(@Nonnull String sessionId) {
+        DiagnosticsCollectSession session = sessionStore.loadSession(sessionId).orElse(null);
+        if (session == null) {
+            sessionStore.clearActiveLock();
+            return null;
+        }
+
+        DiagnosticsCollectSession ready = rewriteSessionStatus(session, DiagnosticsCollectStatus.READY_TO_CONSOLIDATE, null);
+        persistSession(ready);
+        DiagnosticsCollectSession consolidating = rewriteSessionStatus(ready, DiagnosticsCollectStatus.CONSOLIDATING, null);
+        persistSession(consolidating);
+        try {
+            DiagnosticsCollectConsolidationResult result = consolidator.consolidate(consolidating, sessionStore);
+            sessionStore.writeOutputText(consolidating.sessionId(), "consolidated-events.jsonl", result.consolidatedNdjson());
+            sessionStore.writeOutputJson(
+                consolidating.sessionId(),
+                "consolidated-index.json",
+                consolidator.buildIndex(consolidating, result)
+            );
+        } catch (IOException | RuntimeException exception) {
+            failSession(sessionId, "Diagnostics collect failed while consolidating: " + safeMessage(exception));
+            return sessionStore.loadSession(sessionId).orElse(null);
+        }
+
+        return completeSession(sessionId);
     }
 
     private void sendManifestRequest(
@@ -543,7 +719,7 @@ public final class DiagnosticsCollectService {
 
     private void sendChunkRequest(
         @Nonnull DiagnosticsCollectSession session,
-        @Nonnull DiagnosticsCollectServerProgress server,
+        @Nonnull DiagnosticsCollectSourceProgress source,
         @Nonnull DiagnosticsCollectFileProgress file,
         @Nonnull RemotePeer remote,
         @Nonnull PlayerRef playerRef
@@ -563,7 +739,7 @@ public final class DiagnosticsCollectService {
             file.windowEndLineExclusive(),
             file.nextLineInclusive()
         );
-        DiagnosticsCollectSession updated = rewriteSessionRequest(session, server.remoteServerId(), requestId, null);
+        DiagnosticsCollectSession updated = rewriteSessionRequest(session, source.sourceServerId(), requestId, null);
         persistSession(updated);
         secureReferralService.referPlayer(
             playerRef,
@@ -577,7 +753,7 @@ public final class DiagnosticsCollectService {
 
     private void sendChunkRequest(
         @Nonnull DiagnosticsCollectSession session,
-        @Nonnull DiagnosticsCollectServerProgress server,
+        @Nonnull DiagnosticsCollectSourceProgress source,
         @Nonnull DiagnosticsCollectFileProgress file,
         @Nonnull RemotePeer remote,
         @Nonnull PlayerSetupConnectEvent event
@@ -597,7 +773,7 @@ public final class DiagnosticsCollectService {
             file.windowEndLineExclusive(),
             file.nextLineInclusive()
         );
-        DiagnosticsCollectSession updated = rewriteSessionRequest(session, server.remoteServerId(), requestId, null);
+        DiagnosticsCollectSession updated = rewriteSessionRequest(session, source.sourceServerId(), requestId, null);
         persistSession(updated);
         byte[] encoded = secureReferralService.createPayload(
             event.getUuid(),
@@ -689,14 +865,15 @@ public final class DiagnosticsCollectService {
             return;
         }
 
-        DiagnosticsCollectServerProgress server = findServer(session, payload.sourceServerId());
-        if (server == null) {
+        DiagnosticsCollectSourceProgress source = findSource(session, payload.sourceServerId());
+        if (source == null) {
             return;
         }
 
-        DiagnosticsCollectManifest existing = sessionStore.loadManifest(session.sessionId(), server.remoteServerId())
+        DiagnosticsCollectManifest existing = sessionStore.loadManifest(session.sessionId(), source.sourceKind(), source.sourceServerId())
             .orElse(new DiagnosticsCollectManifest(
-                server.remoteServerId(),
+                source.sourceKind(),
+                source.sourceServerId(),
                 payload.sourceConnectionAddress(),
                 session.windowStartEpochMs(),
                 session.windowEndEpochMs(),
@@ -708,7 +885,8 @@ public final class DiagnosticsCollectService {
         List<DiagnosticsCollectManifestEntry> combinedEntries = new ArrayList<>(existing.entries());
         combinedEntries.addAll(payload.entries());
         DiagnosticsCollectManifest manifest = new DiagnosticsCollectManifest(
-            existing.remoteServerId(),
+            existing.sourceKind(),
+            existing.sourceServerId(),
             payload.sourceConnectionAddress(),
             existing.windowStartEpochMs(),
             existing.windowEndEpochMs(),
@@ -717,10 +895,10 @@ public final class DiagnosticsCollectService {
             !payload.hasMoreEntries(),
             System.currentTimeMillis()
         );
-        sessionStore.saveManifest(session.sessionId(), server.remoteServerId(), manifest);
+        sessionStore.saveManifest(session.sessionId(), source.sourceKind(), source.sourceServerId(), manifest);
 
         if (payload.hasMoreEntries()) {
-            DiagnosticsCollectSession updated = rewriteSessionRequest(session, server.remoteServerId(), null, null);
+            DiagnosticsCollectSession updated = rewriteSessionRequest(session, source.sourceServerId(), null, null);
             persistSession(updated);
             try {
                 continuePlanning(event, updated);
@@ -732,8 +910,8 @@ public final class DiagnosticsCollectService {
             return;
         }
 
-        DiagnosticsCollectServerProgress updatedServer = progressFromManifest(server, manifest);
-        DiagnosticsCollectSession updated = replaceServer(session, updatedServer);
+        DiagnosticsCollectSourceProgress updatedSource = progressFromManifest(source, manifest);
+        DiagnosticsCollectSession updated = replaceSource(session, updatedSource);
         updated = rewriteSessionRequest(updated, null, null, null);
         updated = recomputeSessionTotals(updated);
         if (updated.estimatedTotalBytes() > MAX_SESSION_BYTES || updated.estimatedTotalEvents() > MAX_SESSION_EVENTS) {
@@ -778,9 +956,9 @@ public final class DiagnosticsCollectService {
             return;
         }
 
-        DiagnosticsCollectServerProgress server = findServer(session, payload.sourceServerId());
-        DiagnosticsCollectFileProgress file = server == null ? null : findFile(server, payload.fileId());
-        if (server == null || file == null) {
+        DiagnosticsCollectSourceProgress source = findSource(session, payload.sourceServerId());
+        DiagnosticsCollectFileProgress file = source == null ? null : findFile(source, payload.fileId());
+        if (source == null || file == null) {
             return;
         }
         if (payload.startLineInclusive() != file.nextLineInclusive()) {
@@ -799,26 +977,27 @@ public final class DiagnosticsCollectService {
                 throw new IllegalStateException("The diagnostics collect chunk hash did not match the transmitted block.");
             }
 
-            Path rawPart = sessionStore.rawPartFile(session.sessionId(), server.remoteServerId(), file.fileId());
+            Path rawPart = sessionStore.rawPartFile(session.sessionId(), source.sourceKind(), source.sourceServerId(), file.fileId());
             Files.writeString(rawPart, payload.ndjsonBlock(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 
             DiagnosticsCollectFileProgress updatedFile = file.withNextLineInclusive(payload.endLineExclusive(), payload.chunkIndex());
-            DiagnosticsCollectServerProgress updatedServer = replaceFile(server, updatedFile);
-            boolean serverCompleted = updatedServer.files().stream().allMatch(DiagnosticsCollectFileProgress::completed);
-            updatedServer = new DiagnosticsCollectServerProgress(
-                updatedServer.remoteServerId(),
-                updatedServer.remoteConnectionAddress(),
-                serverCompleted ? DiagnosticsCollectStatus.COMPLETED : DiagnosticsCollectStatus.RUNNING,
-                updatedServer.estimatedBytes(),
-                updatedServer.downloadedBytes() + payload.chunkRawBytes(),
-                updatedServer.estimatedEvents(),
-                updatedServer.downloadedEvents() + payload.chunkEventCount(),
-                serverCompleted ? null : updatedFile.fileId(),
+            DiagnosticsCollectSourceProgress updatedSource = replaceFile(source, updatedFile);
+            boolean sourceCompleted = updatedSource.files().stream().allMatch(DiagnosticsCollectFileProgress::completed);
+            updatedSource = new DiagnosticsCollectSourceProgress(
+                updatedSource.sourceKind(),
+                updatedSource.sourceServerId(),
+                updatedSource.sourceConnectionAddress(),
+                sourceCompleted ? DiagnosticsCollectStatus.COMPLETED : DiagnosticsCollectStatus.RUNNING,
+                updatedSource.estimatedBytes(),
+                updatedSource.downloadedBytes() + payload.chunkRawBytes(),
+                updatedSource.estimatedEvents(),
+                updatedSource.downloadedEvents() + payload.chunkEventCount(),
+                sourceCompleted ? null : updatedFile.fileId(),
                 null,
-                updatedServer.files()
+                updatedSource.files()
             );
-            DiagnosticsCollectSession updated = replaceServer(session, updatedServer);
-            updated = rewriteSessionRequest(updated, server.remoteServerId(), null, null);
+            DiagnosticsCollectSession updated = replaceSource(session, updatedSource);
+            updated = rewriteSessionRequest(updated, source.sourceServerId(), null, null);
             updated = recomputeSessionTotals(updated);
             // Write safety order for imported raw files:
             // 1. validate the chunk and append only to .part
@@ -826,7 +1005,7 @@ public final class DiagnosticsCollectService {
             // 3. rename .part -> .jsonl only when that file's requested window is fully imported
             persistSession(updated);
             if (updatedFile.completed()) {
-                sessionStore.finalizeRawFile(session.sessionId(), server.remoteServerId(), file.fileId());
+                sessionStore.finalizeRawFile(session.sessionId(), source.sourceKind(), source.sourceServerId(), file.fileId());
             }
             try {
                 continueRunning(event, updated);
@@ -837,7 +1016,7 @@ public final class DiagnosticsCollectService {
             }
         } catch (IOException | IllegalStateException exception) {
             String error = "Diagnostics collect failed while importing " + payload.fileId() + ": " + safeMessage(exception);
-            markFileFailed(session, server, file, error);
+            markFileFailed(session, source, file, error);
             finalizePendingReturn(event.getUuid(), session, error, true);
         }
     }
@@ -1102,25 +1281,26 @@ public final class DiagnosticsCollectService {
 
     private void markFileFailed(
         @Nonnull DiagnosticsCollectSession session,
-        @Nonnull DiagnosticsCollectServerProgress server,
+        @Nonnull DiagnosticsCollectSourceProgress source,
         @Nonnull DiagnosticsCollectFileProgress file,
         @Nonnull String error
     ) {
         DiagnosticsCollectFileProgress updatedFile = file.withError(error, file.retryCount() + 1);
-        DiagnosticsCollectServerProgress updatedServer = replaceFile(server, updatedFile);
-        updatedServer = new DiagnosticsCollectServerProgress(
-            updatedServer.remoteServerId(),
-            updatedServer.remoteConnectionAddress(),
+        DiagnosticsCollectSourceProgress updatedSource = replaceFile(source, updatedFile);
+        updatedSource = new DiagnosticsCollectSourceProgress(
+            updatedSource.sourceKind(),
+            updatedSource.sourceServerId(),
+            updatedSource.sourceConnectionAddress(),
             DiagnosticsCollectStatus.FAILED,
-            updatedServer.estimatedBytes(),
-            updatedServer.downloadedBytes(),
-            updatedServer.estimatedEvents(),
-            updatedServer.downloadedEvents(),
-            updatedServer.currentFileId(),
+            updatedSource.estimatedBytes(),
+            updatedSource.downloadedBytes(),
+            updatedSource.estimatedEvents(),
+            updatedSource.downloadedEvents(),
+            updatedSource.currentFileId(),
             error,
-            updatedServer.files()
+            updatedSource.files()
         );
-        DiagnosticsCollectSession updated = replaceServer(session, updatedServer);
+        DiagnosticsCollectSession updated = replaceSource(session, updatedSource);
         updated = rewriteSessionStatus(updated, DiagnosticsCollectStatus.FAILED, error);
         persistSession(updated);
         sessionStore.clearActiveLock();
@@ -1144,22 +1324,23 @@ public final class DiagnosticsCollectService {
             return;
         }
         DiagnosticsCollectSession updated = session;
-        if (session.currentServerId() != null) {
-            DiagnosticsCollectServerProgress currentServer = findServer(session, session.currentServerId());
-            if (currentServer != null) {
-                DiagnosticsCollectServerProgress failedServer = new DiagnosticsCollectServerProgress(
-                    currentServer.remoteServerId(),
-                    currentServer.remoteConnectionAddress(),
+        if (session.currentSourceServerId() != null) {
+            DiagnosticsCollectSourceProgress currentSource = findSource(session, session.currentSourceServerId());
+            if (currentSource != null) {
+                DiagnosticsCollectSourceProgress failedSource = new DiagnosticsCollectSourceProgress(
+                    currentSource.sourceKind(),
+                    currentSource.sourceServerId(),
+                    currentSource.sourceConnectionAddress(),
                     DiagnosticsCollectStatus.FAILED,
-                    currentServer.estimatedBytes(),
-                    currentServer.downloadedBytes(),
-                    currentServer.estimatedEvents(),
-                    currentServer.downloadedEvents(),
-                    currentServer.currentFileId(),
+                    currentSource.estimatedBytes(),
+                    currentSource.downloadedBytes(),
+                    currentSource.estimatedEvents(),
+                    currentSource.downloadedEvents(),
+                    currentSource.currentFileId(),
                     error,
-                    currentServer.files()
+                    currentSource.files()
                 );
-                updated = replaceServer(session, failedServer);
+                updated = replaceSource(session, failedSource);
             }
         }
         DiagnosticsCollectSession failed = rewriteSessionStatus(updated, DiagnosticsCollectStatus.FAILED, error);
@@ -1174,18 +1355,19 @@ public final class DiagnosticsCollectService {
             sessionStore.clearActiveLock();
             return null;
         }
-        List<DiagnosticsCollectServerProgress> completedServers = session.servers().stream()
-            .map(server -> new DiagnosticsCollectServerProgress(
-                server.remoteServerId(),
-                server.remoteConnectionAddress(),
+        List<DiagnosticsCollectSourceProgress> completedSources = session.sources().stream()
+            .map(source -> new DiagnosticsCollectSourceProgress(
+                source.sourceKind(),
+                source.sourceServerId(),
+                source.sourceConnectionAddress(),
                 DiagnosticsCollectStatus.COMPLETED,
-                server.estimatedBytes(),
-                server.downloadedBytes(),
-                server.estimatedEvents(),
-                server.downloadedEvents(),
+                source.estimatedBytes(),
+                source.downloadedBytes(),
+                source.estimatedEvents(),
+                source.downloadedEvents(),
                 null,
                 null,
-                server.files()
+                source.files()
             ))
             .toList();
         DiagnosticsCollectSession completed = new DiagnosticsCollectSession(
@@ -1199,7 +1381,7 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             session.originPlayerUuid(),
             session.originSnapshot(),
-            completedServers,
+            completedSources,
             null,
             null,
             session.estimatedTotalBytes(),
@@ -1230,8 +1412,8 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             session.originPlayerUuid(),
             session.originSnapshot(),
-            session.servers(),
-            session.currentServerId(),
+            session.sources(),
+            session.currentSourceServerId(),
             null,
             session.estimatedTotalBytes(),
             session.downloadedBytes(),
@@ -1244,7 +1426,7 @@ public final class DiagnosticsCollectService {
     @Nonnull
     private DiagnosticsCollectSession rewriteSessionRequest(
         @Nonnull DiagnosticsCollectSession session,
-        @Nullable String currentServerId,
+        @Nullable String currentSourceServerId,
         @Nullable String currentRequestId,
         @Nullable String lastError
     ) {
@@ -1259,8 +1441,8 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             session.originPlayerUuid(),
             session.originSnapshot(),
-            session.servers(),
-            currentServerId,
+            session.sources(),
+            currentSourceServerId,
             currentRequestId,
             session.estimatedTotalBytes(),
             session.downloadedBytes(),
@@ -1276,11 +1458,11 @@ public final class DiagnosticsCollectService {
         long downloadedBytes = 0L;
         long estimatedEvents = 0L;
         long downloadedEvents = 0L;
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            estimatedBytes += server.estimatedBytes();
-            downloadedBytes += server.downloadedBytes();
-            estimatedEvents += server.estimatedEvents();
-            downloadedEvents += server.downloadedEvents();
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            estimatedBytes += source.estimatedBytes();
+            downloadedBytes += source.downloadedBytes();
+            estimatedEvents += source.estimatedEvents();
+            downloadedEvents += source.downloadedEvents();
         }
         return new DiagnosticsCollectSession(
             session.schemaVersion(),
@@ -1293,8 +1475,8 @@ public final class DiagnosticsCollectService {
             session.windowEndEpochMs(),
             session.originPlayerUuid(),
             session.originSnapshot(),
-            session.servers(),
-            session.currentServerId(),
+            session.sources(),
+            session.currentSourceServerId(),
             session.currentRequestId(),
             estimatedBytes,
             downloadedBytes,
@@ -1305,14 +1487,14 @@ public final class DiagnosticsCollectService {
     }
 
     @Nonnull
-    private DiagnosticsCollectSession replaceServer(
+    private DiagnosticsCollectSession replaceSource(
         @Nonnull DiagnosticsCollectSession session,
-        @Nonnull DiagnosticsCollectServerProgress updatedServer
+        @Nonnull DiagnosticsCollectSourceProgress updatedSource
     ) {
-        List<DiagnosticsCollectServerProgress> servers = new ArrayList<>(session.servers());
-        for (int index = 0; index < servers.size(); index++) {
-            if (servers.get(index).remoteServerId().equals(updatedServer.remoteServerId())) {
-                servers.set(index, updatedServer);
+        List<DiagnosticsCollectSourceProgress> sources = new ArrayList<>(session.sources());
+        for (int index = 0; index < sources.size(); index++) {
+            if (sources.get(index).sourceServerId().equals(updatedSource.sourceServerId())) {
+                sources.set(index, updatedSource);
                 DiagnosticsCollectSession updated = new DiagnosticsCollectSession(
                     session.schemaVersion(),
                     session.sessionId(),
@@ -1324,8 +1506,8 @@ public final class DiagnosticsCollectService {
                     session.windowEndEpochMs(),
                     session.originPlayerUuid(),
                     session.originSnapshot(),
-                    List.copyOf(servers),
-                    session.currentServerId(),
+                    List.copyOf(sources),
+                    session.currentSourceServerId(),
                     session.currentRequestId(),
                     session.estimatedTotalBytes(),
                     session.downloadedBytes(),
@@ -1333,32 +1515,33 @@ public final class DiagnosticsCollectService {
                     session.downloadedEvents(),
                     session.lastError()
                 );
-                sessionStore.saveServerProgress(updated.sessionId(), updatedServer);
+                sessionStore.saveSourceProgress(updated.sessionId(), updatedSource);
                 return updated;
             }
         }
-        throw new IllegalStateException("Could not find diagnostics collect server progress for " + updatedServer.remoteServerId() + ".");
+        throw new IllegalStateException("Could not find diagnostics collect source progress for " + updatedSource.sourceServerId() + ".");
     }
 
     @Nonnull
-    private DiagnosticsCollectServerProgress replaceFile(
-        @Nonnull DiagnosticsCollectServerProgress server,
+    private DiagnosticsCollectSourceProgress replaceFile(
+        @Nonnull DiagnosticsCollectSourceProgress source,
         @Nonnull DiagnosticsCollectFileProgress updatedFile
     ) {
-        List<DiagnosticsCollectFileProgress> files = new ArrayList<>(server.files());
+        List<DiagnosticsCollectFileProgress> files = new ArrayList<>(source.files());
         for (int index = 0; index < files.size(); index++) {
             if (files.get(index).fileId().equals(updatedFile.fileId())) {
                 files.set(index, updatedFile);
-                return new DiagnosticsCollectServerProgress(
-                    server.remoteServerId(),
-                    server.remoteConnectionAddress(),
-                    server.status(),
-                    server.estimatedBytes(),
-                    server.downloadedBytes(),
-                    server.estimatedEvents(),
-                    server.downloadedEvents(),
+                return new DiagnosticsCollectSourceProgress(
+                    source.sourceKind(),
+                    source.sourceServerId(),
+                    source.sourceConnectionAddress(),
+                    source.status(),
+                    source.estimatedBytes(),
+                    source.downloadedBytes(),
+                    source.estimatedEvents(),
+                    source.downloadedEvents(),
                     updatedFile.fileId(),
-                    server.lastError(),
+                    source.lastError(),
                     List.copyOf(files)
                 );
             }
@@ -1367,8 +1550,8 @@ public final class DiagnosticsCollectService {
     }
 
     @Nonnull
-    private DiagnosticsCollectServerProgress progressFromManifest(
-        @Nonnull DiagnosticsCollectServerProgress server,
+    private DiagnosticsCollectSourceProgress progressFromManifest(
+        @Nonnull DiagnosticsCollectSourceProgress source,
         @Nonnull DiagnosticsCollectManifest manifest
     ) {
         List<DiagnosticsCollectFileProgress> files = manifest.entries().stream()
@@ -1396,14 +1579,15 @@ public final class DiagnosticsCollectService {
             .toList();
         long estimatedBytes = manifest.entries().stream().mapToLong(DiagnosticsCollectManifestEntry::windowByteCount).sum();
         long estimatedEvents = manifest.entries().stream().mapToLong(DiagnosticsCollectManifestEntry::windowEventCount).sum();
-        return new DiagnosticsCollectServerProgress(
-            server.remoteServerId(),
-            manifest.remoteConnectionAddress(),
-            DiagnosticsCollectStatus.READY,
+        return new DiagnosticsCollectSourceProgress(
+            source.sourceKind(),
+            source.sourceServerId(),
+            manifest.sourceConnectionAddress(),
+            files.isEmpty() ? DiagnosticsCollectStatus.COMPLETED : DiagnosticsCollectStatus.READY,
             estimatedBytes,
-            server.downloadedBytes(),
+            source.downloadedBytes(),
             estimatedEvents,
-            server.downloadedEvents(),
+            source.downloadedEvents(),
             files.isEmpty() ? null : files.getFirst().fileId(),
             null,
             files
@@ -1412,8 +1596,8 @@ public final class DiagnosticsCollectService {
 
     private void persistSession(@Nonnull DiagnosticsCollectSession session) {
         sessionStore.saveSession(session);
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            sessionStore.saveServerProgress(session.sessionId(), server);
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            sessionStore.saveSourceProgress(session.sessionId(), source);
         }
     }
 
@@ -1439,22 +1623,46 @@ public final class DiagnosticsCollectService {
     }
 
     @Nonnull
-    private List<CollectServerRow> buildRemoteRows(@Nullable DiagnosticsCollectSession session) {
-        LinkedHashMap<String, CollectServerRow> rows = new LinkedHashMap<>();
+    private List<CollectSourceRow> buildSourceRows(@Nullable DiagnosticsCollectSession session) {
+        LinkedHashMap<String, CollectSourceRow> rows = new LinkedHashMap<>();
+        rows.put(localServerId, new CollectSourceRow(
+            DiagnosticsCollectSourceKind.LOCAL,
+            localServerId,
+            localConnectionAddress().isBlank() ? "Current Server (local journal)" : localConnectionAddress() + " (local journal)",
+            DiagnosticsCollectStatus.PENDING,
+            0L,
+            0L,
+            0L,
+            0L,
+            null
+        ));
         for (RemotePeer remote : trustedRemotePeers()) {
-            rows.put(remote.serverId(), new CollectServerRow(remote.serverId(), remote.connectionAddress(), DiagnosticsCollectStatus.PENDING, 0L, 0L, 0L, 0L, null));
+            rows.put(remote.serverId(), new CollectSourceRow(
+                DiagnosticsCollectSourceKind.REMOTE,
+                remote.serverId(),
+                remote.connectionAddress(),
+                DiagnosticsCollectStatus.PENDING,
+                0L,
+                0L,
+                0L,
+                0L,
+                null
+            ));
         }
         if (session != null) {
-            for (DiagnosticsCollectServerProgress server : session.servers()) {
-                rows.put(server.remoteServerId(), new CollectServerRow(
-                    server.remoteServerId(),
-                    server.remoteConnectionAddress(),
-                    server.status(),
-                    server.estimatedBytes(),
-                    server.downloadedBytes(),
-                    server.estimatedEvents(),
-                    server.downloadedEvents(),
-                    server.lastError()
+            for (DiagnosticsCollectSourceProgress source : session.sources()) {
+                rows.put(source.sourceServerId(), new CollectSourceRow(
+                    source.sourceKind(),
+                    source.sourceServerId(),
+                    source.sourceKind() == DiagnosticsCollectSourceKind.LOCAL
+                        ? (source.sourceConnectionAddress().isBlank() ? "Current Server (local journal)" : source.sourceConnectionAddress() + " (local journal)")
+                        : source.sourceConnectionAddress(),
+                    source.status(),
+                    source.estimatedBytes(),
+                    source.downloadedBytes(),
+                    source.estimatedEvents(),
+                    source.downloadedEvents(),
+                    source.lastError()
                 ));
             }
         }
@@ -1491,18 +1699,18 @@ public final class DiagnosticsCollectService {
     }
 
     @Nullable
-    private DiagnosticsCollectServerProgress findServer(@Nonnull DiagnosticsCollectSession session, @Nonnull String remoteServerId) {
-        for (DiagnosticsCollectServerProgress server : session.servers()) {
-            if (server.remoteServerId().equals(remoteServerId)) {
-                return server;
+    private DiagnosticsCollectSourceProgress findSource(@Nonnull DiagnosticsCollectSession session, @Nonnull String sourceServerId) {
+        for (DiagnosticsCollectSourceProgress source : session.sources()) {
+            if (source.sourceServerId().equals(sourceServerId)) {
+                return source;
             }
         }
         return null;
     }
 
     @Nullable
-    private DiagnosticsCollectFileProgress findFile(@Nonnull DiagnosticsCollectServerProgress server, @Nonnull String fileId) {
-        for (DiagnosticsCollectFileProgress file : server.files()) {
+    private DiagnosticsCollectFileProgress findFile(@Nonnull DiagnosticsCollectSourceProgress source, @Nonnull String fileId) {
+        for (DiagnosticsCollectFileProgress file : source.files()) {
             if (file.fileId().equals(fileId)) {
                 return file;
             }
@@ -1612,13 +1820,14 @@ public final class DiagnosticsCollectService {
         @Nullable DiagnosticsCollectSession session,
         @Nullable DiagnosticsCollectActiveLock activeLock,
         boolean staleLock,
-        @Nonnull List<CollectServerRow> servers
+        @Nonnull List<CollectSourceRow> sources
     ) {
     }
 
-    public record CollectServerRow(
-        @Nonnull String remoteServerId,
-        @Nonnull String remoteConnectionAddress,
+    public record CollectSourceRow(
+        @Nonnull DiagnosticsCollectSourceKind sourceKind,
+        @Nonnull String sourceServerId,
+        @Nonnull String sourceConnectionAddress,
         @Nonnull DiagnosticsCollectStatus status,
         long estimatedBytes,
         long downloadedBytes,
