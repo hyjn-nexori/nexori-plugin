@@ -29,6 +29,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetRemoveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
@@ -97,6 +98,7 @@ public class NexoriPlugin extends JavaPlugin {
     private TargetSetupDraftService targetSetupDraftService;
     private ServerIdentity localIdentity;
     private DiagnosticsService diagnosticsService;
+    private DiagnosticsCollectService diagnosticsCollectService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -167,6 +169,13 @@ public class NexoriPlugin extends JavaPlugin {
                 this.trustBundleStore,
                 this.diagnosticsService
             );
+            this.diagnosticsCollectService = new DiagnosticsCollectService(
+                this.getLogger(),
+                this.getDataDirectory(),
+                this.localIdentity.serverId(),
+                this.trustBundleStore,
+                this.secureReferralService
+            );
             this.inventoryTransferService = new InventoryTransferService(
                 this.getLogger(),
                 new InventoryTransferBackupStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-backups.json")),
@@ -228,6 +237,11 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.serverPolicySyncService.fetchRequestHandler());
             this.secureReferralService.registerHandler(this.serverPolicySyncService.applyRequestHandler());
             this.secureReferralService.registerHandler(this.serverPolicySyncService.responseHandler());
+            this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestRequestHandler());
+            this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestResponseHandler());
+            this.secureReferralService.registerHandler(this.diagnosticsCollectService.chunkRequestHandler());
+            this.secureReferralService.registerHandler(this.diagnosticsCollectService.chunkResponseHandler());
+            this.secureReferralService.registerHandler(this.diagnosticsCollectService.errorHandler());
             this.portalInteractionService.registerPageSupplier();
 
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
@@ -258,6 +272,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
 
@@ -356,5 +371,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiagnosticsService getDiagnosticsService() {
         return diagnosticsService;
+    }
+
+    public DiagnosticsCollectService getDiagnosticsCollectService() {
+        return diagnosticsCollectService;
     }
 }

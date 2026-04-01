@@ -2,6 +2,8 @@ package io.github.hyjn.nexori.plugin.secure;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import javax.annotation.Nonnull;
 import java.io.ByteArrayInputStream;
@@ -47,6 +49,29 @@ public final class SecureReferralPayloadCodec {
         byte[] json = gunzip(compressed);
         SecureReferralEnvelope envelope = GSON.fromJson(new String(json, StandardCharsets.UTF_8), SecureReferralEnvelope.class);
         return Optional.ofNullable(envelope);
+    }
+
+    @Nonnull
+    public Optional<String> tryPeekPayloadType(byte[] payloadBytes) {
+        try {
+            if (payloadBytes == null || payloadBytes.length <= MAGIC.length) {
+                return Optional.empty();
+            }
+            for (int i = 0; i < MAGIC.length; i++) {
+                if (payloadBytes[i] != MAGIC[i]) {
+                    return Optional.empty();
+                }
+            }
+            byte[] compressed = Arrays.copyOfRange(payloadBytes, MAGIC.length, payloadBytes.length);
+            byte[] json = gunzip(compressed);
+            JsonObject object = JsonParser.parseString(new String(json, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (object.has("payloadType") && !object.get("payloadType").isJsonNull()) {
+                return Optional.ofNullable(object.get("payloadType").getAsString());
+            }
+            return Optional.empty();
+        } catch (IOException | RuntimeException exception) {
+            return Optional.empty();
+        }
     }
 
     private static byte[] gzip(@Nonnull byte[] raw) throws IOException {

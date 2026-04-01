@@ -15,6 +15,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.diagnostics.protocol.DiagnosticsProtocol;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 
@@ -125,19 +126,22 @@ public final class SecureReferralService {
             envelope = decoded.get();
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to decode Nexori secure referral payload.");
-            diagnosticsService.record(
-                DiagnosticsCategory.SECURITY,
-                DiagnosticsAction.SECURITY_REFERRAL_DECODE,
-                DiagnosticsOutcome.DENIED,
-                DiagnosticsReasonClass.SECURITY,
-                DiagnosticsReasonCode.REFERRAL_DECODE_FAILED,
-                "This Nexori referral payload could not be decoded.",
-                diagnosticsService.newOperationId("security"),
-                diagnostics -> diagnostics
-                    .payloadType("unknown")
-                    .remoteConnectionAddress(event.getReferralSource() == null || event.getReferralSource().host == null ? "" : event.getReferralSource().host + ":" + event.getReferralSource().port)
-                    .addPreview("rawLengthBytes", Integer.toString(event.getReferralData() == null ? 0 : event.getReferralData().length))
-            );
+            String payloadType = codec.tryPeekPayloadType(event.getReferralData()).orElse("unknown");
+            if (shouldRecordReferralDiagnostics(payloadType)) {
+                diagnosticsService.record(
+                    DiagnosticsCategory.SECURITY,
+                    DiagnosticsAction.SECURITY_REFERRAL_DECODE,
+                    DiagnosticsOutcome.DENIED,
+                    DiagnosticsReasonClass.SECURITY,
+                    DiagnosticsReasonCode.REFERRAL_DECODE_FAILED,
+                    "This Nexori referral payload could not be decoded.",
+                    diagnosticsService.newOperationId("security"),
+                    diagnostics -> diagnostics
+                        .payloadType(payloadType)
+                        .remoteConnectionAddress(event.getReferralSource() == null || event.getReferralSource().host == null ? "" : event.getReferralSource().host + ":" + event.getReferralSource().port)
+                        .addPreview("rawLengthBytes", Integer.toString(event.getReferralData() == null ? 0 : event.getReferralData().length))
+                );
+            }
             deny(event, "This Nexori referral payload could not be decoded.");
             return true;
         }
@@ -236,6 +240,9 @@ public final class SecureReferralService {
         @Nonnull String reasonCode,
         @Nonnull String message
     ) {
+        if (!shouldRecordReferralDiagnostics(envelope.payloadType())) {
+            return;
+        }
         String operationId = "security:" + envelope.nonce();
         diagnosticsService.record(
             DiagnosticsCategory.SECURITY,
@@ -255,6 +262,10 @@ public final class SecureReferralService {
                 diagnostics.payloadPreview(buildPayloadPreview(envelope));
             }
         );
+    }
+
+    private boolean shouldRecordReferralDiagnostics(@Nonnull String payloadType) {
+        return !DiagnosticsProtocol.isOperationalOnlyPayloadType(payloadType);
     }
 
     @Nonnull
