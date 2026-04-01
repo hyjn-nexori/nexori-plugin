@@ -6,6 +6,13 @@ import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsEvent;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -22,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public final class BootstrapCoordinator {
 
@@ -34,6 +42,7 @@ public final class BootstrapCoordinator {
     private final BootstrapRunStore bootstrapRunStore;
     private final TrustBundleStore trustBundleStore;
     private final BootstrapPayloadCodec payloadCodec;
+    private final DiagnosticsService diagnosticsService;
     private final Map<UUID, String> pendingMessages = new ConcurrentHashMap<>();
 
     public BootstrapCoordinator(
@@ -44,7 +53,8 @@ public final class BootstrapCoordinator {
         @Nonnull ConfiguredPeerService configuredPeerService,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull BootstrapRunStore bootstrapRunStore,
-        @Nonnull TrustBundleStore trustBundleStore
+        @Nonnull TrustBundleStore trustBundleStore,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.identityManager = identityManager;
@@ -54,18 +64,41 @@ public final class BootstrapCoordinator {
         this.localConnectionAddressService = localConnectionAddressService;
         this.bootstrapRunStore = bootstrapRunStore;
         this.trustBundleStore = trustBundleStore;
+        this.diagnosticsService = diagnosticsService;
         this.payloadCodec = new BootstrapPayloadCodec();
     }
 
     @Nonnull
     public StartResult start(@Nonnull PlayerRef playerRef) {
+        String operationId = diagnosticsService.newOperationId("bootstrap");
         List<ConfiguredPeer> peers = configuredPeerService.list();
         if (peers.isEmpty()) {
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_RUN_START,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.VALIDATION,
+                DiagnosticsReasonCode.BOOTSTRAP_PEERS_EMPTY,
+                "Add the bootstrap peers for this server first, including this server, before starting Nexori bootstrap.",
+                event -> event.playerUuid(playerRef.getUuid().toString()).playerNameClaimed(playerRef.getUsername())
+            );
             return StartResult.failed("Add the bootstrap peers for this server first, including this server, before starting Nexori bootstrap.");
         }
 
         BootstrapRun existingRun = bootstrapRunStore.getCurrentRun();
         if (existingRun != null && !existingRun.isExpired()) {
+            recordBootstrap(
+                "bootstrap:" + existingRun.sessionId(),
+                DiagnosticsAction.BOOTSTRAP_RUN_START,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.VALIDATION,
+                DiagnosticsReasonCode.BOOTSTRAP_RUN_ALREADY_ACTIVE,
+                "A Nexori bootstrap run is already active for this server.",
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+                    .sessionId(existingRun.sessionId())
+            );
             return StartResult.failed("A Nexori bootstrap run is already active for session " + existingRun.sessionId() + ".");
         }
 
@@ -84,6 +117,23 @@ public final class BootstrapCoordinator {
                 challenge
             );
             bootstrapRunStore.save(run);
+            String sessionOperationId = "bootstrap:" + state.sessionId();
+            recordBootstrap(
+                sessionOperationId,
+                DiagnosticsAction.BOOTSTRAP_RUN_START,
+                DiagnosticsOutcome.STARTED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.BOOTSTRAP_RUN_STARTED,
+                "Started Nexori bootstrap from this server.",
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+                    .sessionId(state.sessionId())
+                    .requestId(state.sessionId())
+                    .remoteConnectionAddress(peers.getFirst().connectionAddress())
+                    .addPreview("bootstrapPeerCount", Integer.toString(peers.size()))
+                    .addPreview("firstPeer", peers.getFirst().connectionAddress())
+            );
 
             playerRef.referToServer(
                 peers.getFirst().host(),
@@ -95,6 +145,17 @@ public final class BootstrapCoordinator {
             return StartResult.started("Started Nexori bootstrap with " + peers.size() + " peer(s).");
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to start Nexori bootstrap.");
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_RUN_START,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.BOOTSTRAP_PEER_ERROR,
+                "Failed to start Nexori bootstrap: " + exception.getMessage(),
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+            );
             return StartResult.failed("Failed to start Nexori bootstrap: " + exception.getMessage());
         }
     }
@@ -119,6 +180,18 @@ public final class BootstrapCoordinator {
         } else {
             logger.atInfo().log("Reset Nexori bootstrap session state on the origin server without a persisted run payload.");
         }
+        recordBootstrap(
+            currentRun == null ? diagnosticsService.newOperationId("bootstrap") : "bootstrap:" + currentRun.sessionId(),
+            DiagnosticsAction.BOOTSTRAP_RUN_RESET,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BOOTSTRAP_RUN_RESET,
+            "Cleared the active Nexori bootstrap state on this origin server.",
+            event -> event
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .sessionId(currentRun == null ? "" : currentRun.sessionId())
+        );
         return StartResult.started("Cleared the active Nexori bootstrap state on this origin server. You can run Initial Setup again.");
     }
 
@@ -159,13 +232,34 @@ public final class BootstrapCoordinator {
         if (referralSource == null || referralSource.host == null) {
             return;
         }
+        String operationId = payload.challenge() == null ? diagnosticsService.newOperationId("bootstrap") : "bootstrap:" + payload.challenge().sessionId();
 
         try {
             if (payload.challenge() == null || payload.challenge().isExpired(Instant.now())) {
+                recordBootstrap(
+                    operationId,
+                    DiagnosticsAction.BOOTSTRAP_PROOF_REQUEST_ANSWER,
+                    DiagnosticsOutcome.EXPIRED,
+                    DiagnosticsReasonClass.STALE,
+                    DiagnosticsReasonCode.BOOTSTRAP_PEER_ERROR,
+                    "The Nexori bootstrap challenge expired.",
+                    diag -> diag.sessionId(payload.challenge() == null ? "" : payload.challenge().sessionId())
+                );
                 bounceError(event, payload, "The Nexori bootstrap challenge expired.");
                 return;
             }
             if (!isVerifiedBootstrapOrigin(payload.challenge(), referralSource)) {
+                recordBootstrap(
+                    operationId,
+                    DiagnosticsAction.BOOTSTRAP_PROOF_REQUEST_ANSWER,
+                    DiagnosticsOutcome.DENIED,
+                    DiagnosticsReasonClass.SECURITY,
+                    DiagnosticsReasonCode.BOOTSTRAP_ORIGIN_NOT_VERIFIED,
+                    "This server already belongs to a trusted Nexori network and will only answer bootstrap reruns from a server that is already verified in that network.",
+                    diag -> diag
+                        .sessionId(payload.challenge().sessionId())
+                        .remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+                );
                 bounceError(event, payload, "This server already belongs to a trusted Nexori network and will only answer bootstrap reruns from a server that is already verified in that network.");
                 return;
             }
@@ -182,8 +276,31 @@ public final class BootstrapCoordinator {
                     signature
                 ))
             );
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_PROOF_REQUEST_ANSWER,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.PROOF_REQUEST_ANSWERED,
+                "Answered a Nexori bootstrap proof request.",
+                diag -> diag
+                    .sessionId(payload.challenge().sessionId())
+                    .remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+                    .payloadType(payload.messageType().name())
+            );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to answer Nexori proof request.");
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_PROOF_REQUEST_ANSWER,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.BOOTSTRAP_PEER_ERROR,
+                "Failed to sign the Nexori proof challenge.",
+                diag -> diag
+                    .sessionId(payload.challenge() == null ? "" : payload.challenge().sessionId())
+                    .remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+            );
             bounceError(event, payload, "Failed to sign the Nexori proof challenge.");
         }
     }
@@ -193,6 +310,7 @@ public final class BootstrapCoordinator {
         if (currentRun == null || currentRun.phase() != BootstrapPhase.COLLECT_PROOFS) {
             return;
         }
+        String operationId = "bootstrap:" + currentRun.sessionId();
 
         try {
             if (!matchesCurrentRun(currentRun, payload)) {
@@ -206,6 +324,17 @@ public final class BootstrapCoordinator {
                 payload.signatureBase64()
             );
             if (!verified) {
+                recordBootstrap(
+                    operationId,
+                    DiagnosticsAction.BOOTSTRAP_PROOF_RESPONSE_VERIFY,
+                    DiagnosticsOutcome.FAILED,
+                    DiagnosticsReasonClass.SECURITY,
+                    DiagnosticsReasonCode.PROOF_SIGNATURE_INVALID,
+                    "Nexori bootstrap failed because one server returned an invalid signature.",
+                    diag -> diag
+                        .sessionId(currentRun.sessionId())
+                        .remoteServerId(payload.responderServerId())
+                );
                 failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server returned an invalid signature.");
                 return;
             }
@@ -233,6 +362,21 @@ public final class BootstrapCoordinator {
                     logger.atWarning().withCause(exception).log("Failed to persist the local Nexori connection address " + connectionAddress + ".");
                 }
             }
+            int verifiedPeerCount = updatedRun.verifiedPeers().size();
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_PROOF_RESPONSE_VERIFY,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.PROOF_SIGNATURE_VERIFIED,
+                "Verified a Nexori bootstrap proof response.",
+                diag -> diag
+                    .sessionId(currentRun.sessionId())
+                    .remoteServerId(payload.responderServerId())
+                    .remoteConnectionAddress(connectionAddress)
+                    .requestId(currentRun.sessionId())
+                    .addPreview("verifiedPeerCount", Integer.toString(verifiedPeerCount))
+            );
 
             int nextPeerIndex = updatedRun.currentPeerIndex() + 1;
             if (nextPeerIndex >= updatedRun.peers().size()) {
@@ -255,13 +399,32 @@ public final class BootstrapCoordinator {
             );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to process Nexori proof response.");
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_PROOF_RESPONSE_VERIFY,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.PROOF_RESPONSE_PROCESSING_FAILED,
+                "Nexori bootstrap failed while processing a proof response: " + exception.getMessage(),
+                diag -> diag.sessionId(currentRun.sessionId())
+            );
             failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while processing a proof response: " + exception.getMessage());
         }
     }
 
     private void beginBundleInstallation(@Nonnull BootstrapRun run, @Nonnull PlayerSetupConnectEvent event) throws IOException {
         String localConnectionAddress = resolveLocalConnectionAddress(run);
+        String operationId = "bootstrap:" + run.sessionId();
         if (localConnectionAddress.isBlank()) {
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_BUNDLE_BUILD,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.MISCONFIG,
+                DiagnosticsReasonCode.LOCAL_CONNECTION_ADDRESS_MISSING,
+                "Nexori verified the remote bootstrap peers, but it could not install the first trust bundle because this server was missing from Bootstrap Peers.",
+                diag -> diag.sessionId(run.sessionId())
+            );
             failRun(
                 run.startedByPlayerUuid(),
                 "Nexori verified the remote bootstrap peers, but it could not install the first trust bundle because this server was missing from Bootstrap Peers. Add the current server to Bootstrap Peers, keep every server that should belong to the secure network in that list, and run Initial Setup again."
@@ -275,6 +438,19 @@ public final class BootstrapCoordinator {
             localConnectionAddress,
             run.verifiedPeers(),
             nextBundleVersion
+        );
+        recordBootstrap(
+            operationId,
+            DiagnosticsAction.BOOTSTRAP_BUNDLE_BUILD,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BUNDLE_BUILT,
+            "Built the next active Nexori trust bundle.",
+            diag -> diag
+                .sessionId(run.sessionId())
+                .bundleVersion(bundle.bundleVersion())
+                .bundleHash(bundle.bundleHash())
+                .addPreview("memberCount", Integer.toString(bundle.members().size()))
         );
         persistLocalConnectionAddressFromBundle(bundle);
         List<ConfiguredPeer> installPeers = peersForInstallation(bundle);
@@ -305,21 +481,26 @@ public final class BootstrapCoordinator {
         if (referralSource == null || referralSource.host == null) {
             return;
         }
+        String operationId = payload.challenge() == null ? diagnosticsService.newOperationId("bootstrap") : "bootstrap:" + payload.challenge().sessionId();
 
         try {
             if (payload.challenge() == null || payload.challenge().isExpired(Instant.now())) {
+                recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST, DiagnosticsOutcome.EXPIRED, DiagnosticsReasonClass.STALE, DiagnosticsReasonCode.BOOTSTRAP_PEER_ERROR, "The Nexori bundle install request expired.", diag -> diag.sessionId(payload.challenge() == null ? "" : payload.challenge().sessionId()));
                 bounceError(event, payload, "The Nexori bundle install request expired.");
                 return;
             }
             if (!isVerifiedBootstrapOrigin(payload.challenge(), referralSource)) {
+                recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST, DiagnosticsOutcome.DENIED, DiagnosticsReasonClass.SECURITY, DiagnosticsReasonCode.BOOTSTRAP_ORIGIN_NOT_VERIFIED, "This server already belongs to a trusted Nexori network and will only install rerun bundles from a server that is already verified in that network.", diag -> diag.sessionId(payload.challenge().sessionId()).remoteConnectionAddress(referralSource.host + ":" + referralSource.port));
                 bounceError(event, payload, "This server already belongs to a trusted Nexori network and will only install rerun bundles from a server that is already verified in that network.");
                 return;
             }
             if (payload.trustBundle() == null) {
+                recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST, DiagnosticsOutcome.FAILED, DiagnosticsReasonClass.VALIDATION, DiagnosticsReasonCode.BUNDLE_INSTALL_REQUEST_DENIED, "The Nexori bundle install request was missing bundle data.", diag -> diag.sessionId(payload.challenge().sessionId()));
                 bounceError(event, payload, "The Nexori bundle install request was missing bundle data.");
                 return;
             }
             if (!bundleContainsLocalIdentity(payload.trustBundle())) {
+                recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST, DiagnosticsOutcome.DENIED, DiagnosticsReasonClass.SECURITY, DiagnosticsReasonCode.BUNDLE_INSTALL_REQUEST_DENIED, "The Nexori bundle does not contain this server identity.", diag -> diag.sessionId(payload.challenge().sessionId()));
                 bounceError(event, payload, "The Nexori bundle does not contain this server identity.");
                 return;
             }
@@ -336,8 +517,21 @@ public final class BootstrapCoordinator {
                     installedBundle.bundleHash()
                 ))
             );
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.BUNDLE_INSTALLED,
+                "Installed the active Nexori trust bundle on this server.",
+                diag -> diag
+                    .sessionId(payload.challenge().sessionId())
+                    .bundleVersion(installedBundle.bundleVersion())
+                    .bundleHash(installedBundle.bundleHash())
+            );
         } catch (IOException | IllegalStateException | IllegalArgumentException exception) {
             logger.atWarning().withCause(exception).log("Failed to install Nexori trust bundle.");
+            recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST, DiagnosticsOutcome.FAILED, DiagnosticsReasonClass.IO, DiagnosticsReasonCode.BUNDLE_INSTALL_REQUEST_DENIED, "Failed to install the Nexori trust bundle: " + exception.getMessage(), diag -> diag.sessionId(payload.challenge() == null ? "" : payload.challenge().sessionId()));
             bounceError(event, payload, "Failed to install the Nexori trust bundle: " + exception.getMessage());
         }
     }
@@ -347,6 +541,7 @@ public final class BootstrapCoordinator {
         if (currentRun == null || currentRun.phase() != BootstrapPhase.INSTALL_BUNDLE) {
             return;
         }
+        String operationId = "bootstrap:" + currentRun.sessionId();
 
         try {
             if (!matchesCurrentRun(currentRun, payload)) {
@@ -356,6 +551,7 @@ public final class BootstrapCoordinator {
 
             TrustBundle currentBundle = trustBundleStore.getCurrentBundle();
             if (currentBundle.bundleHash().isBlank() || !currentBundle.bundleHash().equals(payload.acknowledgedBundleHash())) {
+                recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_ACK, DiagnosticsOutcome.FAILED, DiagnosticsReasonClass.VALIDATION, DiagnosticsReasonCode.BUNDLE_ACK_HASH_MISMATCH, "Nexori bootstrap failed because one server acknowledged the wrong trust bundle.", diag -> diag.sessionId(currentRun.sessionId()).bundleHash(payload.acknowledgedBundleHash()));
                 failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed because one server acknowledged the wrong trust bundle.");
                 return;
             }
@@ -380,8 +576,10 @@ public final class BootstrapCoordinator {
                     currentRun.peers().size()
                 ))
             );
+            recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_ACK, DiagnosticsOutcome.SUCCEEDED, DiagnosticsReasonClass.NORMAL, DiagnosticsReasonCode.BUNDLE_INSTALLED, "Received a Nexori bundle installation acknowledgement.", diag -> diag.sessionId(currentRun.sessionId()).remoteServerId(payload.responderServerId()).bundleHash(payload.acknowledgedBundleHash()));
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to continue Nexori bundle installation.");
+            recordBootstrap(operationId, DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_ACK, DiagnosticsOutcome.FAILED, DiagnosticsReasonClass.IO, DiagnosticsReasonCode.BUNDLE_DISTRIBUTION_FAILED, "Nexori bootstrap failed while distributing the trust bundle: " + exception.getMessage(), diag -> diag.sessionId(currentRun.sessionId()));
             failRun(currentRun.startedByPlayerUuid(), "Nexori bootstrap failed while distributing the trust bundle: " + exception.getMessage());
         }
     }
@@ -400,6 +598,19 @@ public final class BootstrapCoordinator {
     private void finishRun(@Nonnull BootstrapRun run, @Nonnull TrustBundle bundle) {
         bootstrapStateStore.markBundleInstalled(bundle.bundleVersion(), bundle.bundleHash());
         bootstrapRunStore.clear();
+        recordBootstrap(
+            "bootstrap:" + run.sessionId(),
+            DiagnosticsAction.BOOTSTRAP_RUN_FINISH,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BOOTSTRAP_RUN_COMPLETED,
+            "Completed Nexori bootstrap and installed the active trust bundle.",
+            diag -> diag
+                .sessionId(run.sessionId())
+                .bundleVersion(bundle.bundleVersion())
+                .bundleHash(bundle.bundleHash())
+                .addPreview("verifiedPeerCount", Integer.toString(run.verifiedPeers().size()))
+        );
         queueStatus(run.startedByPlayerUuid(), "Nexori bootstrap verified "
             + run.verifiedPeers().size()
             + " remote peer(s) and installed bundle v"
@@ -411,6 +622,24 @@ public final class BootstrapCoordinator {
     }
 
     private void failRun(@Nonnull String startedByPlayerUuid, @Nonnull String message) {
+        BootstrapRun currentRun = bootstrapRunStore.getCurrentRun();
+        String operationId = currentRun == null ? diagnosticsService.newOperationId("bootstrap") : "bootstrap:" + currentRun.sessionId();
+        recordBootstrap(
+            operationId,
+            DiagnosticsAction.BOOTSTRAP_RUN_FAIL,
+            DiagnosticsOutcome.FAILED,
+            DiagnosticsReasonClass.UNKNOWN,
+            DiagnosticsReasonCode.BOOTSTRAP_PEER_ERROR,
+            message,
+            diag -> {
+                if (currentRun != null) {
+                    diag.sessionId(currentRun.sessionId());
+                    if (currentRun.currentPeer() != null) {
+                        diag.remoteConnectionAddress(currentRun.currentPeer().connectionAddress());
+                    }
+                }
+            }
+        );
         bootstrapRunStore.clear();
         bootstrapStateStore.recordFailure(message);
         queueStatus(startedByPlayerUuid, message);
@@ -583,5 +812,26 @@ public final class BootstrapCoordinator {
         public static StartResult failed(@Nonnull String message) {
             return new StartResult(false, message);
         }
+    }
+
+    private void recordBootstrap(
+        @Nonnull String operationId,
+        @Nonnull String action,
+        @Nonnull DiagnosticsOutcome outcome,
+        @Nonnull DiagnosticsReasonClass reasonClass,
+        @Nonnull String reasonCode,
+        @Nonnull String message,
+        Consumer<DiagnosticsEvent.Builder> customizer
+    ) {
+        diagnosticsService.record(
+            DiagnosticsCategory.BOOTSTRAP,
+            action,
+            outcome,
+            reasonClass,
+            reasonCode,
+            message,
+            operationId,
+            customizer
+        );
     }
 }

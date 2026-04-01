@@ -16,6 +16,12 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.access.NexoriAdminAccess;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiPage;
@@ -40,6 +46,7 @@ public final class NexoriPortalInteractionService {
     private final TriggerBindingService triggerBindingService;
     private final SecureTravelService secureTravelService;
     private final String adminPermission;
+    private final DiagnosticsService diagnosticsService;
     private final Map<UUID, Long> lastCollisionHandledAtByPlayer = new ConcurrentHashMap<>();
 
     public NexoriPortalInteractionService(
@@ -48,7 +55,8 @@ public final class NexoriPortalInteractionService {
         @Nonnull PortalInstanceService portalInstanceService,
         @Nonnull TriggerBindingService triggerBindingService,
         @Nonnull SecureTravelService secureTravelService,
-        @Nonnull String adminPermission
+        @Nonnull String adminPermission,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.plugin = plugin;
         this.logger = logger;
@@ -56,6 +64,7 @@ public final class NexoriPortalInteractionService {
         this.triggerBindingService = triggerBindingService;
         this.secureTravelService = secureTravelService;
         this.adminPermission = adminPermission;
+        this.diagnosticsService = diagnosticsService;
     }
 
     public void registerPageSupplier() {
@@ -183,15 +192,52 @@ public final class NexoriPortalInteractionService {
         }
 
         try {
+            String operationId = diagnosticsService.newOperationId("travel");
             secureTravelService.travel(
                 playerRef,
                 ConfiguredPeer.parse(binding.get().destinationConnectionAddress()),
                 binding.get().destinationTargetId(),
                 "",
                 binding.get().travelProfileId(),
-                binding.get().contextJson()
+                binding.get().contextJson(),
+                operationId
+            );
+            diagnosticsService.record(
+                DiagnosticsCategory.TRAVEL,
+                DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.PORTAL_TRIGGER_DISPATCHED,
+                "Triggered secure portal travel from a Nexori portal.",
+                operationId,
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+                    .portalId(portal.get().portalId())
+                    .bindingId(binding.get().id())
+                    .targetId(binding.get().destinationTargetId())
+                    .travelProfileId(binding.get().travelProfileId())
+                    .remoteConnectionAddress(binding.get().destinationConnectionAddress())
             );
         } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+            String operationId = diagnosticsService.newOperationId("travel");
+            diagnosticsService.record(
+                DiagnosticsCategory.TRAVEL,
+                DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.PORTAL_TRIGGER_FAILED,
+                "This Nexori portal could not start its secure travel: " + exception.getMessage(),
+                operationId,
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+                    .portalId(portal.get().portalId())
+                    .bindingId(binding.get().id())
+                    .targetId(binding.get().destinationTargetId())
+                    .travelProfileId(binding.get().travelProfileId())
+                    .remoteConnectionAddress(binding.get().destinationConnectionAddress())
+            );
             player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
             logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
         }

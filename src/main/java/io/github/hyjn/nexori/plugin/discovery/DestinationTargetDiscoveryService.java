@@ -13,6 +13,12 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.protocol.HostAddress;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
@@ -39,6 +45,7 @@ public final class DestinationTargetDiscoveryService {
     private final DestinationTargetService destinationTargetService;
     private final DiscoveredDestinationTargetCacheService cacheService;
     private final SecureReferralService secureReferralService;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, PendingDiscoveryRequest> pendingRequests = new ConcurrentHashMap<>();
     private final Map<UUID, PendingDiscoveryReturn> pendingReturns = new ConcurrentHashMap<>();
     private final SecureReferralHandler requestHandler = new RequestHandler();
@@ -49,13 +56,15 @@ public final class DestinationTargetDiscoveryService {
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull DestinationTargetService destinationTargetService,
         @Nonnull DiscoveredDestinationTargetCacheService cacheService,
-        @Nonnull SecureReferralService secureReferralService
+        @Nonnull SecureReferralService secureReferralService,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.trustBundleStore = trustBundleStore;
         this.destinationTargetService = destinationTargetService;
         this.cacheService = cacheService;
         this.secureReferralService = secureReferralService;
+        this.diagnosticsService = diagnosticsService;
     }
 
     @Nonnull
@@ -90,6 +99,17 @@ public final class DestinationTargetDiscoveryService {
         UiResumeAction resumeAction
     ) throws IOException, GeneralSecurityException {
         if (!isTrustedDestination(destination)) {
+            String operationId = diagnosticsService.newOperationId("discovery");
+            diagnosticsService.record(
+                DiagnosticsCategory.DISCOVERY,
+                DiagnosticsAction.DISCOVERY_REQUEST_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.DISCOVERY_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                operationId,
+                event -> event.remoteConnectionAddress(destination.connectionAddress())
+            );
             throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
         }
 
@@ -111,6 +131,20 @@ public final class DestinationTargetDiscoveryService {
             REQUEST_PAYLOAD_TYPE,
             new DestinationTargetDiscoveryRequestPayload(requestId),
             Duration.ofSeconds(30)
+        );
+        diagnosticsService.record(
+            DiagnosticsCategory.DISCOVERY,
+            DiagnosticsAction.DISCOVERY_REQUEST_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.DISCOVERY_REQUEST_SENT,
+            "Started destination target discovery against a trusted server.",
+            requestId,
+            event -> event
+                .requestId(requestId)
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
         );
     }
 
@@ -169,6 +203,19 @@ public final class DestinationTargetDiscoveryService {
             event.referToServer(referralSource.host, referralSource.port, responsePayload);
             logger.atInfo().log("Answered Nexori destination target discovery request " + payload.requestId()
                 + " with " + targets.size() + " target(s).");
+            diagnosticsService.record(
+                DiagnosticsCategory.DISCOVERY,
+                DiagnosticsAction.DISCOVERY_REQUEST_ANSWER,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.DISCOVERY_REQUEST_ANSWERED,
+                "Answered a destination target discovery request.",
+                payload.requestId(),
+                diag -> diag
+                    .requestId(payload.requestId())
+                    .remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+                    .addPreview("targetCount", Integer.toString(targets.size()))
+            );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to answer Nexori destination target discovery request.");
         }
@@ -200,8 +247,35 @@ public final class DestinationTargetDiscoveryService {
             logger.atInfo().log("Stored Nexori discovery response " + payload.requestId()
                 + " for " + saved.connectionAddress()
                 + " with " + saved.targets().size() + " target(s).");
+            diagnosticsService.record(
+                DiagnosticsCategory.DISCOVERY,
+                DiagnosticsAction.DISCOVERY_RESPONSE_STORE,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.DISCOVERY_RESPONSE_STORED,
+                "Stored discovered destination targets from a trusted server.",
+                payload.requestId(),
+                diag -> diag
+                    .requestId(payload.requestId())
+                    .remoteServerId(referral.issuer().serverId())
+                    .remoteConnectionAddress(saved.connectionAddress())
+                    .addPreview("targetCount", Integer.toString(saved.targets().size()))
+            );
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to persist discovered Nexori destination targets.");
+            diagnosticsService.record(
+                DiagnosticsCategory.DISCOVERY,
+                DiagnosticsAction.DISCOVERY_RESPONSE_STORE,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.DISCOVERY_RESPONSE_SAVE_FAILED,
+                "The discovery response was received, but saving the discovered targets failed: " + exception.getMessage(),
+                payload.requestId(),
+                diag -> diag
+                    .requestId(payload.requestId())
+                    .remoteServerId(referral.issuer().serverId())
+                    .remoteConnectionAddress(pendingRequest.destinationConnectionAddress())
+            );
             pendingReturns.put(event.getUuid(), new PendingDiscoveryReturn(
                 pendingRequest.originWorldName(),
                 pendingRequest.originTransform(),

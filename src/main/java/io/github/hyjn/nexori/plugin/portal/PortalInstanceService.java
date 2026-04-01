@@ -4,6 +4,12 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.math.vector.Vector3i;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
@@ -26,16 +32,19 @@ public final class PortalInstanceService {
     private final PortalInstanceStore store;
     private final DestinationTargetService destinationTargetService;
     private final TriggerBindingService triggerBindingService;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, PortalInstanceDefinition> portalsById = new LinkedHashMap<>();
 
     public PortalInstanceService(
         @Nonnull PortalInstanceStore store,
         @Nonnull DestinationTargetService destinationTargetService,
-        @Nonnull TriggerBindingService triggerBindingService
+        @Nonnull TriggerBindingService triggerBindingService,
+        @Nonnull DiagnosticsService diagnosticsService
     ) throws IOException {
         this.store = store;
         this.destinationTargetService = destinationTargetService;
         this.triggerBindingService = triggerBindingService;
+        this.diagnosticsService = diagnosticsService;
         for (PortalInstanceDefinition portal : store.loadOrCreate()) {
             PortalInstanceDefinition normalized = portal.normalized();
             portalsById.put(normalized.portalId(), normalized);
@@ -157,6 +166,7 @@ public final class PortalInstanceService {
             ).normalized();
         portalsById.put(portal.portalId(), portal);
         persist();
+        recordPortalChange(portal, DiagnosticsAction.CONFIG_PORTAL_SAVE, DiagnosticsReasonCode.PORTAL_SAVED, "UPSERTED", "Saved a portal instance on this server.");
         return portal;
     }
 
@@ -172,6 +182,7 @@ public final class PortalInstanceService {
         }
         triggerBindingService.removeBindingsForSource(portal.portalId());
         persist();
+        recordPortalChange(portal, DiagnosticsAction.CONFIG_PORTAL_DELETE, DiagnosticsReasonCode.PORTAL_DELETED, "DELETED", "Deleted a portal instance from this server.");
         return true;
     }
 
@@ -219,6 +230,7 @@ public final class PortalInstanceService {
         ).normalized();
         portalsById.put(updatedPortal.portalId(), updatedPortal);
         persist();
+        recordPortalChange(updatedPortal, DiagnosticsAction.CONFIG_PORTAL_SAVE, DiagnosticsReasonCode.PORTAL_SAVED, "UPSERTED", "Saved a portal instance on this server.");
         return updatedPortal;
     }
 
@@ -240,11 +252,40 @@ public final class PortalInstanceService {
         ).normalized();
         portalsById.put(updated.portalId(), updated);
         persist();
+        recordPortalChange(updated, DiagnosticsAction.CONFIG_PORTAL_SAVE, DiagnosticsReasonCode.PORTAL_SAVED, "UPSERTED", "Saved a portal instance on this server.");
         return updated;
     }
 
     private void persist() throws IOException {
         store.save(new ArrayList<>(portalsById.values()));
+    }
+
+    private void recordPortalChange(
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull String action,
+        @Nonnull String reasonCode,
+        @Nonnull String changeType,
+        @Nonnull String message
+    ) {
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            action,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            reasonCode,
+            message,
+            operationId,
+            event -> event
+                .entityType("PORTAL")
+                .entityId(portal.portalId())
+                .changeType(changeType)
+                .portalId(portal.portalId())
+                .targetId(portal.autoDestinationTargetId())
+                .worldName(portal.worldName())
+                .addPreview("portalId", portal.portalId())
+                .addPreview("world", portal.worldName())
+        );
     }
 
     @Nonnull

@@ -1,5 +1,11 @@
 package io.github.hyjn.nexori.plugin.binding;
 
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 
 import javax.annotation.Nonnull;
@@ -14,10 +20,12 @@ import java.util.Optional;
 public final class TriggerBindingService {
 
     private final TriggerBindingStore store;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, TriggerBindingDefinition> bindingsById = new LinkedHashMap<>();
 
-    public TriggerBindingService(@Nonnull TriggerBindingStore store) throws IOException {
+    public TriggerBindingService(@Nonnull TriggerBindingStore store, @Nonnull DiagnosticsService diagnosticsService) throws IOException {
         this.store = store;
+        this.diagnosticsService = diagnosticsService;
         for (TriggerBindingDefinition binding : store.loadOrCreate()) {
             TriggerBindingDefinition normalized = binding.normalized();
             bindingsById.put(normalized.id(), normalized);
@@ -70,6 +78,7 @@ public final class TriggerBindingService {
         ).normalized();
         bindingsById.put(binding.id(), binding);
         persist();
+        recordBindingSaved(binding, "UPSERTED");
         return binding;
     }
 
@@ -77,6 +86,9 @@ public final class TriggerBindingService {
         String normalizedId = TriggerBindingDefinition.normalizeId(rawId);
         TriggerBindingDefinition removed = bindingsById.remove(normalizedId);
         persist();
+        if (removed != null) {
+            recordBindingDeleted(removed, "DELETED");
+        }
         return removed != null;
     }
 
@@ -85,15 +97,23 @@ public final class TriggerBindingService {
         if (binding.isEmpty()) {
             return false;
         }
-        bindingsById.remove(binding.get().id());
+        TriggerBindingDefinition removed = binding.get();
+        bindingsById.remove(removed.id());
         persist();
+        recordBindingDeleted(removed, "DELETED");
         return true;
     }
 
     public synchronized void removeBindingsForSource(@Nonnull String sourceId) throws IOException {
         String normalizedSourceId = sourceId.trim().toLowerCase();
+        List<TriggerBindingDefinition> removed = bindingsById.values().stream()
+            .filter(binding -> binding.sourceId().equals(normalizedSourceId))
+            .toList();
         bindingsById.values().removeIf(binding -> binding.sourceId().equals(normalizedSourceId));
         persist();
+        for (TriggerBindingDefinition binding : removed) {
+            recordBindingDeleted(binding, "DELETED");
+        }
     }
 
     @Nonnull
@@ -112,10 +132,58 @@ public final class TriggerBindingService {
         ).normalized();
         bindingsById.put(updated.id(), updated);
         persist();
+        recordBindingSaved(updated, "UPSERTED");
         return updated;
     }
 
     private void persist() throws IOException {
         store.save(new ArrayList<>(bindingsById.values()));
+    }
+
+    private void recordBindingSaved(@Nonnull TriggerBindingDefinition binding, @Nonnull String changeType) {
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_BINDING_SAVE,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BINDING_SAVED,
+            "Saved a trigger binding on this server.",
+            operationId,
+            event -> event
+                .entityType("TRIGGER_BINDING")
+                .entityId(binding.id())
+                .changeType(changeType)
+                .bindingId(binding.id())
+                .portalId(binding.sourceId())
+                .targetId(binding.destinationTargetId())
+                .travelProfileId(binding.travelProfileId())
+                .remoteConnectionAddress(binding.destinationConnectionAddress())
+                .addPreview("bindingId", binding.id())
+                .addPreview("destination", binding.destinationConnectionAddress())
+        );
+    }
+
+    private void recordBindingDeleted(@Nonnull TriggerBindingDefinition binding, @Nonnull String changeType) {
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_BINDING_DELETE,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BINDING_DELETED,
+            "Deleted a trigger binding from this server.",
+            operationId,
+            event -> event
+                .entityType("TRIGGER_BINDING")
+                .entityId(binding.id())
+                .changeType(changeType)
+                .bindingId(binding.id())
+                .portalId(binding.sourceId())
+                .targetId(binding.destinationTargetId())
+                .travelProfileId(binding.travelProfileId())
+                .remoteConnectionAddress(binding.destinationConnectionAddress())
+                .addPreview("bindingId", binding.id())
+        );
     }
 }

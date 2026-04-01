@@ -28,6 +28,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetRemoveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
@@ -95,6 +96,7 @@ public class NexoriPlugin extends JavaPlugin {
     private PortalSetupDraftService portalSetupDraftService;
     private TargetSetupDraftService targetSetupDraftService;
     private ServerIdentity localIdentity;
+    private DiagnosticsService diagnosticsService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -108,28 +110,39 @@ public class NexoriPlugin extends JavaPlugin {
 
             this.identityManager = new ServerIdentityManager(this.getDataDirectory().resolve("identity"));
             this.localIdentity = this.identityManager.loadOrCreate();
+            this.diagnosticsService = new DiagnosticsService(
+                this.getLogger(),
+                this.getDataDirectory(),
+                this.localIdentity,
+                () -> this.localConnectionAddressService == null ? "" : this.localConnectionAddressService.getConnectionAddressOrBlank(),
+                this.getClass().getPackage().getImplementationVersion()
+            );
 
             this.bootstrapStateStore = new BootstrapStateStore(this.getDataDirectory().resolve("state"));
             BootstrapState bootstrapState = this.bootstrapStateStore.loadOrCreate();
             this.configuredPeerService = new ConfiguredPeerService(
-                new ConfiguredPeerStore(this.getDataDirectory().resolve("config").resolve("configured-peers.json"))
+                new ConfiguredPeerStore(this.getDataDirectory().resolve("config").resolve("configured-peers.json")),
+                this.diagnosticsService
             );
             this.localConnectionAddressService = new LocalConnectionAddressService(
                 this.getDataDirectory().resolve("config").resolve("local-connection-address.txt")
             );
             this.destinationTargetService = new DestinationTargetService(
-                new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json"))
+                new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json")),
+                this.diagnosticsService
             );
             this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
                 new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
             );
             this.triggerBindingService = new TriggerBindingService(
-                new TriggerBindingStore(this.getDataDirectory().resolve("config").resolve("trigger-bindings.json"))
+                new TriggerBindingStore(this.getDataDirectory().resolve("config").resolve("trigger-bindings.json")),
+                this.diagnosticsService
             );
             this.portalInstanceService = new PortalInstanceService(
                 new PortalInstanceStore(this.getDataDirectory().resolve("config").resolve("portal-instances.json")),
                 this.destinationTargetService,
-                this.triggerBindingService
+                this.triggerBindingService,
+                this.diagnosticsService
             );
             new DestinationTargetDefaults(this.getDataDirectory(), this.destinationTargetService).ensureDefaults(this.getLogger());
             this.trustBundleStore = new TrustBundleStore(this.getDataDirectory().resolve("state").resolve("trust-bundle.json"));
@@ -144,13 +157,15 @@ public class NexoriPlugin extends JavaPlugin {
                 this.configuredPeerService,
                 this.localConnectionAddressService,
                 bootstrapRunStore,
-                this.trustBundleStore
+                this.trustBundleStore,
+                this.diagnosticsService
             );
             this.secureReferralService = new SecureReferralService(
                 this.getLogger(),
                 this.identityManager,
                 this.localIdentity,
-                this.trustBundleStore
+                this.trustBundleStore,
+                this.diagnosticsService
             );
             this.inventoryTransferService = new InventoryTransferService(
                 this.getLogger(),
@@ -159,20 +174,23 @@ public class NexoriPlugin extends JavaPlugin {
                 new InventoryTransferPolicyStore(this.getDataDirectory().resolve("config").resolve("inventory-transfer-policy.json")),
                 new PlayerSaveRepository(this.getLogger()),
                 new InventorySnapshotService(),
-                this.secureReferralService
+                this.secureReferralService,
+                this.diagnosticsService
             );
             this.serverPolicyCacheService = new ServerPolicyCacheService(
                 new ServerPolicyCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-server-policies.json"))
             );
             this.serverRuleGroupService = new ServerRuleGroupService(
-                new ServerRuleGroupStore(this.getDataDirectory().resolve("config").resolve("server-rule-groups.json"))
+                new ServerRuleGroupStore(this.getDataDirectory().resolve("config").resolve("server-rule-groups.json")),
+                this.diagnosticsService
             );
             this.serverPolicySyncService = new ServerPolicySyncService(
                 this.getLogger(),
                 this.trustBundleStore,
                 this.inventoryTransferService,
                 this.serverPolicyCacheService,
-                this.secureReferralService
+                this.secureReferralService,
+                this.diagnosticsService
             );
             this.secureTravelService = new SecureTravelService(
                 this.getLogger(),
@@ -180,14 +198,16 @@ public class NexoriPlugin extends JavaPlugin {
                 this.trustBundleStore,
                 this.destinationTargetService,
                 this.secureReferralService,
-                this.inventoryTransferService
+                this.inventoryTransferService,
+                this.diagnosticsService
             );
             this.destinationTargetDiscoveryService = new DestinationTargetDiscoveryService(
                 this.getLogger(),
                 this.trustBundleStore,
                 this.destinationTargetService,
                 this.discoveredDestinationTargetCacheService,
-                this.secureReferralService
+                this.secureReferralService,
+                this.diagnosticsService
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -197,7 +217,8 @@ public class NexoriPlugin extends JavaPlugin {
                 this.portalInstanceService,
                 this.triggerBindingService,
                 this.secureTravelService,
-                this.getBasePermission() + ".admin"
+                this.getBasePermission() + ".admin",
+                this.diagnosticsService
             );
             this.secureReferralService.registerHandler(this.secureTravelService);
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
@@ -331,5 +352,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ServerRuleGroupService getServerRuleGroupService() {
         return serverRuleGroupService;
+    }
+
+    public DiagnosticsService getDiagnosticsService() {
+        return diagnosticsService;
     }
 }

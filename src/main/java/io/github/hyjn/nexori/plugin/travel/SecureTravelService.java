@@ -16,6 +16,13 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsEvent;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
@@ -48,6 +55,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final DestinationTargetService destinationTargetService;
     private final SecureReferralService secureReferralService;
     private final InventoryTransferService inventoryTransferService;
+    private final DiagnosticsService diagnosticsService;
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
 
     public SecureTravelService(
@@ -56,7 +64,8 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull DestinationTargetService destinationTargetService,
         @Nonnull SecureReferralService secureReferralService,
-        @Nonnull InventoryTransferService inventoryTransferService
+        @Nonnull InventoryTransferService inventoryTransferService,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.localIdentity = localIdentity;
@@ -64,6 +73,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         this.destinationTargetService = destinationTargetService;
         this.secureReferralService = secureReferralService;
         this.inventoryTransferService = inventoryTransferService;
+        this.diagnosticsService = diagnosticsService;
     }
 
     @Nonnull
@@ -80,11 +90,45 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull String travelProfileId,
         @Nonnull String contextJson
     ) throws IOException, GeneralSecurityException {
+        travel(playerRef, destination, destinationTargetId, arrivalPointId, travelProfileId, contextJson, diagnosticsService.newOperationId("travel"));
+    }
+
+    public void travel(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String destinationTargetId,
+        @Nonnull String arrivalPointId,
+        @Nonnull String travelProfileId,
+        @Nonnull String contextJson,
+        @Nonnull String operationId
+    ) throws IOException, GeneralSecurityException {
         if (destinationTargetId.isBlank()) {
+            recordTravel(
+                operationId,
+                DiagnosticsAction.TRAVEL_DISPATCH,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.VALIDATION,
+                DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
+                "Secure Nexori travel now requires a destination target id.",
+                event -> event.playerUuid(playerRef.getUuid().toString()).playerNameClaimed(playerRef.getUsername())
+            );
             throw new IllegalArgumentException("Secure Nexori travel now requires a destinationTargetId that exists on the destination server.");
         }
 
         if (!isTrustedDestination(destination)) {
+            recordTravel(
+                operationId,
+                DiagnosticsAction.TRAVEL_DISPATCH,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                event -> event
+                    .playerUuid(playerRef.getUuid().toString())
+                    .playerNameClaimed(playerRef.getUsername())
+                    .remoteConnectionAddress(destination.connectionAddress())
+                    .targetId(destinationTargetId)
+            );
             throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
         }
 
@@ -95,8 +139,10 @@ public final class SecureTravelService implements SecureReferralHandler {
             inventoryState = inventoryTransferService.captureCurrentInventory(playerRef);
             inventoryTransferId = UUID.randomUUID().toString();
         }
+        final String finalInventoryTransferId = inventoryTransferId;
 
         SecureTravelPayload payload = new SecureTravelPayload(
+            operationId,
             localIdentity.serverId().toString(),
             "",
             destinationTargetId,
@@ -104,17 +150,17 @@ public final class SecureTravelService implements SecureReferralHandler {
             profileType.id(),
             "Secure travel accepted from " + localIdentity.serverId() + ".",
             contextJson == null || contextJson.isBlank() ? "{}" : contextJson,
-            inventoryTransferId,
+            finalInventoryTransferId,
             inventoryState
         );
         byte[] encodedPayload = secureReferralService.createPayload(playerRef, PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
 
         if (profileType == TravelProfileType.APPLY_INVENTORY
             && inventoryState != null
-            && !inventoryTransferId.isBlank()
+            && !finalInventoryTransferId.isBlank()
             && inventoryTransferService.shouldTransferInventory(inventoryState)) {
             inventoryTransferService.saveOriginBackup(
-                inventoryTransferId,
+                finalInventoryTransferId,
                 playerRef,
                 destination.connectionAddress(),
                 destinationTargetId,
@@ -125,13 +171,55 @@ public final class SecureTravelService implements SecureReferralHandler {
         }
 
         playerRef.referToServer(destination.host(), destination.port(), encodedPayload);
+        recordTravel(
+            operationId,
+            DiagnosticsAction.TRAVEL_DISPATCH,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.TRAVEL_DISPATCHED,
+            "Dispatched a secure Nexori travel referral.",
+            event -> event
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .payloadType(PAYLOAD_TYPE)
+                .payloadHash(hashPayload(encodedPayload))
+                .remoteConnectionAddress(destination.connectionAddress())
+                .targetId(destinationTargetId)
+                .arrivalPointId(arrivalPointId)
+                .travelProfileId(profileType.id())
+                .transferId(finalInventoryTransferId)
+                .addPreview("destination", destination.connectionAddress())
+                .addPreview("targetId", destinationTargetId)
+                .addPreview("travelProfileId", profileType.id())
+        );
     }
 
     @Override
     public void handle(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
         SecureTravelPayload payload = referral.decodePayload(secureReferralService.gson(), SecureTravelPayload.class);
+        String operationId = payload.travelOperationId() == null || payload.travelOperationId().isBlank()
+            ? diagnosticsService.newOperationId("travel")
+            : payload.travelOperationId();
         ResolvedDestinationTarget resolvedTarget = destinationTargetService.resolve(payload.destinationTargetId(), payload.arrivalPointId()).orElse(null);
         if (resolvedTarget == null) {
+            recordTravel(
+                operationId,
+                DiagnosticsAction.TRAVEL_ACCEPT,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.MISCONFIG,
+                DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
+                "This Nexori destination target is not configured on the destination server.",
+                eventDetails -> eventDetails
+                    .playerUuid(event.getUuid().toString())
+                    .playerNameClaimed(event.getUsername())
+                    .payloadType(PAYLOAD_TYPE)
+                    .remoteServerId(payload.sourceServerId())
+                    .remoteConnectionAddress(payload.sourceConnectionAddress())
+                    .targetId(payload.destinationTargetId())
+                    .arrivalPointId(payload.arrivalPointId())
+                    .travelProfileId(payload.travelProfileId())
+                    .transferId(payload.inventoryTransferId())
+            );
             event.setCancelled(true);
             event.setReason(Message.raw("This Nexori destination target is not configured on the destination server: " + payload.destinationTargetId()));
             return;
@@ -149,6 +237,24 @@ public final class SecureTravelService implements SecureReferralHandler {
                 payload.sourceConnectionAddress()
             );
         } catch (IllegalArgumentException | IOException exception) {
+            recordTravel(
+                operationId,
+                DiagnosticsAction.TRAVEL_ACCEPT,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.INVENTORY_PROFILE_APPLY_FAILED,
+                "This Nexori travel could not apply its inventory profile: " + exception.getMessage(),
+                eventDetails -> eventDetails
+                    .playerUuid(event.getUuid().toString())
+                    .playerNameClaimed(event.getUsername())
+                    .payloadType(PAYLOAD_TYPE)
+                    .remoteServerId(payload.sourceServerId())
+                    .remoteConnectionAddress(payload.sourceConnectionAddress())
+                    .targetId(payload.destinationTargetId())
+                    .arrivalPointId(payload.arrivalPointId())
+                    .travelProfileId(payload.travelProfileId())
+                    .transferId(payload.inventoryTransferId())
+            );
             event.setCancelled(true);
             event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
             return;
@@ -158,6 +264,7 @@ public final class SecureTravelService implements SecureReferralHandler {
             ? payload.arrivalMessage()
             : resolvedTarget.definition().arrivalMessage();
         pendingArrivals.put(event.getUuid(), new PendingArrival(
+            operationId,
             payload.sourceServerId(),
             payload.sourceConnectionAddress(),
             resolvedTarget.definition().id(),
@@ -169,6 +276,26 @@ public final class SecureTravelService implements SecureReferralHandler {
             payload.contextJson(),
             resolvedTarget.definition().metadataJson()
         ));
+        recordTravel(
+            operationId,
+            DiagnosticsAction.TRAVEL_ACCEPT,
+            DiagnosticsOutcome.ACCEPTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.TRAVEL_ACCEPTED,
+            "Accepted secure Nexori travel on the destination server.",
+            eventDetails -> eventDetails
+                .playerUuid(event.getUuid().toString())
+                .playerNameClaimed(event.getUsername())
+                .payloadType(PAYLOAD_TYPE)
+                .remoteServerId(payload.sourceServerId())
+                .remoteConnectionAddress(payload.sourceConnectionAddress())
+                .targetId(resolvedTarget.definition().id())
+                .targetKind(resolvedTarget.definition().kind().name())
+                .arrivalPointId(resolvedTarget.effectiveArrivalPointId())
+                .worldName(resolvedTarget.effectiveWorldName())
+                .travelProfileId(profileType.id())
+                .transferId(payload.inventoryTransferId())
+        );
         logger.atInfo().log("Accepted secure Nexori travel for " + event.getUsername()
             + " from server "
             + payload.sourceServerId()
@@ -216,6 +343,24 @@ public final class SecureTravelService implements SecureReferralHandler {
             ? Teleport.createForPlayer(transform.clone())
             : Teleport.createForPlayer(targetWorld, transform.clone());
         event.getPlayerRef().getStore().addComponent(event.getPlayerRef(), Teleport.getComponentType(), teleport);
+        recordTravel(
+            arrival.travelOperationId(),
+            DiagnosticsAction.TRAVEL_ARRIVAL_TELEPORT,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.ARRIVAL_TELEPORT_QUEUED,
+            "Queued Nexori arrival teleport for the ready player.",
+            eventDetails -> eventDetails
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .remoteServerId(arrival.sourceServerId())
+                .remoteConnectionAddress(arrival.sourceConnectionAddress())
+                .targetId(arrival.destinationTargetId())
+                .targetKind(arrival.destinationTargetKind())
+                .worldName(arrival.worldName())
+                .arrivalPointId(arrival.arrivalPointId())
+                .travelProfileId(arrival.travelProfileId())
+        );
 
         logger.atInfo().log("Queued Nexori ready teleport for " + playerRef.getUsername()
             + " targetId=" + arrival.destinationTargetId()
@@ -269,10 +414,10 @@ public final class SecureTravelService implements SecureReferralHandler {
             return new Transform(0.0, 0.0, 0.0, 0.0f, 0.0f, 0.0f);
         }
 
-        return resolveMetadataTransform(arrival.metadataJson());
+        return resolveMetadataTransform(arrival.travelOperationId(), arrival.metadataJson());
     }
 
-    private Transform resolveMetadataTransform(String metadataJson) {
+    private Transform resolveMetadataTransform(String operationId, String metadataJson) {
         if (metadataJson == null || metadataJson.isBlank()) {
             return null;
         }
@@ -306,6 +451,16 @@ public final class SecureTravelService implements SecureReferralHandler {
             return new Transform(positionVector, rotationVector);
         } catch (Exception exception) {
             logger.atWarning().withCause(exception).log("Failed to parse Nexori destination target metadata for arrival transform.");
+            recordTravel(
+                operationId,
+                DiagnosticsAction.TRAVEL_ARRIVAL_PREPARE,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.MISCONFIG,
+                DiagnosticsReasonCode.ARRIVAL_METADATA_PARSE_FAILED,
+                "Failed to parse Nexori destination target metadata for arrival transform.",
+                event -> {
+                }
+            );
             return null;
         }
     }
@@ -322,5 +477,41 @@ public final class SecureTravelService implements SecureReferralHandler {
             }
         }
         return false;
+    }
+
+    private void recordTravel(
+        @Nonnull String operationId,
+        @Nonnull String action,
+        @Nonnull DiagnosticsOutcome outcome,
+        @Nonnull DiagnosticsReasonClass reasonClass,
+        @Nonnull String reasonCode,
+        @Nonnull String message,
+        java.util.function.Consumer<DiagnosticsEvent.Builder> customizer
+    ) {
+        diagnosticsService.record(
+            DiagnosticsCategory.TRAVEL,
+            action,
+            outcome,
+            reasonClass,
+            reasonCode,
+            message,
+            operationId,
+            customizer
+        );
+    }
+
+    @Nonnull
+    private String hashPayload(@Nonnull byte[] payloadBytes) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(payloadBytes);
+            StringBuilder out = new StringBuilder("sha256:");
+            for (byte value : hash) {
+                out.append(String.format("%02x", value));
+            }
+            return out.toString();
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            return "";
+        }
     }
 }

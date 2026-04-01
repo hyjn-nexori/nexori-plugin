@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.travel;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
 
 public record SecureTravelPayload(
+    String travelOperationId,
     String sourceServerId,
     String sourceConnectionAddress,
     String destinationTargetId,

@@ -1,5 +1,12 @@
 package io.github.hyjn.nexori.plugin.policy;
 
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -13,10 +20,12 @@ import java.util.UUID;
 public final class ServerRuleGroupService {
 
     private final ServerRuleGroupStore store;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, ServerRuleGroupDefinition> groupsById = new LinkedHashMap<>();
 
-    public ServerRuleGroupService(@Nonnull ServerRuleGroupStore store) throws IOException {
+    public ServerRuleGroupService(@Nonnull ServerRuleGroupStore store, @Nonnull DiagnosticsService diagnosticsService) throws IOException {
         this.store = store;
+        this.diagnosticsService = diagnosticsService;
         for (ServerRuleGroupDefinition group : store.loadOrCreate()) {
             ServerRuleGroupDefinition normalized = group.normalized();
             groupsById.put(normalized.groupId(), normalized);
@@ -58,12 +67,16 @@ public final class ServerRuleGroupService {
         ).normalized();
         groupsById.put(created.groupId(), created);
         persist();
+        recordGroupChange(created, DiagnosticsAction.CONFIG_RULE_GROUP_SAVE, DiagnosticsReasonCode.RULE_GROUP_SAVED, "CREATED", "Created a server rule group.");
         return created;
     }
 
     public synchronized boolean remove(@Nonnull String groupId) throws IOException {
         ServerRuleGroupDefinition removed = groupsById.remove(groupId.trim().toLowerCase());
         persist();
+        if (removed != null) {
+            recordGroupChange(removed, DiagnosticsAction.CONFIG_RULE_GROUP_DELETE, DiagnosticsReasonCode.RULE_GROUP_DELETED, "DELETED", "Deleted a server rule group.");
+        }
         return removed != null;
     }
 
@@ -77,6 +90,7 @@ public final class ServerRuleGroupService {
         ServerRuleGroupDefinition updated = current.withDisplayName(trimmedName);
         groupsById.put(updated.groupId(), updated);
         persist();
+        recordGroupChange(updated, DiagnosticsAction.CONFIG_RULE_GROUP_SAVE, DiagnosticsReasonCode.RULE_GROUP_SAVED, "UPSERTED", "Updated a server rule group.");
         return updated;
     }
 
@@ -86,6 +100,7 @@ public final class ServerRuleGroupService {
         ServerRuleGroupDefinition updated = current.withRecoveryEnabled(enabled);
         groupsById.put(updated.groupId(), updated);
         persist();
+        recordGroupChange(updated, DiagnosticsAction.CONFIG_RULE_GROUP_SAVE, DiagnosticsReasonCode.RULE_GROUP_SAVED, "UPSERTED", "Updated a server rule group.");
         return updated;
     }
 
@@ -95,6 +110,7 @@ public final class ServerRuleGroupService {
         ServerRuleGroupDefinition updated = current.withMaxBackupsPerPlayer(maxBackupsPerPlayer);
         groupsById.put(updated.groupId(), updated);
         persist();
+        recordGroupChange(updated, DiagnosticsAction.CONFIG_RULE_GROUP_SAVE, DiagnosticsReasonCode.RULE_GROUP_SAVED, "UPSERTED", "Updated a server rule group.");
         return updated;
     }
 
@@ -116,6 +132,24 @@ public final class ServerRuleGroupService {
         ServerRuleGroupDefinition updated = current.assignServer(normalizedKey);
         groupsById.put(updated.groupId(), updated);
         persist();
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_RULE_GROUP_ASSIGN,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.RULE_GROUP_SERVER_ASSIGNED,
+            "Assigned a server to a rule group.",
+            operationId,
+            event -> event
+                .entityType("RULE_GROUP")
+                .entityId(updated.groupId())
+                .changeType("ASSIGNED")
+                .ruleGroupId(updated.groupId())
+                .remoteConnectionAddress(normalizedKey)
+                .addPreview("groupId", updated.groupId())
+                .addPreview("serverKey", normalizedKey)
+        );
         return updated;
     }
 
@@ -125,6 +159,7 @@ public final class ServerRuleGroupService {
         ServerRuleGroupDefinition updated = current.unassignServer(serverSelectionKey);
         groupsById.put(updated.groupId(), updated);
         persist();
+        recordGroupChange(updated, DiagnosticsAction.CONFIG_RULE_GROUP_SAVE, DiagnosticsReasonCode.RULE_GROUP_SAVED, "UPSERTED", "Updated a server rule group.");
         return updated;
     }
 
@@ -167,5 +202,31 @@ public final class ServerRuleGroupService {
 
     private void persist() throws IOException {
         store.save(new ArrayList<>(list()));
+    }
+
+    private void recordGroupChange(
+        @Nonnull ServerRuleGroupDefinition group,
+        @Nonnull String action,
+        @Nonnull String reasonCode,
+        @Nonnull String changeType,
+        @Nonnull String message
+    ) {
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            action,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            reasonCode,
+            message,
+            operationId,
+            event -> event
+                .entityType("RULE_GROUP")
+                .entityId(group.groupId())
+                .changeType(changeType)
+                .ruleGroupId(group.groupId())
+                .addPreview("groupId", group.groupId())
+                .addPreview("displayName", group.displayName())
+        );
     }
 }

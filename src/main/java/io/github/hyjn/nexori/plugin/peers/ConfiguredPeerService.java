@@ -1,5 +1,12 @@
 package io.github.hyjn.nexori.plugin.peers;
 
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -11,10 +18,12 @@ import java.util.Map;
 public final class ConfiguredPeerService {
 
     private final ConfiguredPeerStore store;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, ConfiguredPeer> peersByAddress = new LinkedHashMap<>();
 
-    public ConfiguredPeerService(@Nonnull ConfiguredPeerStore store) throws IOException {
+    public ConfiguredPeerService(@Nonnull ConfiguredPeerStore store, @Nonnull DiagnosticsService diagnosticsService) throws IOException {
         this.store = store;
+        this.diagnosticsService = diagnosticsService;
         for (ConfiguredPeer peer : store.load()) {
             ConfiguredPeer normalized = peer.normalized();
             peersByAddress.put(normalized.connectionAddress(), normalized);
@@ -33,6 +42,22 @@ public final class ConfiguredPeerService {
         ConfiguredPeer peer = ConfiguredPeer.parse(rawConnectionAddress);
         peersByAddress.put(peer.connectionAddress(), peer);
         persist();
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_BOOTSTRAP_PEER_ADD,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BOOTSTRAP_PEER_ADDED,
+            "Added a bootstrap peer to this server's local setup input.",
+            operationId,
+            event -> event
+                .entityType("BOOTSTRAP_PEER")
+                .entityId(peer.connectionAddress())
+                .changeType("ADDED")
+                .remoteConnectionAddress(peer.connectionAddress())
+                .addPreview("connectionAddress", peer.connectionAddress())
+        );
         return peer;
     }
 
@@ -40,12 +65,44 @@ public final class ConfiguredPeerService {
         ConfiguredPeer peer = ConfiguredPeer.parse(rawConnectionAddress);
         ConfiguredPeer removed = peersByAddress.remove(peer.connectionAddress());
         persist();
+        if (removed != null) {
+            String operationId = diagnosticsService.newOperationId("config");
+            diagnosticsService.record(
+                DiagnosticsCategory.CONFIG,
+                DiagnosticsAction.CONFIG_BOOTSTRAP_PEER_REMOVE,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.BOOTSTRAP_PEER_REMOVED,
+                "Removed a bootstrap peer from this server's local setup input.",
+                operationId,
+                event -> event
+                    .entityType("BOOTSTRAP_PEER")
+                    .entityId(removed.connectionAddress())
+                    .changeType("REMOVED")
+                    .remoteConnectionAddress(removed.connectionAddress())
+                    .addPreview("connectionAddress", removed.connectionAddress())
+            );
+        }
         return removed != null;
     }
 
     public synchronized void clear() throws IOException {
         peersByAddress.clear();
         persist();
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_BOOTSTRAP_PEER_CLEAR,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BOOTSTRAP_PEERS_CLEARED,
+            "Cleared this server's local bootstrap peer list.",
+            operationId,
+            event -> event
+                .entityType("BOOTSTRAP_PEER")
+                .entityId("all")
+                .changeType("CLEARED")
+        );
     }
 
     private void persist() throws IOException {

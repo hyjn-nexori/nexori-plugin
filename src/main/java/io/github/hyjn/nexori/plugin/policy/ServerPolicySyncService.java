@@ -14,6 +14,12 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.protocol.HostAddress;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -40,6 +46,7 @@ public final class ServerPolicySyncService {
     private final InventoryTransferService inventoryTransferService;
     private final ServerPolicyCacheService cacheService;
     private final SecureReferralService secureReferralService;
+    private final DiagnosticsService diagnosticsService;
     private final Map<String, PendingSyncRequest> pendingRequests = new ConcurrentHashMap<>();
     private final Map<UUID, PendingSyncReturn> pendingReturns = new ConcurrentHashMap<>();
     private final SecureReferralHandler fetchRequestHandler = new FetchRequestHandler();
@@ -51,13 +58,15 @@ public final class ServerPolicySyncService {
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull InventoryTransferService inventoryTransferService,
         @Nonnull ServerPolicyCacheService cacheService,
-        @Nonnull SecureReferralService secureReferralService
+        @Nonnull SecureReferralService secureReferralService,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.trustBundleStore = trustBundleStore;
         this.inventoryTransferService = inventoryTransferService;
         this.cacheService = cacheService;
         this.secureReferralService = secureReferralService;
+        this.diagnosticsService = diagnosticsService;
     }
 
     @Nonnull
@@ -93,9 +102,20 @@ public final class ServerPolicySyncService {
         @Nonnull Transform originTransform,
         UiResumeAction resumeAction
     ) throws IOException, GeneralSecurityException {
-        requireTrustedDestination(destination);
-
         String requestId = UUID.randomUUID().toString();
+        if (!isTrustedDestination(destination)) {
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_REFRESH_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.RULES_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                requestId,
+                event -> event.remoteConnectionAddress(destination.connectionAddress()).requestId(requestId)
+            );
+            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
+        }
         pendingRequests.put(requestId, new PendingSyncRequest(
             requestId,
             PendingRequestMode.FETCH,
@@ -115,6 +135,20 @@ public final class ServerPolicySyncService {
             new ServerPolicyFetchRequestPayload(requestId),
             Duration.ofSeconds(30)
         );
+        diagnosticsService.record(
+            DiagnosticsCategory.RULES,
+            DiagnosticsAction.RULES_REFRESH_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.RULES_REFRESH_SENT,
+            "Started a trusted Nexori rules refresh.",
+            requestId,
+            event -> event
+                .requestId(requestId)
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
+        );
     }
 
     public void apply(
@@ -126,9 +160,20 @@ public final class ServerPolicySyncService {
         int maxBackupsPerPlayer,
         UiResumeAction resumeAction
     ) throws IOException, GeneralSecurityException {
-        requireTrustedDestination(destination);
-
         String requestId = UUID.randomUUID().toString();
+        if (!isTrustedDestination(destination)) {
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_APPLY_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.RULES_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                requestId,
+                event -> event.remoteConnectionAddress(destination.connectionAddress()).requestId(requestId)
+            );
+            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
+        }
         pendingRequests.put(requestId, new PendingSyncRequest(
             requestId,
             PendingRequestMode.APPLY,
@@ -151,6 +196,22 @@ public final class ServerPolicySyncService {
                 Math.max(1, maxBackupsPerPlayer)
             ),
             Duration.ofSeconds(30)
+        );
+        diagnosticsService.record(
+            DiagnosticsCategory.RULES,
+            DiagnosticsAction.RULES_APPLY_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.RULES_APPLY_SENT,
+            "Started a trusted Nexori rules apply request.",
+            requestId,
+            event -> event
+                .requestId(requestId)
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
+                .addPreview("recoveryEnabled", Boolean.toString(recoveryEnabled))
+                .addPreview("maxBackupsPerPlayer", Integer.toString(Math.max(1, maxBackupsPerPlayer)))
         );
     }
 
@@ -185,13 +246,10 @@ public final class ServerPolicySyncService {
         }
     }
 
-    private void requireTrustedDestination(@Nonnull ConfiguredPeer destination) {
+    private boolean isTrustedDestination(@Nonnull ConfiguredPeer destination) {
         TrustBundle bundle = trustBundleStore.getCurrentBundle();
-        boolean trusted = bundle.members().stream()
+        return bundle.members().stream()
             .anyMatch(member -> destination.connectionAddress().equals(member.connectionAddress()));
-        if (!trusted) {
-            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
-        }
     }
 
     private void handleFetchRequest(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
@@ -217,6 +275,16 @@ public final class ServerPolicySyncService {
                 Duration.ofSeconds(30)
             );
             event.referToServer(referralSource.host, referralSource.port, responsePayload);
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_FETCH_ANSWER,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.RULES_FETCH_ANSWERED,
+                "Answered a Nexori rules fetch request.",
+                payload.requestId(),
+                diag -> diag.requestId(payload.requestId()).remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+            );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to answer Nexori server policy fetch request.");
         }
@@ -248,6 +316,16 @@ public final class ServerPolicySyncService {
                 Duration.ofSeconds(30)
             );
             event.referToServer(referralSource.host, referralSource.port, responsePayload);
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_APPLY_REMOTE,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.RULES_REMOTE_APPLIED,
+                "Applied Nexori rules on the remote server.",
+                payload.requestId(),
+                diag -> diag.requestId(payload.requestId()).remoteConnectionAddress(referralSource.host + ":" + referralSource.port)
+            );
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to apply Nexori server policy request.");
         }
@@ -283,8 +361,34 @@ public final class ServerPolicySyncService {
                 message,
                 pendingRequest.resumeAction()
             ));
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_CACHE_SAVE,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.RULES_CACHE_SAVED,
+                "Stored the confirmed Nexori server rules cache entry.",
+                payload.requestId(),
+                diag -> diag
+                    .requestId(payload.requestId())
+                    .remoteServerId(referral.issuer().serverId())
+                    .remoteConnectionAddress(saved.connectionAddress())
+            );
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to persist the confirmed Nexori server rules.");
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_CACHE_SAVE,
+                DiagnosticsOutcome.FAILED,
+                DiagnosticsReasonClass.IO,
+                DiagnosticsReasonCode.RULES_CACHE_SAVE_FAILED,
+                "The Nexori server rules were received, but saving the confirmed cache failed: " + exception.getMessage(),
+                payload.requestId(),
+                diag -> diag
+                    .requestId(payload.requestId())
+                    .remoteServerId(referral.issuer().serverId())
+                    .remoteConnectionAddress(pendingRequest.destinationConnectionAddress())
+            );
             pendingReturns.put(event.getUuid(), new PendingSyncReturn(
                 pendingRequest.originWorldName(),
                 pendingRequest.originTransform(),

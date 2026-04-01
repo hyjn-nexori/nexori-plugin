@@ -33,6 +33,8 @@ import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsEvent;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -265,6 +267,7 @@ public final class NexoriMenuHyUiPage {
             case SERVERS -> serversBody(ref, store, playerRef, player, plugin, state, peers, serverEntries, selectedServer);
             case TARGETS -> targetsBody(ref, store, playerRef, player, plugin, state, targets, selectedTarget);
             case RULES -> rulesBody(ref, store, playerRef, player, plugin, state, peers, serverEntries, ruleGroups, selectedRuleGroup);
+            case DIAGNOSTICS -> diagnosticsBody(ref, store, playerRef, player, plugin, state);
         };
     }
 
@@ -2687,6 +2690,139 @@ public final class NexoriMenuHyUiPage {
         return row;
     }
 
+    private static GroupBuilder diagnosticsBody(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state
+    ) {
+        int panelHeight = bodyHeight(state);
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(panelHeight));
+        DiagnosticsService.LocalDiagnosticsView view = plugin.getDiagnosticsService().loadLocalView();
+        String selectedOperationId = state.selectedPeerAddress().isBlank() && !view.recentFailedOperations().isEmpty()
+            ? view.recentFailedOperations().getFirst().operationId()
+            : state.selectedPeerAddress();
+        List<DiagnosticsEvent> timeline = selectedOperationId.isBlank()
+            ? List.of()
+            : plugin.getDiagnosticsService().operationTimeline(selectedOperationId);
+
+        GroupBuilder left = card(LEFT_W, panelHeight, CARD_BG);
+        left.addChild(label("Diagnostics Overview", TITLE, LEFT_W - 32));
+        left.addChild(spacerY(10));
+        left.addChild(label("This view is local to the current server. It summarizes the raw diagnostics journal without collecting data from other servers yet.", MUTED, LEFT_W - 32));
+        left.addChild(spacerY(14));
+
+        GroupBuilder overviewBlock = card(LEFT_W - 32, 164, ITEM_BG);
+        overviewBlock.addChild(label("Last 24 Hours", TITLE, LEFT_W - 64));
+        overviewBlock.addChild(spacerY(10));
+        overviewBlock.addChild(coloredStat("Failed Travels", Integer.toString(view.overview().failedTravelsLast24h()), LEFT_W - 16, view.overview().failedTravelsLast24h() > 0 ? BAD : GOOD));
+        overviewBlock.addChild(coloredStat("Security Denials", Integer.toString(view.overview().securityDenialsLast24h()), LEFT_W - 16, view.overview().securityDenialsLast24h() > 0 ? BAD : GOOD));
+        overviewBlock.addChild(coloredStat("Bootstrap Failures", Integer.toString(view.overview().bootstrapFailuresLast24h()), LEFT_W - 16, view.overview().bootstrapFailuresLast24h() > 0 ? BAD : GOOD));
+        overviewBlock.addChild(coloredStat("Recoveries Activated", Integer.toString(view.overview().recoveriesActivatedLast24h()), LEFT_W - 16, INFO));
+        left.addChild(overviewBlock);
+        left.addChild(spacerY(14));
+
+        GroupBuilder trendsBlock = card(LEFT_W - 32, 370, ITEM_BG);
+        trendsBlock.addChild(label("Local Trends (Last 7 Days)", TITLE, LEFT_W - 64));
+        trendsBlock.addChild(spacerY(10));
+        int trendContentHeight = Math.max(220, view.trends().size() * 66 + 24);
+        ReorderableListBuilder trendList = scrollList(LEFT_W - 64, 290, trendContentHeight, "diagnostics-trends-list", false);
+        if (view.trends().isEmpty()) {
+            trendList.addChild(label("No local diagnostics events are available yet.", MUTED, LEFT_W - 96));
+        } else {
+            for (DiagnosticsService.TrendBucket bucket : view.trends()) {
+                GroupBuilder bucketCard = card(LEFT_W - 80, 58, SERVER_BUTTON_BG);
+                bucketCard.addChild(label(bucket.label(), LABEL, LEFT_W - 96));
+                bucketCard.addChild(spacerY(4));
+                bucketCard.addChild(label(
+                    "Travel fails " + bucket.failedTravels()
+                        + " | Security " + bucket.securityDenials()
+                        + " | Bootstrap " + bucket.bootstrapFailures()
+                        + " | Recovery " + bucket.recoveriesActivated(),
+                    BODY,
+                    LEFT_W - 96
+                ));
+                trendList.addChild(bucketCard);
+                trendList.addChild(spacerY(8));
+            }
+        }
+        trendsBlock.addChild(trendList);
+        left.addChild(trendsBlock);
+
+        GroupBuilder right = card(RIGHT_W, panelHeight, CARD_BG);
+        right.addChild(label("Recent Failed Operations", TITLE, RIGHT_W - 32));
+        right.addChild(spacerY(10));
+        int recentContentHeight = Math.max(160, view.recentFailedOperations().isEmpty() ? 80 : view.recentFailedOperations().size() * 68 + 24);
+        ReorderableListBuilder recentList = scrollList(RIGHT_W - 32, 220, recentContentHeight, "diagnostics-recent-list", true);
+        if (view.recentFailedOperations().isEmpty()) {
+            recentList.addChild(label("No failed local operations have been recorded yet.", MUTED, RIGHT_W - 64));
+        } else {
+            for (DiagnosticsEvent event : view.recentFailedOperations()) {
+                String operationId = event.operationId().isBlank() ? event.eventId() : event.operationId();
+                boolean selected = operationId.equals(selectedOperationId);
+                recentList.addChild(
+                    (selected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+                        .withText(TIME_FORMAT.format(Instant.ofEpochMilli(event.occurredAtEpochMs())) + " | " + event.category() + " | " + event.reasonCode())
+                        .withBackground(selected ? SERVER_BUTTON_SELECTED_BG : SERVER_BUTTON_BG)
+                        .withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 32).setHeight(54))
+                        .onClick((ignored, ctx) -> open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withTab(Tab.DIAGNOSTICS).withSelectedPeer(operationId).withStatus("")
+                        ))
+                );
+                recentList.addChild(spacerY(8));
+            }
+        }
+        right.addChild(recentList);
+        right.addChild(spacerY(14));
+
+        GroupBuilder timelineBlock = card(RIGHT_W - 32, 330, ITEM_BG);
+        timelineBlock.addChild(label("Operation Timeline", TITLE, RIGHT_W - 64));
+        timelineBlock.addChild(spacerY(10));
+        timelineBlock.addChild(label(
+            selectedOperationId.isBlank()
+                ? "Select a failed operation above to inspect its local timeline."
+                : "Operation: " + selectedOperationId,
+            selectedOperationId.isBlank() ? MUTED : INFO,
+            RIGHT_W - 64
+        ));
+        timelineBlock.addChild(spacerY(10));
+        int timelineContentHeight = Math.max(180, timeline.isEmpty() ? 90 : timeline.size() * 64 + 24);
+        ReorderableListBuilder timelineList = scrollList(RIGHT_W - 64, 240, timelineContentHeight, "diagnostics-timeline-list", false);
+        if (timeline.isEmpty()) {
+            timelineList.addChild(label("No local timeline is available for the selected operation yet.", MUTED, RIGHT_W - 96));
+        } else {
+            for (DiagnosticsEvent event : timeline) {
+                GroupBuilder line = card(RIGHT_W - 80, 56, SERVER_BUTTON_BG);
+                line.addChild(label(
+                    TIME_FORMAT.format(Instant.ofEpochMilli(event.occurredAtEpochMs()))
+                        + " | " + event.category()
+                        + " | " + event.action()
+                        + " | " + event.outcome(),
+                    LABEL,
+                    RIGHT_W - 112
+                ));
+                line.addChild(spacerY(4));
+                line.addChild(label(event.reasonCode() + " | " + event.message(), BODY, RIGHT_W - 112));
+                timelineList.addChild(line);
+                timelineList.addChild(spacerY(8));
+            }
+        }
+        timelineBlock.addChild(timelineList);
+        right.addChild(timelineBlock);
+
+        row.addChild(left);
+        row.addChild(spacerX(16));
+        row.addChild(right);
+        return row;
+    }
+
     private static GroupBuilder card(int width, int height, HyUIPatchStyle bg) {
         return GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width).setHeight(height)).withPadding(HyUIPadding.all(16)).withBackground(bg);
     }
@@ -3100,7 +3236,7 @@ public final class NexoriMenuHyUiPage {
     }
 
     public enum Tab {
-        SERVERS("Servers"), RULES("Rules"), TARGETS("Targets");
+        SERVERS("Servers"), RULES("Rules"), TARGETS("Targets"), DIAGNOSTICS("Diagnostics");
         private final String label;
         Tab(String label) { this.label = label; }
     }

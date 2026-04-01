@@ -9,14 +9,23 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,6 +38,7 @@ public final class SecureReferralService {
     private final ServerIdentity localIdentity;
     private final TrustBundleStore trustBundleStore;
     private final SecureReferralPayloadCodec codec;
+    private final DiagnosticsService diagnosticsService;
     private final Gson gson;
     private final Map<String, SecureReferralHandler> handlersByType = new ConcurrentHashMap<>();
 
@@ -36,12 +46,14 @@ public final class SecureReferralService {
         @Nonnull HytaleLogger logger,
         @Nonnull ServerIdentityManager identityManager,
         @Nonnull ServerIdentity localIdentity,
-        @Nonnull TrustBundleStore trustBundleStore
+        @Nonnull TrustBundleStore trustBundleStore,
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.identityManager = identityManager;
         this.localIdentity = localIdentity;
         this.trustBundleStore = trustBundleStore;
+        this.diagnosticsService = diagnosticsService;
         this.codec = new SecureReferralPayloadCodec();
         this.gson = new GsonBuilder().create();
     }
@@ -113,17 +125,44 @@ public final class SecureReferralService {
             envelope = decoded.get();
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to decode Nexori secure referral payload.");
+            diagnosticsService.record(
+                DiagnosticsCategory.SECURITY,
+                DiagnosticsAction.SECURITY_REFERRAL_DECODE,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.REFERRAL_DECODE_FAILED,
+                "This Nexori referral payload could not be decoded.",
+                diagnosticsService.newOperationId("security"),
+                diagnostics -> diagnostics
+                    .payloadType("unknown")
+                    .remoteConnectionAddress(event.getReferralSource() == null || event.getReferralSource().host == null ? "" : event.getReferralSource().host + ":" + event.getReferralSource().port)
+                    .addPreview("rawLengthBytes", Integer.toString(event.getReferralData() == null ? 0 : event.getReferralData().length))
+            );
             deny(event, "This Nexori referral payload could not be decoded.");
             return true;
         }
 
         if (envelope.isExpired(Instant.now())) {
+            recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_EXPIRY,
+                DiagnosticsReasonCode.REFERRAL_EXPIRED,
+                "This Nexori referral expired before it could be used."
+            );
             deny(event, "This Nexori referral expired before it could be used.");
             return true;
         }
 
         BundleMember issuer = findTrustedIssuer(envelope.issuerServerId());
         if (issuer == null) {
+            recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_ISSUER_LOOKUP,
+                DiagnosticsReasonCode.ISSUER_NOT_TRUSTED,
+                "This Nexori referral came from a server that is not in the current trust bundle."
+            );
             deny(event, "This Nexori referral came from a server that is not in the current trust bundle.");
             return true;
         }
@@ -135,17 +174,38 @@ public final class SecureReferralService {
                 envelope.signatureBase64()
             );
             if (!valid) {
+                recordDenied(
+                    event,
+                    envelope,
+                    DiagnosticsAction.SECURITY_REFERRAL_SIGNATURE_VERIFY,
+                    DiagnosticsReasonCode.SIGNATURE_INVALID,
+                    "This Nexori referral signature was invalid."
+                );
                 deny(event, "This Nexori referral signature was invalid.");
                 return true;
             }
         } catch (GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to verify Nexori secure referral signature.");
+            recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_SIGNATURE_VERIFY,
+                DiagnosticsReasonCode.SIGNATURE_VERIFY_EXCEPTION,
+                "This Nexori referral could not be verified."
+            );
             deny(event, "This Nexori referral could not be verified.");
             return true;
         }
 
         SecureReferralHandler handler = handlersByType.get(envelope.payloadType());
         if (handler == null) {
+            recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_PAYLOAD_TYPE_LOOKUP,
+                DiagnosticsReasonCode.PAYLOAD_TYPE_UNSUPPORTED,
+                "This Nexori referral type is not supported on the destination server."
+            );
             deny(event, "This Nexori referral type is not supported on the destination server.");
             return true;
         }
@@ -167,5 +227,58 @@ public final class SecureReferralService {
     private void deny(@Nonnull PlayerSetupConnectEvent event, @Nonnull String reason) {
         event.setCancelled(true);
         event.setReason(Message.raw(reason));
+    }
+
+    private void recordDenied(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull SecureReferralEnvelope envelope,
+        @Nonnull String action,
+        @Nonnull String reasonCode,
+        @Nonnull String message
+    ) {
+        String operationId = "security:" + envelope.nonce();
+        diagnosticsService.record(
+            DiagnosticsCategory.SECURITY,
+            action,
+            DiagnosticsOutcome.DENIED,
+            DiagnosticsReasonClass.SECURITY,
+            reasonCode,
+            message,
+            operationId,
+            diagnostics -> {
+                diagnostics.payloadType(envelope.payloadType());
+                diagnostics.payloadHash(hash(envelope.payloadJson()));
+                diagnostics.playerUuid(envelope.playerUuid());
+                diagnostics.playerNameClaimed(envelope.playerUsername());
+                diagnostics.remoteServerId(envelope.issuerServerId());
+                diagnostics.remoteConnectionAddress(event.getReferralSource() == null || event.getReferralSource().host == null ? "" : event.getReferralSource().host + ":" + event.getReferralSource().port);
+                diagnostics.payloadPreview(buildPayloadPreview(envelope));
+            }
+        );
+    }
+
+    @Nonnull
+    private Map<String, String> buildPayloadPreview(@Nonnull SecureReferralEnvelope envelope) {
+        LinkedHashMap<String, String> preview = new LinkedHashMap<>();
+        preview.put("payloadType", envelope.payloadType());
+        preview.put("issuerServerId", envelope.issuerServerId());
+        preview.put("playerNameClaimed", envelope.playerUsername());
+        preview.put("expiresAtEpochMillis", Long.toString(envelope.expiresAtEpochMillis()));
+        return preview;
+    }
+
+    @Nonnull
+    private String hash(@Nonnull String raw) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder("sha256:");
+            for (byte value : hash) {
+                out.append(String.format("%02x", value));
+            }
+            return out.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            return "";
+        }
     }
 }
