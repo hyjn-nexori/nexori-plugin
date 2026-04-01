@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import au.ellie.hyui.builders.ButtonBuilder;
 import au.ellie.hyui.builders.ContainerBuilder;
+import au.ellie.hyui.builders.DynamicImageBuilder;
 import au.ellie.hyui.builders.GroupBuilder;
 import au.ellie.hyui.builders.HyUIAnchor;
 import au.ellie.hyui.builders.HyUIPadding;
@@ -38,6 +39,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectStatus;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectWindowPreset;
+import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsTestChartState;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -50,6 +52,7 @@ import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -2726,6 +2729,8 @@ public final class NexoriMenuHyUiPage {
         List<DiagnosticsEvent> timeline = selectedOperationId.isBlank()
             ? List.of()
             : plugin.getDiagnosticsService().operationTimeline(selectedOperationId);
+        DiagnosticsTestChartState chartState = plugin.getDiagnosticsTestChartService().latestState();
+        String chartImageFilePath = plugin.getDiagnosticsTestChartService().latestHyUiImageFilePath();
 
         GroupBuilder left = card(LEFT_W, panelHeight, CARD_BG);
         left.addChild(label("Diagnostics Overview", TITLE, LEFT_W - 32));
@@ -2774,7 +2779,8 @@ public final class NexoriMenuHyUiPage {
         right.addChild(label("Diagnostics", TITLE, RIGHT_W - 32));
         right.addChild(spacerY(10));
         int collectorHeight = diagnosticsCollectorHeight(state, collectView);
-        int rightContentHeight = 250 + 14 + 330 + 14 + collectorHeight;
+        int chartTestHeight = 446;
+        int rightContentHeight = 250 + 14 + 330 + 14 + collectorHeight + 14 + chartTestHeight;
         ReorderableListBuilder rightScroll = scrollList(RIGHT_W - 32, panelHeight - 64, rightContentHeight, "diagnostics-right-scroll", true);
 
         GroupBuilder recentBlock = card(RIGHT_W - 48, 250, ITEM_BG);
@@ -2962,6 +2968,34 @@ public final class NexoriMenuHyUiPage {
         }
         collectorBlock.addChild(label("Each remote journal stays append-only. Progress, manifests, errors, raw imports, and stale-lock recovery all live only under this server's diagnostics collect session folder.", MUTED, RIGHT_W - 80));
         rightScroll.addChild(collectorBlock);
+        rightScroll.addChild(spacerY(14));
+
+        GroupBuilder chartBlock = card(RIGHT_W - 48, chartTestHeight, ITEM_BG);
+        chartBlock.addChild(label("Chart Pipeline Test", TITLE, RIGHT_W - 80));
+        chartBlock.addChild(spacerY(8));
+        chartBlock.addChild(label(
+            "This is a small Java -> PNG -> HyUI smoke test. Regenerate the image to confirm the PNG is recreated on disk and the Diagnostics page refreshes to the newest version without restarting the server.",
+            MUTED,
+            RIGHT_W - 80
+        ));
+        chartBlock.addChild(spacerY(10));
+        chartBlock.addChild(stat("Current File", chartState.currentFileName(), RIGHT_W - 48));
+        chartBlock.addChild(stat("Generated", TIME_FORMAT.format(Instant.ofEpochMilli(chartState.generatedAtEpochMs())), RIGHT_W - 48));
+        chartBlock.addChild(stat("Visual Value", Integer.toString(chartState.visualValue()), RIGHT_W - 48));
+        chartBlock.addChild(spacerY(10));
+        chartBlock.addChild(
+            DynamicImageBuilder.dynamicImage()
+                .withImageFilePath(chartImageFilePath)
+                .withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 80).setHeight(220))
+        );
+        chartBlock.addChild(spacerY(10));
+        chartBlock.addChild(
+            ButtonBuilder.textButton()
+                .withText("Regenerate Test Image")
+                .withAnchor(new HyUIAnchor().setWidth(220).setHeight(38))
+                .onClick((ignored, ctx) -> regenerateDiagnosticsTestImage(ref, store, playerRef, player, plugin, state))
+        );
+        rightScroll.addChild(chartBlock);
         right.addChild(rightScroll);
 
         row.addChild(left);
@@ -3063,6 +3097,29 @@ public final class NexoriMenuHyUiPage {
             open(ref, store, playerRef, player, plugin, state.withStatus("Force-unlocked the stale diagnostics collect session."));
         } catch (IllegalStateException exception) {
             open(ref, store, playerRef, player, plugin, state.withStatus("Could not force-unlock diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static void regenerateDiagnosticsTestImage(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state
+    ) {
+        try {
+            DiagnosticsTestChartState chartState = plugin.getDiagnosticsTestChartService().regenerate();
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withStatus("Regenerated diagnostics test image: " + chartState.currentFileName())
+            );
+        } catch (IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withStatus("Could not regenerate the diagnostics test image: " + exception.getMessage()));
         }
     }
 

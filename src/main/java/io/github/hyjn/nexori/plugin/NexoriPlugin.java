@@ -30,6 +30,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
+import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsTestChartService;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
@@ -99,6 +100,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ServerIdentity localIdentity;
     private DiagnosticsService diagnosticsService;
     private DiagnosticsCollectService diagnosticsCollectService;
+    private DiagnosticsTestChartService diagnosticsTestChartService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -175,6 +177,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.localIdentity.serverId(),
                 this.trustBundleStore,
                 this.secureReferralService
+            );
+            this.diagnosticsTestChartService = new DiagnosticsTestChartService(
+                this.getLogger(),
+                this.getDataDirectory()
             );
             this.inventoryTransferService = new InventoryTransferService(
                 this.getLogger(),
@@ -375,5 +381,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiagnosticsCollectService getDiagnosticsCollectService() {
         return diagnosticsCollectService;
+    }
+
+    public DiagnosticsTestChartService getDiagnosticsTestChartService() {
+        return diagnosticsTestChartService;
     }
 }
