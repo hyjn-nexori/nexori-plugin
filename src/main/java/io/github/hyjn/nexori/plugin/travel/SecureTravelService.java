@@ -268,6 +268,7 @@ public final class SecureTravelService implements SecureReferralHandler {
             payload.sourceServerId(),
             payload.sourceConnectionAddress(),
             resolvedTarget.definition().id(),
+            resolvedTarget.definition().displayName(),
             resolvedTarget.definition().kind().name(),
             resolvedTarget.effectiveWorldName(),
             resolvedTarget.effectiveArrivalPointId(),
@@ -290,6 +291,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                 .remoteServerId(payload.sourceServerId())
                 .remoteConnectionAddress(payload.sourceConnectionAddress())
                 .targetId(resolvedTarget.definition().id())
+                .targetDisplayName(resolvedTarget.definition().displayName())
                 .targetKind(resolvedTarget.definition().kind().name())
                 .arrivalPointId(resolvedTarget.effectiveArrivalPointId())
                 .worldName(resolvedTarget.effectiveWorldName())
@@ -356,6 +358,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                 .remoteServerId(arrival.sourceServerId())
                 .remoteConnectionAddress(arrival.sourceConnectionAddress())
                 .targetId(arrival.destinationTargetId())
+                .targetDisplayName(arrival.destinationTargetDisplayName())
                 .targetKind(arrival.destinationTargetKind())
                 .worldName(arrival.worldName())
                 .arrivalPointId(arrival.arrivalPointId())

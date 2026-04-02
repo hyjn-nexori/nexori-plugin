@@ -30,7 +30,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriTargetShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTravelCommand;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
-import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsTestChartService;
+import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsOwnerReportService;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
@@ -100,7 +100,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ServerIdentity localIdentity;
     private DiagnosticsService diagnosticsService;
     private DiagnosticsCollectService diagnosticsCollectService;
-    private DiagnosticsTestChartService diagnosticsTestChartService;
+    private DiagnosticsOwnerReportService diagnosticsOwnerReportService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -178,10 +178,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.trustBundleStore,
                 this.secureReferralService
             );
-            this.diagnosticsTestChartService = new DiagnosticsTestChartService(
-                this.getLogger(),
-                this.getDataDirectory()
-            );
             this.inventoryTransferService = new InventoryTransferService(
                 this.getLogger(),
                 new InventoryTransferBackupStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-backups.json")),
@@ -234,6 +230,13 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureTravelService,
                 this.getBasePermission() + ".admin",
                 this.diagnosticsService
+            );
+            this.diagnosticsOwnerReportService = new DiagnosticsOwnerReportService(
+                this.getLogger(),
+                this.getDataDirectory(),
+                this.diagnosticsService,
+                this.portalInstanceService,
+                this.destinationTargetService
             );
             this.secureReferralService.registerHandler(this.secureTravelService);
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
@@ -383,7 +386,7 @@ public class NexoriPlugin extends JavaPlugin {
         return diagnosticsCollectService;
     }
 
-    public DiagnosticsTestChartService getDiagnosticsTestChartService() {
-        return diagnosticsTestChartService;
+    public DiagnosticsOwnerReportService getDiagnosticsOwnerReportService() {
+        return diagnosticsOwnerReportService;
     }
 }

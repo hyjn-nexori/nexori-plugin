@@ -5,6 +5,7 @@ public record PendingArrival(
     String sourceServerId,
     String sourceConnectionAddress,
     String destinationTargetId,
+    String destinationTargetDisplayName,
     String destinationTargetKind,
     String worldName,
     String arrivalPointId,

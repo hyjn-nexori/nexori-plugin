@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import au.ellie.hyui.builders.ButtonBuilder;
 import au.ellie.hyui.builders.ContainerBuilder;
-import au.ellie.hyui.builders.DynamicImageBuilder;
 import au.ellie.hyui.builders.GroupBuilder;
 import au.ellie.hyui.builders.HyUIAnchor;
 import au.ellie.hyui.builders.HyUIPadding;
@@ -34,12 +33,10 @@ import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
-import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsEvent;
-import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectStatus;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectWindowPreset;
-import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsTestChartState;
+import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsOwnerReportService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -141,7 +138,8 @@ public final class NexoriMenuHyUiPage {
             "",
             "",
             "",
-            DiagnosticsCollectWindowPreset.LAST_7_DAYS.id()
+            DiagnosticsCollectWindowPreset.LAST_7_DAYS.id(),
+            DiagnosticsView.SUMMARY.id()
         );
     }
 
@@ -2719,153 +2717,277 @@ public final class NexoriMenuHyUiPage {
         State state
     ) {
         int panelHeight = bodyHeight(state);
-        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(panelHeight));
-        DiagnosticsService.LocalDiagnosticsView view = plugin.getDiagnosticsService().loadLocalView();
+        DiagnosticsOwnerReportService.Report report = plugin.getDiagnosticsOwnerReportService().load();
         DiagnosticsCollectService.CollectUiView collectView = plugin.getDiagnosticsCollectService().loadUiView();
         DiagnosticsCollectWindowPreset selectedWindowPreset = DiagnosticsCollectWindowPreset.fromId(state.diagnosticsWindowPresetId());
-        String selectedOperationId = state.selectedPeerAddress().isBlank() && !view.recentFailedOperations().isEmpty()
-            ? view.recentFailedOperations().getFirst().operationId()
-            : state.selectedPeerAddress();
-        List<DiagnosticsEvent> timeline = selectedOperationId.isBlank()
-            ? List.of()
-            : plugin.getDiagnosticsService().operationTimeline(selectedOperationId);
-        DiagnosticsTestChartState chartState = plugin.getDiagnosticsTestChartService().latestState();
-        String chartImageFilePath = plugin.getDiagnosticsTestChartService().latestHyUiImageFilePath();
+        DiagnosticsView selectedView = DiagnosticsView.fromId(state.diagnosticsViewId());
+
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(BODY_W).setHeight(panelHeight));
 
         GroupBuilder left = card(LEFT_W, panelHeight, CARD_BG);
-        left.addChild(label("Diagnostics Overview", TITLE, LEFT_W - 32));
+        left.addChild(label("Diagnostics", TITLE, LEFT_W - 32));
         left.addChild(spacerY(10));
-        left.addChild(label("This view is local to the current server. It summarizes the raw diagnostics journal without collecting data from other servers yet.", MUTED, LEFT_W - 32));
+        left.addChild(label("Security first. This view summarizes human-readable alerts for owners and admins.", MUTED, LEFT_W - 32));
         left.addChild(spacerY(14));
-
-        GroupBuilder overviewBlock = card(LEFT_W - 32, 164, ITEM_BG);
-        overviewBlock.addChild(label("Last 24 Hours", TITLE, LEFT_W - 64));
-        overviewBlock.addChild(spacerY(10));
-        overviewBlock.addChild(coloredStat("Failed Travels", Integer.toString(view.overview().failedTravelsLast24h()), LEFT_W - 16, view.overview().failedTravelsLast24h() > 0 ? BAD : GOOD));
-        overviewBlock.addChild(coloredStat("Security Denials", Integer.toString(view.overview().securityDenialsLast24h()), LEFT_W - 16, view.overview().securityDenialsLast24h() > 0 ? BAD : GOOD));
-        overviewBlock.addChild(coloredStat("Bootstrap Failures", Integer.toString(view.overview().bootstrapFailuresLast24h()), LEFT_W - 16, view.overview().bootstrapFailuresLast24h() > 0 ? BAD : GOOD));
-        overviewBlock.addChild(coloredStat("Recoveries Activated", Integer.toString(view.overview().recoveriesActivatedLast24h()), LEFT_W - 16, INFO));
-        left.addChild(overviewBlock);
-        left.addChild(spacerY(14));
-
-        GroupBuilder trendsBlock = card(LEFT_W - 32, 330, ITEM_BG);
-        trendsBlock.addChild(label("Local Trends (Last 7 Days)", TITLE, LEFT_W - 64));
-        trendsBlock.addChild(spacerY(10));
-        int trendContentHeight = Math.max(180, view.trends().size() * 66 + 24);
-        ReorderableListBuilder trendList = scrollList(LEFT_W - 64, 250, trendContentHeight, "diagnostics-trends-list", false);
-        if (view.trends().isEmpty()) {
-            trendList.addChild(label("No local diagnostics events are available yet.", MUTED, LEFT_W - 96));
-        } else {
-            for (DiagnosticsService.TrendBucket bucket : view.trends()) {
-                GroupBuilder bucketCard = card(LEFT_W - 80, 58, SERVER_BUTTON_BG);
-                bucketCard.addChild(label(bucket.label(), LABEL, LEFT_W - 96));
-                bucketCard.addChild(spacerY(4));
-                bucketCard.addChild(label(
-                    "Travel fails " + bucket.failedTravels()
-                        + " | Security " + bucket.securityDenials()
-                        + " | Bootstrap " + bucket.bootstrapFailures()
-                        + " | Recovery " + bucket.recoveriesActivated(),
-                    BODY,
-                    LEFT_W - 96
-                ));
-                trendList.addChild(bucketCard);
-                trendList.addChild(spacerY(8));
-            }
+        left.addChild(
+            (selectedView == DiagnosticsView.COLLECTOR ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+                .withText("Collector")
+                .withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(40))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("")
+                ))
+        );
+        if (collectView.session() != null) {
+            left.addChild(spacerY(8));
+            left.addChild(label("Latest collect: " + collectView.session().status(), MUTED, LEFT_W - 32));
         }
-        trendsBlock.addChild(trendList);
-        left.addChild(trendsBlock);
+        left.addChild(spacerY(16));
+        left.addChild(diagnosticsViewButton(ref, store, playerRef, player, plugin, state, "Summary", DiagnosticsView.SUMMARY, selectedView == DiagnosticsView.SUMMARY));
+        left.addChild(spacerY(8));
+        left.addChild(diagnosticsViewButton(ref, store, playerRef, player, plugin, state, "Alerts", DiagnosticsView.ALERTS, selectedView == DiagnosticsView.ALERTS));
 
         GroupBuilder right = card(RIGHT_W, panelHeight, CARD_BG);
-        right.addChild(label("Diagnostics", TITLE, RIGHT_W - 32));
-        right.addChild(spacerY(10));
-        int collectorHeight = diagnosticsCollectorHeight(state, collectView);
-        int chartTestHeight = 446;
-        int rightContentHeight = 250 + 14 + 330 + 14 + collectorHeight + 14 + chartTestHeight;
-        ReorderableListBuilder rightScroll = scrollList(RIGHT_W - 32, panelHeight - 64, rightContentHeight, "diagnostics-right-scroll", true);
-
-        GroupBuilder recentBlock = card(RIGHT_W - 48, 250, ITEM_BG);
-        recentBlock.addChild(label("Recent Failed Operations", TITLE, RIGHT_W - 80));
-        recentBlock.addChild(spacerY(10));
-        int recentContentHeight = Math.max(140, view.recentFailedOperations().isEmpty() ? 80 : view.recentFailedOperations().size() * 68 + 24);
-        ReorderableListBuilder recentList = scrollList(RIGHT_W - 80, 170, recentContentHeight, "diagnostics-recent-list", true);
-        if (view.recentFailedOperations().isEmpty()) {
-            recentList.addChild(label("No failed local operations have been recorded yet.", MUTED, RIGHT_W - 112));
-        } else {
-            for (DiagnosticsEvent event : view.recentFailedOperations()) {
-                String operationId = event.operationId().isBlank() ? event.eventId() : event.operationId();
-                boolean selected = operationId.equals(selectedOperationId);
-                recentList.addChild(
-                    (selected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
-                        .withText(TIME_FORMAT.format(Instant.ofEpochMilli(event.occurredAtEpochMs())) + " | " + event.category() + " | " + event.reasonCode())
-                        .withBackground(selected ? SERVER_BUTTON_SELECTED_BG : SERVER_BUTTON_BG)
-                        .withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 80).setHeight(54))
-                        .onClick((ignored, ctx) -> open(
-                            ref,
-                            store,
-                            playerRef,
-                            player,
-                            plugin,
-                            state.withTab(Tab.DIAGNOSTICS).withSelectedPeer(operationId).withStatus("")
-                        ))
-                );
-                recentList.addChild(spacerY(8));
-            }
-        }
-        recentBlock.addChild(recentList);
-        rightScroll.addChild(recentBlock);
-        rightScroll.addChild(spacerY(14));
-
-        GroupBuilder timelineBlock = card(RIGHT_W - 48, 330, ITEM_BG);
-        timelineBlock.addChild(label("Operation Timeline", TITLE, RIGHT_W - 80));
-        timelineBlock.addChild(spacerY(10));
-        timelineBlock.addChild(label(
-            selectedOperationId.isBlank()
-                ? "Select a failed operation above to inspect its local timeline."
-                : "Operation: " + selectedOperationId,
-            selectedOperationId.isBlank() ? MUTED : INFO,
-            RIGHT_W - 80
+        right.addChild(label(selectedView.title(), TITLE, RIGHT_W - 32));
+        right.addChild(spacerY(8));
+        right.addChild(label(
+            selectedView == DiagnosticsView.COLLECTOR
+                ? "Manage distributed collection without mixing it into the analytics journal."
+                : report.dataSourceText(),
+            MUTED,
+            RIGHT_W - 32
         ));
-        timelineBlock.addChild(spacerY(10));
-        int timelineContentHeight = Math.max(160, timeline.isEmpty() ? 90 : timeline.size() * 64 + 24);
-        ReorderableListBuilder timelineList = scrollList(RIGHT_W - 80, 240, timelineContentHeight, "diagnostics-timeline-list", false);
-        if (timeline.isEmpty()) {
-            timelineList.addChild(label("No local timeline is available for the selected operation yet.", MUTED, RIGHT_W - 112));
-        } else {
-            for (DiagnosticsEvent event : timeline) {
-                GroupBuilder line = card(RIGHT_W - 96, 56, SERVER_BUTTON_BG);
-                line.addChild(label(
-                    TIME_FORMAT.format(Instant.ofEpochMilli(event.occurredAtEpochMs()))
-                        + " | " + event.category()
-                        + " | " + event.action()
-                        + " | " + event.outcome(),
-                    LABEL,
-                    RIGHT_W - 128
-                ));
-                line.addChild(spacerY(4));
-                line.addChild(label(event.reasonCode() + " | " + event.message(), BODY, RIGHT_W - 128));
-                timelineList.addChild(line);
-                timelineList.addChild(spacerY(8));
-            }
-        }
-        timelineBlock.addChild(timelineList);
-        rightScroll.addChild(timelineBlock);
-        rightScroll.addChild(spacerY(14));
+        right.addChild(spacerY(10));
+        right.addChild(switch (selectedView) {
+            case SUMMARY -> diagnosticsSummaryContent(report, RIGHT_W - 32, panelHeight - 64);
+            case ALERTS -> diagnosticsAlertsContent(report, RIGHT_W - 32, panelHeight - 64);
+            case COLLECTOR -> diagnosticsCollectorContent(ref, store, playerRef, player, plugin, state, collectView, selectedWindowPreset, RIGHT_W - 32, panelHeight - 64);
+        });
 
-        GroupBuilder collectorBlock = card(RIGHT_W - 48, collectorHeight, ITEM_BG);
-        collectorBlock.addChild(label("Collector", TITLE, RIGHT_W - 80));
+        row.addChild(left);
+        row.addChild(spacerX(16));
+        row.addChild(right);
+        return row;
+    }
+
+    private static void planDiagnosticsCollect(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        DiagnosticsCollectWindowPreset preset
+    ) {
+        try {
+            plugin.getDiagnosticsCollectService().plan(
+                playerRef,
+                player.getWorld().getName(),
+                captureCurrentTransform(store, ref),
+                preset
+            );
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Diagnostics collect planning started."));
+        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Could not plan diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static void startDiagnosticsCollect(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        boolean forceResume
+    ) {
+        try {
+            plugin.getDiagnosticsCollectService().startOrResume(
+                playerRef,
+                player.getWorld().getName(),
+                captureCurrentTransform(store, ref),
+                forceResume
+            );
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus(forceResume ? "Force resume started." : "Diagnostics collect started or resumed."));
+        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Could not start diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static void retryDiagnosticsCollect(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state
+    ) {
+        try {
+            plugin.getDiagnosticsCollectService().retryFailed(
+                playerRef,
+                player.getWorld().getName(),
+                captureCurrentTransform(store, ref)
+            );
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Retrying the last failed diagnostics collect session."));
+        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Could not retry diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static void cancelDiagnosticsCollect(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state
+    ) {
+        try {
+            plugin.getDiagnosticsCollectService().cancel();
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Cancelled the diagnostics collect session."));
+        } catch (IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Could not cancel diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static void forceUnlockDiagnosticsCollect(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state
+    ) {
+        try {
+            plugin.getDiagnosticsCollectService().forceUnlock();
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Force-unlocked the stale diagnostics collect session."));
+        } catch (IllegalStateException exception) {
+            open(ref, store, playerRef, player, plugin, state.withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("Could not force-unlock diagnostics collect: " + exception.getMessage()));
+        }
+    }
+
+    private static ButtonBuilder diagnosticsViewButton(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        String labelText,
+        DiagnosticsView targetView,
+        boolean selected
+    ) {
+        return (selected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+            .withText(labelText)
+            .withAnchor(new HyUIAnchor().setWidth(LEFT_W - 32).setHeight(40))
+            .onClick((ignored, ctx) -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withDiagnosticsViewId(targetView.id()).withStatus("")
+            ));
+    }
+
+    private static ReorderableListBuilder diagnosticsSummaryContent(
+        @Nonnull DiagnosticsOwnerReportService.Report report,
+        int width,
+        int height
+    ) {
+        DiagnosticsOwnerReportService.Summary summary = report.summary();
+        int attentionHeight = Math.max(140, summary.attentionItems().size() * 58 + 24);
+        int contentHeight = 220 + 14 + attentionHeight;
+        ReorderableListBuilder scroll = scrollList(width, height, contentHeight, "diagnostics-summary-scroll", true);
+
+        GroupBuilder snapshot = card(width - 16, 220, ITEM_BG);
+        snapshot.addChild(coloredStat("Overall status", summary.generalStatus(), width - 16, diagnosticsStatusStyle(summary.generalStatus())));
+        snapshot.addChild(coloredStat("Suspicious activity", summary.suspiciousStatus(), width - 16, diagnosticsSuspiciousStyle(summary.suspiciousStatus())));
+        snapshot.addChild(coloredStat("Recent failures", summary.failuresStatus(), width - 16, "None".equals(summary.failuresStatus()) ? GOOD : BAD));
+        snapshot.addChild(stat("Servers involved", summary.serversText(), width - 16));
+        snapshot.addChild(stat("Portals involved", summary.portalsText(), width - 16));
+        scroll.addChild(snapshot);
+        scroll.addChild(spacerY(14));
+
+        GroupBuilder attention = card(width - 16, attentionHeight, ITEM_BG);
+        attention.addChild(label("Needs attention", TITLE, width - 48));
+        attention.addChild(spacerY(10));
+        for (String item : summary.attentionItems()) {
+            GroupBuilder line = card(width - 48, 46, SERVER_BUTTON_BG);
+            line.addChild(label(item, BODY, width - 80));
+            attention.addChild(line);
+            attention.addChild(spacerY(8));
+        }
+        scroll.addChild(attention);
+        return scroll;
+    }
+
+    private static ReorderableListBuilder diagnosticsAlertsContent(
+        @Nonnull DiagnosticsOwnerReportService.Report report,
+        int width,
+        int height
+    ) {
+        List<DiagnosticsOwnerReportService.Alert> alerts = report.alerts();
+        int contentHeight = Math.max(160, alerts.isEmpty() ? 120 : alerts.size() * 156 + 24);
+        ReorderableListBuilder scroll = scrollList(width, height, contentHeight, "diagnostics-alerts-scroll", true);
+        if (alerts.isEmpty()) {
+            GroupBuilder empty = card(width - 16, 110, ITEM_BG);
+            empty.addChild(label("No recent alerts were detected.", TITLE, width - 48));
+            empty.addChild(spacerY(8));
+            empty.addChild(label("If suspicious messages or important failures appear, they will be listed here in human language.", MUTED, width - 48));
+            scroll.addChild(empty);
+            return scroll;
+        }
+
+        for (DiagnosticsOwnerReportService.Alert alert : alerts) {
+            GroupBuilder alertCard = card(width - 16, 148, alert.suspicious() ? BAD_BG : ITEM_BG);
+            alertCard.addChild(label(alert.severity() + " | " + alert.title(), TITLE, width - 48));
+            alertCard.addChild(spacerY(6));
+            alertCard.addChild(label(alert.whenText() + " | " + alert.alertTypeText() + " | " + alert.occurrencesText(), LABEL, width - 48));
+            alertCard.addChild(spacerY(8));
+            alertCard.addChild(stat("Server", alert.serversText(), width - 16));
+            alertCard.addChild(stat("Portal", alert.portalsText(), width - 16));
+            alertCard.addChild(spacerY(6));
+            alertCard.addChild(label(alert.summary(), BODY, width - 48));
+            scroll.addChild(alertCard);
+            scroll.addChild(spacerY(8));
+        }
+        return scroll;
+    }
+
+    private static ReorderableListBuilder diagnosticsCollectorContent(
+        Ref<EntityStore> ref,
+        Store<EntityStore> store,
+        PlayerRef playerRef,
+        Player player,
+        NexoriPlugin plugin,
+        State state,
+        DiagnosticsCollectService.CollectUiView collectView,
+        DiagnosticsCollectWindowPreset selectedWindowPreset,
+        int width,
+        int height
+    ) {
+        int collectorHeight = diagnosticsCollectorHeight(state, collectView);
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(collectorHeight, height), "diagnostics-collector-scroll", true);
+        GroupBuilder collectorBlock = card(width - 16, collectorHeight, ITEM_BG);
+        collectorBlock.addChild(label("Collector", TITLE, width - 48));
         collectorBlock.addChild(spacerY(10));
         collectorBlock.addChild(label(
             collectView.session() == null
-                ? "Plan a diagnostics collect from the trusted remote servers in this network. The local journal stays local; the collector only copies remote JSONL slices into the collect session folder on this server."
+                ? "Plan a collect from trusted servers. The local journal is untouched; only remote blocks are imported into the session folder."
                 : "Session " + collectView.session().sessionId()
                     + " | " + collectView.session().status()
                     + (collectView.staleLock() ? " | Stale Lock" : ""),
             collectView.staleLock() ? BAD : MUTED,
-            RIGHT_W - 80
+            width - 48
         ));
         collectorBlock.addChild(spacerY(10));
 
-        GroupBuilder windowRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 80).setHeight(38));
+        GroupBuilder windowRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 48).setHeight(38));
         for (DiagnosticsCollectWindowPreset preset : DiagnosticsCollectWindowPreset.values()) {
             boolean selected = preset == selectedWindowPreset;
             windowRow.addChild(
@@ -2878,7 +3000,7 @@ public final class NexoriMenuHyUiPage {
                         playerRef,
                         player,
                         plugin,
-                        state.withDiagnosticsWindowPresetId(preset.id()).withStatus("")
+                        state.withDiagnosticsWindowPresetId(preset.id()).withDiagnosticsViewId(DiagnosticsView.COLLECTOR.id()).withStatus("")
                     ))
             );
             windowRow.addChild(spacerX(8));
@@ -2886,7 +3008,7 @@ public final class NexoriMenuHyUiPage {
         collectorBlock.addChild(windowRow);
         collectorBlock.addChild(spacerY(10));
 
-        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 80).setHeight(38));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 48).setHeight(38));
         actionRow.addChild(
             ButtonBuilder.textButton()
                 .withText("Plan")
@@ -2933,194 +3055,58 @@ public final class NexoriMenuHyUiPage {
         collectorBlock.addChild(actionRow);
         collectorBlock.addChild(spacerY(10));
         if (!state.statusText().isBlank()) {
-            collectorBlock.addChild(label(state.statusText(), INFO, RIGHT_W - 80));
+            collectorBlock.addChild(label(state.statusText(), INFO, width - 48));
             collectorBlock.addChild(spacerY(10));
         }
         if (collectView.session() != null) {
-            collectorBlock.addChild(stat("Window", selectedWindowPreset.label(), RIGHT_W - 48));
-            collectorBlock.addChild(stat("Planned Bytes", formatBytes(collectView.session().estimatedTotalBytes()), RIGHT_W - 48));
-            collectorBlock.addChild(stat("Downloaded Bytes", formatBytes(collectView.session().downloadedBytes()), RIGHT_W - 48));
-            collectorBlock.addChild(stat("Planned Events", Long.toString(collectView.session().estimatedTotalEvents()), RIGHT_W - 48));
-            collectorBlock.addChild(stat("Downloaded Events", Long.toString(collectView.session().downloadedEvents()), RIGHT_W - 48));
+            collectorBlock.addChild(stat("Window", selectedWindowPreset.label(), width - 16));
+            collectorBlock.addChild(stat("Planned Bytes", formatBytes(collectView.session().estimatedTotalBytes()), width - 16));
+            collectorBlock.addChild(stat("Downloaded Bytes", formatBytes(collectView.session().downloadedBytes()), width - 16));
+            collectorBlock.addChild(stat("Planned Events", Long.toString(collectView.session().estimatedTotalEvents()), width - 16));
+            collectorBlock.addChild(stat("Downloaded Events", Long.toString(collectView.session().downloadedEvents()), width - 16));
             if ((collectView.session().status() == DiagnosticsCollectStatus.FAILED
                 || collectView.session().status() == DiagnosticsCollectStatus.CANCELLED)
                 && collectView.session().lastError() != null
                 && !collectView.session().lastError().isBlank()) {
                 collectorBlock.addChild(spacerY(8));
-                collectorBlock.addChild(label("Last Error: " + collectView.session().lastError(), BAD, RIGHT_W - 80));
+                collectorBlock.addChild(label("Last Error: " + collectView.session().lastError(), BAD, width - 48));
             }
             collectorBlock.addChild(spacerY(10));
         }
 
-        for (DiagnosticsCollectService.CollectSourceRow serverRow : collectView.sources()) {
-            GroupBuilder serverCard = card(RIGHT_W - 96, 56, SERVER_BUTTON_BG);
-            serverCard.addChild(label(serverRow.sourceConnectionAddress() + " | " + serverRow.status(), LABEL, RIGHT_W - 128));
-            serverCard.addChild(spacerY(4));
-            serverCard.addChild(label(
-                formatBytes(serverRow.downloadedBytes()) + " / " + formatBytes(serverRow.estimatedBytes())
-                    + " | events " + serverRow.downloadedEvents() + " / " + serverRow.estimatedEvents()
-                    + (serverRow.lastError() == null || serverRow.lastError().isBlank() ? "" : " | " + serverRow.lastError()),
+        for (DiagnosticsCollectService.CollectSourceRow sourceRow : collectView.sources()) {
+            GroupBuilder sourceCard = card(width - 64, 56, SERVER_BUTTON_BG);
+            sourceCard.addChild(label(sourceRow.sourceConnectionAddress() + " | " + sourceRow.status(), LABEL, width - 96));
+            sourceCard.addChild(spacerY(4));
+            sourceCard.addChild(label(
+                formatBytes(sourceRow.downloadedBytes()) + " / " + formatBytes(sourceRow.estimatedBytes())
+                    + " | events " + sourceRow.downloadedEvents() + " / " + sourceRow.estimatedEvents()
+                    + (sourceRow.lastError() == null || sourceRow.lastError().isBlank() ? "" : " | " + sourceRow.lastError()),
                 BODY,
-                RIGHT_W - 128
+                width - 96
             ));
-            collectorBlock.addChild(serverCard);
+            collectorBlock.addChild(sourceCard);
             collectorBlock.addChild(spacerY(8));
         }
-        collectorBlock.addChild(label("Each remote journal stays append-only. Progress, manifests, errors, raw imports, and stale-lock recovery all live only under this server's diagnostics collect session folder.", MUTED, RIGHT_W - 80));
-        rightScroll.addChild(collectorBlock);
-        rightScroll.addChild(spacerY(14));
-
-        GroupBuilder chartBlock = card(RIGHT_W - 48, chartTestHeight, ITEM_BG);
-        chartBlock.addChild(label("Chart Pipeline Test", TITLE, RIGHT_W - 80));
-        chartBlock.addChild(spacerY(8));
-        chartBlock.addChild(label(
-            "This is a small Java -> PNG -> HyUI smoke test. Regenerate the image to confirm the PNG is recreated on disk and the Diagnostics page refreshes to the newest version without restarting the server.",
-            MUTED,
-            RIGHT_W - 80
-        ));
-        chartBlock.addChild(spacerY(10));
-        chartBlock.addChild(stat("Current File", chartState.currentFileName(), RIGHT_W - 48));
-        chartBlock.addChild(stat("Generated", TIME_FORMAT.format(Instant.ofEpochMilli(chartState.generatedAtEpochMs())), RIGHT_W - 48));
-        chartBlock.addChild(stat("Visual Value", Integer.toString(chartState.visualValue()), RIGHT_W - 48));
-        chartBlock.addChild(spacerY(10));
-        chartBlock.addChild(
-            DynamicImageBuilder.dynamicImage()
-                .withImageFilePath(chartImageFilePath)
-                .withAnchor(new HyUIAnchor().setWidth(RIGHT_W - 80).setHeight(220))
-        );
-        chartBlock.addChild(spacerY(10));
-        chartBlock.addChild(
-            ButtonBuilder.textButton()
-                .withText("Regenerate Test Image")
-                .withAnchor(new HyUIAnchor().setWidth(220).setHeight(38))
-                .onClick((ignored, ctx) -> regenerateDiagnosticsTestImage(ref, store, playerRef, player, plugin, state))
-        );
-        rightScroll.addChild(chartBlock);
-        right.addChild(rightScroll);
-
-        row.addChild(left);
-        row.addChild(spacerX(16));
-        row.addChild(right);
-        return row;
+        collectorBlock.addChild(label("Each remote journal remains append-only. Progress, manifests, and errors live only inside the collect session folder.", MUTED, width - 48));
+        scroll.addChild(collectorBlock);
+        return scroll;
     }
 
-    private static void planDiagnosticsCollect(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state,
-        DiagnosticsCollectWindowPreset preset
-    ) {
-        try {
-            plugin.getDiagnosticsCollectService().plan(
-                playerRef,
-                player.getWorld().getName(),
-                captureCurrentTransform(store, ref),
-                preset
-            );
-            open(ref, store, playerRef, player, plugin, state.withStatus("Diagnostics collect planning started."));
-        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not plan diagnostics collect: " + exception.getMessage()));
-        }
+    private static HyUIStyle diagnosticsStatusStyle(@Nonnull String status) {
+        return switch (status) {
+            case "OK" -> GOOD;
+            case "Critical" -> BAD;
+            default -> INFO;
+        };
     }
 
-    private static void startDiagnosticsCollect(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state,
-        boolean forceResume
-    ) {
-        try {
-            plugin.getDiagnosticsCollectService().startOrResume(
-                playerRef,
-                player.getWorld().getName(),
-                captureCurrentTransform(store, ref),
-                forceResume
-            );
-            open(ref, store, playerRef, player, plugin, state.withStatus(forceResume ? "Force resume started." : "Diagnostics collect started or resumed."));
-        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not start diagnostics collect: " + exception.getMessage()));
-        }
-    }
-
-    private static void retryDiagnosticsCollect(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state
-    ) {
-        try {
-            plugin.getDiagnosticsCollectService().retryFailed(
-                playerRef,
-                player.getWorld().getName(),
-                captureCurrentTransform(store, ref)
-            );
-            open(ref, store, playerRef, player, plugin, state.withStatus("Retrying the last failed diagnostics collect session."));
-        } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not retry diagnostics collect: " + exception.getMessage()));
-        }
-    }
-
-    private static void cancelDiagnosticsCollect(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state
-    ) {
-        try {
-            plugin.getDiagnosticsCollectService().cancel();
-            open(ref, store, playerRef, player, plugin, state.withStatus("Cancelled the diagnostics collect session."));
-        } catch (IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not cancel diagnostics collect: " + exception.getMessage()));
-        }
-    }
-
-    private static void forceUnlockDiagnosticsCollect(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state
-    ) {
-        try {
-            plugin.getDiagnosticsCollectService().forceUnlock();
-            open(ref, store, playerRef, player, plugin, state.withStatus("Force-unlocked the stale diagnostics collect session."));
-        } catch (IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not force-unlock diagnostics collect: " + exception.getMessage()));
-        }
-    }
-
-    private static void regenerateDiagnosticsTestImage(
-        Ref<EntityStore> ref,
-        Store<EntityStore> store,
-        PlayerRef playerRef,
-        Player player,
-        NexoriPlugin plugin,
-        State state
-    ) {
-        try {
-            DiagnosticsTestChartState chartState = plugin.getDiagnosticsTestChartService().regenerate();
-            open(
-                ref,
-                store,
-                playerRef,
-                player,
-                plugin,
-                state.withStatus("Regenerated diagnostics test image: " + chartState.currentFileName())
-            );
-        } catch (IllegalStateException exception) {
-            open(ref, store, playerRef, player, plugin, state.withStatus("Could not regenerate the diagnostics test image: " + exception.getMessage()));
-        }
+    private static HyUIStyle diagnosticsSuspiciousStyle(@Nonnull String status) {
+        return switch (status) {
+            case "None" -> GOOD;
+            case "Repeated" -> BAD;
+            default -> INFO;
+        };
     }
 
     private static int diagnosticsCollectorHeight(
@@ -3546,28 +3532,30 @@ public final class NexoriMenuHyUiPage {
         @Nonnull String pendingPortalTargetId,
         @Nonnull String pendingPortalTravelProfileId,
         @Nonnull String pendingPortalDisplayName,
-        @Nonnull String diagnosticsWindowPresetId
+        @Nonnull String diagnosticsWindowPresetId,
+        @Nonnull String diagnosticsViewId
     ) {
-        public State withTab(@Nonnull Tab tab) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withSelectedPeer(@Nonnull String selectedPeerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withSelectedRuleGroup(@Nonnull String selectedRuleGroupId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withSelectedTarget(@Nonnull String selectedTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withStatus(@Nonnull String statusText) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withServersPanel(@Nonnull ServersPanel serversPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withRulesPanel(@Nonnull RulesPanel rulesPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withTargetsPanel(@Nonnull TargetsPanel targetsPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingServerAddress(@Nonnull String pendingServerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingRuleGroupName(@Nonnull String pendingRuleGroupName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withTargetStepIndex(int targetStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingTargetDisplayName(@Nonnull String pendingTargetDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingTargetId(@Nonnull String pendingTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPortalStepIndex(int portalStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingPortalId(@Nonnull String pendingPortalId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingPortalDestinationAddress(@Nonnull String pendingPortalDestinationAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingPortalTargetId(@Nonnull String pendingPortalTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingPortalTravelProfileId(@Nonnull String pendingPortalTravelProfileId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withPendingPortalDisplayName(@Nonnull String pendingPortalDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
-        public State withDiagnosticsWindowPresetId(@Nonnull String diagnosticsWindowPresetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId); }
+        public State withTab(@Nonnull Tab tab) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withSelectedPeer(@Nonnull String selectedPeerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withSelectedRuleGroup(@Nonnull String selectedRuleGroupId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withSelectedTarget(@Nonnull String selectedTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withStatus(@Nonnull String statusText) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withServersPanel(@Nonnull ServersPanel serversPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withRulesPanel(@Nonnull RulesPanel rulesPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withTargetsPanel(@Nonnull TargetsPanel targetsPanel) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingServerAddress(@Nonnull String pendingServerAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingRuleGroupName(@Nonnull String pendingRuleGroupName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withTargetStepIndex(int targetStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingTargetDisplayName(@Nonnull String pendingTargetDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingTargetId(@Nonnull String pendingTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPortalStepIndex(int portalStepIndex) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingPortalId(@Nonnull String pendingPortalId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingPortalDestinationAddress(@Nonnull String pendingPortalDestinationAddress) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingPortalTargetId(@Nonnull String pendingPortalTargetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingPortalTravelProfileId(@Nonnull String pendingPortalTravelProfileId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withPendingPortalDisplayName(@Nonnull String pendingPortalDisplayName) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withDiagnosticsWindowPresetId(@Nonnull String diagnosticsWindowPresetId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
+        public State withDiagnosticsViewId(@Nonnull String diagnosticsViewId) { return new State(tab, selectedPeerAddress, selectedRuleGroupId, selectedTargetId, statusText, serversPanel, rulesPanel, targetsPanel, pendingServerAddress, pendingRuleGroupName, targetStepIndex, pendingTargetDisplayName, pendingTargetId, portalStepIndex, pendingPortalId, pendingPortalDestinationAddress, pendingPortalTargetId, pendingPortalTravelProfileId, pendingPortalDisplayName, diagnosticsWindowPresetId, diagnosticsViewId); }
     }
 
     public enum Tab {
@@ -3592,6 +3580,40 @@ public final class NexoriMenuHyUiPage {
         DETAILS,
         CREATE,
         PORTAL_SETUP
+    }
+
+    public enum DiagnosticsView {
+        SUMMARY("summary", "Summary"),
+        ALERTS("alerts", "Alerts"),
+        COLLECTOR("collector", "Collector");
+
+        private final String id;
+        private final String title;
+
+        DiagnosticsView(String id, String title) {
+            this.id = id;
+            this.title = title;
+        }
+
+        @Nonnull
+        public String id() {
+            return id;
+        }
+
+        @Nonnull
+        public String title() {
+            return title;
+        }
+
+        @Nonnull
+        public static DiagnosticsView fromId(@Nonnull String rawId) {
+            for (DiagnosticsView view : values()) {
+                if (view.id.equalsIgnoreCase(rawId)) {
+                    return view;
+                }
+            }
+            return SUMMARY;
+        }
     }
 
     private record SetupReport(@Nonnull String status, @Nonnull String detail, @Nonnull String followUp, boolean running, @Nonnull HyUIStyle statusStyle) {

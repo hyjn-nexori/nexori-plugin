@@ -73,6 +73,27 @@ public final class DiagnosticsCollectSessionStore {
                 .thenComparing(DiagnosticsCollectSession::sessionId));
     }
 
+    @Nonnull
+    public synchronized Optional<DiagnosticsCollectSession> loadLatestCompletedSession() {
+        List<DiagnosticsCollectSession> sessions = new ArrayList<>();
+        Path sessionsDir = collectDir.resolve("sessions");
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(sessionsDir)) {
+            for (Path sessionDir : stream) {
+                if (!Files.isDirectory(sessionDir)) {
+                    continue;
+                }
+                readJson(sessionDir.resolve("session.json"), DiagnosticsCollectSession.class)
+                    .filter(session -> session.status() == DiagnosticsCollectStatus.COMPLETED)
+                    .ifPresent(sessions::add);
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to list completed Nexori diagnostics collect sessions", exception);
+        }
+        return sessions.stream()
+            .max(Comparator.comparingLong(DiagnosticsCollectSession::updatedAtEpochMs)
+                .thenComparing(DiagnosticsCollectSession::sessionId));
+    }
+
     public synchronized void saveManifest(@Nonnull String sessionId, @Nonnull DiagnosticsCollectSourceKind sourceKind, @Nonnull String sourceServerId, @Nonnull DiagnosticsCollectManifest manifest) {
         writeJson(manifestFile(sessionId, sourceKind, sourceServerId), manifest);
     }

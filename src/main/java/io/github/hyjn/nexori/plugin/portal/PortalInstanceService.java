@@ -281,6 +281,7 @@ public final class PortalInstanceService {
                 .entityId(portal.portalId())
                 .changeType(changeType)
                 .portalId(portal.portalId())
+                .portalDisplayName(portal.displayName())
                 .targetId(portal.autoDestinationTargetId())
                 .worldName(portal.worldName())
                 .addPreview("portalId", portal.portalId())

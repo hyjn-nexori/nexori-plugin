@@ -33,8 +33,10 @@ public record DiagnosticsEvent(
     @Nullable String remoteServerId,
     @Nullable String remoteConnectionAddress,
     @Nullable String portalId,
+    @Nullable String portalDisplayName,
     @Nullable String bindingId,
     @Nullable String targetId,
+    @Nullable String targetDisplayName,
     @Nullable String arrivalPointId,
     @Nullable String targetKind,
     @Nullable String worldName,
@@ -102,8 +104,10 @@ public record DiagnosticsEvent(
             .remoteServerId(remoteServerId)
             .remoteConnectionAddress(remoteConnectionAddress)
             .portalId(portalId)
+            .portalDisplayName(portalDisplayName)
             .bindingId(bindingId)
             .targetId(targetId)
+            .targetDisplayName(targetDisplayName)
             .arrivalPointId(arrivalPointId)
             .targetKind(targetKind)
             .worldName(worldName)
@@ -167,8 +171,10 @@ public record DiagnosticsEvent(
         private String remoteServerId;
         private String remoteConnectionAddress;
         private String portalId;
+        private String portalDisplayName;
         private String bindingId;
         private String targetId;
+        private String targetDisplayName;
         private String arrivalPointId;
         private String targetKind;
         private String worldName;
@@ -219,8 +225,10 @@ public record DiagnosticsEvent(
         @Nonnull public Builder remoteServerId(@Nullable String remoteServerId) { this.remoteServerId = remoteServerId; return this; }
         @Nonnull public Builder remoteConnectionAddress(@Nullable String remoteConnectionAddress) { this.remoteConnectionAddress = remoteConnectionAddress; return this; }
         @Nonnull public Builder portalId(@Nullable String portalId) { this.portalId = portalId; return this; }
+        @Nonnull public Builder portalDisplayName(@Nullable String portalDisplayName) { this.portalDisplayName = portalDisplayName; return this; }
         @Nonnull public Builder bindingId(@Nullable String bindingId) { this.bindingId = bindingId; return this; }
         @Nonnull public Builder targetId(@Nullable String targetId) { this.targetId = targetId; return this; }
+        @Nonnull public Builder targetDisplayName(@Nullable String targetDisplayName) { this.targetDisplayName = targetDisplayName; return this; }
         @Nonnull public Builder arrivalPointId(@Nullable String arrivalPointId) { this.arrivalPointId = arrivalPointId; return this; }
         @Nonnull public Builder targetKind(@Nullable String targetKind) { this.targetKind = targetKind; return this; }
         @Nonnull public Builder worldName(@Nullable String worldName) { this.worldName = worldName; return this; }
@@ -274,8 +282,10 @@ public record DiagnosticsEvent(
                 optionalString(remoteServerId),
                 optionalString(remoteConnectionAddress),
                 optionalString(portalId),
+                optionalString(portalDisplayName),
                 optionalString(bindingId),
                 optionalString(targetId),
+                optionalString(targetDisplayName),
                 optionalString(arrivalPointId),
                 optionalString(targetKind),
                 optionalString(worldName),

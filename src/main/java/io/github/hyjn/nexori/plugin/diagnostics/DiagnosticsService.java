@@ -375,7 +375,7 @@ public final class DiagnosticsService {
     }
 
     @Nonnull
-    private List<DiagnosticsEvent> loadAllEvents() {
+    public synchronized List<DiagnosticsEvent> loadAllEvents() {
         pruneRetentionQuietly();
         List<DiagnosticsEvent> events = new ArrayList<>();
         for (SegmentRef ref : listSegments()) {
