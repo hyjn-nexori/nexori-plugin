@@ -119,13 +119,14 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.6.0`.
+The current committed milestone is `0.7.0`.
 
-- `0.6.x` is for fixes and stability on the HyUI admin shell, trusted network bootstrap flow, and remote server rules
-- `0.7.0` is planned for clearer travel outcomes and diagnostics
-- `1.0.0` is the target for the first non-coder-friendly adventure network kit
+- `0.7.0` closes the three-phase diagnostics milestone on top of the adventure multi-server foundation
+- `0.7.x` is for fixes, polish, and release hardening before `1.0.0`
+- `1.0.0` remains the target for the first non-coder-friendly adventure network kit
 
-The next active development line after this release is `0.7.0-SNAPSHOT`.
+The next active development line after this release should stay in `0.7.x`
+until the adventure phase is clean enough to cut `1.0.0`.
 
 ## Secure Referrals
 
@@ -141,8 +142,9 @@ This is now the foundation for destination targets, portals, discovery,
 inventory-aware travel profiles, guided owner setup flows, and recovery-aware
 inventory transfer without redesigning the security model.
 
-The next milestone is `0.7.0`: clearer travel outcomes and diagnostics around
-the now-functional owner and player happy paths.
+The current milestone is `0.7.0`: diagnostics now cover local capture,
+trusted collect, consolidated output, and owner-facing alerts around the
+now-functional owner and player happy paths.
 
 ## Development Notes
 
