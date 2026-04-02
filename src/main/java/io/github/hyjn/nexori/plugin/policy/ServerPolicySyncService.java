@@ -151,6 +151,62 @@ public final class ServerPolicySyncService {
         );
     }
 
+    public void refresh(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        UiResumeAction resumeAction
+    ) throws IOException, GeneralSecurityException {
+        String requestId = UUID.randomUUID().toString();
+        if (!isTrustedDestination(destination)) {
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_REFRESH_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.RULES_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                requestId,
+                diag -> diag.remoteConnectionAddress(destination.connectionAddress()).requestId(requestId)
+            );
+            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
+        }
+        pendingRequests.put(requestId, new PendingSyncRequest(
+            requestId,
+            PendingRequestMode.FETCH,
+            event.getUuid(),
+            destination.connectionAddress(),
+            originWorldName,
+            originTransform.clone(),
+            System.currentTimeMillis() + Duration.ofSeconds(30).toMillis(),
+            resumeAction
+        ));
+
+        byte[] encoded = secureReferralService.createPayload(
+            event.getUuid(),
+            event.getUsername(),
+            FETCH_REQUEST_PAYLOAD_TYPE,
+            new ServerPolicyFetchRequestPayload(requestId),
+            Duration.ofSeconds(30)
+        );
+        event.referToServer(destination.host(), destination.port(), encoded);
+        diagnosticsService.record(
+            DiagnosticsCategory.RULES,
+            DiagnosticsAction.RULES_REFRESH_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.RULES_REFRESH_SENT,
+            "Started a trusted Nexori rules refresh.",
+            requestId,
+            diag -> diag
+                .requestId(requestId)
+                .playerUuid(event.getUuid().toString())
+                .playerNameClaimed(event.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
+        );
+    }
+
     public void apply(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -209,6 +265,70 @@ public final class ServerPolicySyncService {
                 .requestId(requestId)
                 .playerUuid(playerRef.getUuid().toString())
                 .playerNameClaimed(playerRef.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
+                .addPreview("recoveryEnabled", Boolean.toString(recoveryEnabled))
+                .addPreview("maxBackupsPerPlayer", Integer.toString(Math.max(1, maxBackupsPerPlayer)))
+        );
+    }
+
+    public void apply(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        boolean recoveryEnabled,
+        int maxBackupsPerPlayer,
+        UiResumeAction resumeAction
+    ) throws IOException, GeneralSecurityException {
+        String requestId = UUID.randomUUID().toString();
+        if (!isTrustedDestination(destination)) {
+            diagnosticsService.record(
+                DiagnosticsCategory.RULES,
+                DiagnosticsAction.RULES_APPLY_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.RULES_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                requestId,
+                diag -> diag.remoteConnectionAddress(destination.connectionAddress()).requestId(requestId)
+            );
+            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
+        }
+        pendingRequests.put(requestId, new PendingSyncRequest(
+            requestId,
+            PendingRequestMode.APPLY,
+            event.getUuid(),
+            destination.connectionAddress(),
+            originWorldName,
+            originTransform.clone(),
+            System.currentTimeMillis() + Duration.ofSeconds(30).toMillis(),
+            resumeAction
+        ));
+
+        byte[] encoded = secureReferralService.createPayload(
+            event.getUuid(),
+            event.getUsername(),
+            APPLY_REQUEST_PAYLOAD_TYPE,
+            new ServerPolicyApplyRequestPayload(
+                requestId,
+                recoveryEnabled,
+                Math.max(1, maxBackupsPerPlayer)
+            ),
+            Duration.ofSeconds(30)
+        );
+        event.referToServer(destination.host(), destination.port(), encoded);
+        diagnosticsService.record(
+            DiagnosticsCategory.RULES,
+            DiagnosticsAction.RULES_APPLY_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.RULES_APPLY_SENT,
+            "Started a trusted Nexori rules apply request.",
+            requestId,
+            diag -> diag
+                .requestId(requestId)
+                .playerUuid(event.getUuid().toString())
+                .playerNameClaimed(event.getUsername())
                 .remoteConnectionAddress(destination.connectionAddress())
                 .addPreview("recoveryEnabled", Boolean.toString(recoveryEnabled))
                 .addPreview("maxBackupsPerPlayer", Integer.toString(Math.max(1, maxBackupsPerPlayer)))
@@ -355,12 +475,6 @@ public final class ServerPolicySyncService {
             String message = pendingRequest.mode() == PendingRequestMode.APPLY
                 ? "Applied Nexori rules to " + saved.connectionAddress() + "."
                 : "Refreshed Nexori rules from " + saved.connectionAddress() + ".";
-            pendingReturns.put(event.getUuid(), new PendingSyncReturn(
-                pendingRequest.originWorldName(),
-                pendingRequest.originTransform(),
-                message,
-                pendingRequest.resumeAction()
-            ));
             diagnosticsService.record(
                 DiagnosticsCategory.RULES,
                 DiagnosticsAction.RULES_CACHE_SAVE,
@@ -374,6 +488,21 @@ public final class ServerPolicySyncService {
                     .remoteServerId(referral.issuer().serverId())
                     .remoteConnectionAddress(saved.connectionAddress())
             );
+            if (pendingRequest.resumeAction() != null) {
+                try {
+                    if (pendingRequest.resumeAction().continueDuringSetup(event)) {
+                        return;
+                    }
+                } catch (IOException | GeneralSecurityException exception) {
+                    logger.atWarning().withCause(exception).log("Received Nexori server rules, but continuing the chained sync during setup failed.");
+                }
+            }
+            pendingReturns.put(event.getUuid(), new PendingSyncReturn(
+                pendingRequest.originWorldName(),
+                pendingRequest.originTransform(),
+                message,
+                pendingRequest.resumeAction()
+            ));
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to persist the confirmed Nexori server rules.");
             diagnosticsService.record(

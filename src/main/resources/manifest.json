@@ -1,7 +1,7 @@
 {
     "Group": "Nexori",
     "Name": "NexoriPlugin",
-    "Version": "0.7.0",
+    "Version": "0.7.1",
     "Description": "Secure server-to-server trust bootstrap for Hytale networks.",
     "Authors": [
         {

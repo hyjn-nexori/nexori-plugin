@@ -119,10 +119,11 @@ The next layer above secure travel is the destination target system.
 
 ## Release Line
 
-The current committed milestone is `0.7.0`.
+The current committed milestone is `0.7.1`.
 
-- `0.7.0` closes the three-phase diagnostics milestone on top of the adventure multi-server foundation
-- `0.7.x` is for fixes, polish, and release hardening before `1.0.0`
+- `0.7.0` closed the three-phase diagnostics milestone on top of the adventure multi-server foundation
+- `0.7.1` is the current hardening/fix release before `1.0.0`
+- `0.7.x` remains the line for fixes, polish, and release hardening before `1.0.0`
 - `1.0.0` remains the target for the first non-coder-friendly adventure network kit
 
 The next active development line after this release should stay in `0.7.x`
@@ -142,9 +143,10 @@ This is now the foundation for destination targets, portals, discovery,
 inventory-aware travel profiles, guided owner setup flows, and recovery-aware
 inventory transfer without redesigning the security model.
 
-The current milestone is `0.7.0`: diagnostics now cover local capture,
-trusted collect, consolidated output, and owner-facing alerts around the
-now-functional owner and player happy paths.
+The current line is `0.7.1`: diagnostics now cover local capture,
+trusted collect, consolidated output, and owner-facing alerts, and this patch
+line is reserved for final fixes and hardening around the owner and player
+happy paths before `1.0.0`.
 
 ## Development Notes
 

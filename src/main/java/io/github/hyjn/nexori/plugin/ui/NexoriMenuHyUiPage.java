@@ -23,6 +23,7 @@ import com.hypixel.hytale.protocol.packets.interface_.Page;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
+import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
 import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -39,6 +40,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectWindow
 import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsOwnerReportService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
+import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
@@ -2475,7 +2477,8 @@ public final class NexoriMenuHyUiPage {
         }
 
         player.sendMessage(Message.raw("Nexori is applying '" + currentGroup.displayName() + "' to " + remotePeers.size() + " remote server(s)..."));
-        applyRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, 0, 0);
+        Transform originTransform = captureCurrentTransform(store, ref);
+        applyRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, player.getWorld().getName(), originTransform, 0, 0);
     }
 
     private static void applyRuleGroupAssignmentAtIndex(
@@ -2487,6 +2490,8 @@ public final class NexoriMenuHyUiPage {
         State state,
         ServerRuleGroupDefinition group,
         List<ConfiguredPeer> remotePeers,
+        String originWorldName,
+        Transform originTransform,
         int index,
         int appliedCount
     ) {
@@ -2500,19 +2505,17 @@ public final class NexoriMenuHyUiPage {
             plugin.getServerPolicySyncService().apply(
                 playerRef,
                 destination,
-                player.getWorld().getName(),
-                captureCurrentTransform(store, ref),
+                originWorldName,
+                originTransform.clone(),
                 group.recoveryEnabled(),
                 group.maxBackupsPerPlayer(),
-                (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> applyRuleGroupAssignmentAtIndex(
-                    resumeRef,
-                    resumeStore,
-                    resumePlayerRef,
-                    resumePlayer,
+                chainedRuleApplyResumeAction(
                     plugin,
                     state,
                     group,
                     remotePeers,
+                    originWorldName,
+                    originTransform,
                     index + 1,
                     appliedCount + 1
                 )
@@ -2576,7 +2579,8 @@ public final class NexoriMenuHyUiPage {
         }
 
         player.sendMessage(Message.raw("Nexori is refreshing the cached rule status for '" + currentGroup.displayName() + "'..."));
-        refreshRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, 0);
+        Transform originTransform = captureCurrentTransform(store, ref);
+        refreshRuleGroupAssignmentAtIndex(ref, store, playerRef, player, plugin, state, currentGroup, remotePeers, player.getWorld().getName(), originTransform, 0);
     }
 
     private static void refreshRuleGroupAssignmentAtIndex(
@@ -2588,6 +2592,8 @@ public final class NexoriMenuHyUiPage {
         State state,
         ServerRuleGroupDefinition group,
         List<ConfiguredPeer> remotePeers,
+        String originWorldName,
+        Transform originTransform,
         int index
     ) {
         if (index >= remotePeers.size()) {
@@ -2600,23 +2606,144 @@ public final class NexoriMenuHyUiPage {
             plugin.getServerPolicySyncService().refresh(
                 playerRef,
                 destination,
-                player.getWorld().getName(),
-                captureCurrentTransform(store, ref),
-                (resumeRef, resumeStore, resumePlayerRef, resumePlayer) -> refreshRuleGroupAssignmentAtIndex(
-                    resumeRef,
-                    resumeStore,
-                    resumePlayerRef,
-                    resumePlayer,
+                originWorldName,
+                originTransform.clone(),
+                chainedRuleRefreshResumeAction(
                     plugin,
                     state,
                     group,
                     remotePeers,
+                    originWorldName,
+                    originTransform,
                     index + 1
                 )
             );
         } catch (GeneralSecurityException | IOException exception) {
             open(ref, store, playerRef, player, plugin, state.withStatus("Could not refresh " + destination.connectionAddress() + ": " + exception.getMessage()));
         }
+    }
+
+    @Nonnull
+    private static UiResumeAction chainedRuleApplyResumeAction(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull State state,
+        @Nonnull ServerRuleGroupDefinition group,
+        @Nonnull List<ConfiguredPeer> remotePeers,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        int nextIndex,
+        int nextAppliedCount
+    ) {
+        return new UiResumeAction() {
+            @Override
+            public boolean continueDuringSetup(@Nonnull PlayerSetupConnectEvent event) throws IOException, GeneralSecurityException {
+                if (nextIndex >= remotePeers.size()) {
+                    return false;
+                }
+                ConfiguredPeer nextDestination = remotePeers.get(nextIndex);
+                plugin.getServerPolicySyncService().apply(
+                    event,
+                    nextDestination,
+                    originWorldName,
+                    originTransform.clone(),
+                    group.recoveryEnabled(),
+                    group.maxBackupsPerPlayer(),
+                    chainedRuleApplyResumeAction(
+                        plugin,
+                        state,
+                        group,
+                        remotePeers,
+                        originWorldName,
+                        originTransform,
+                        nextIndex + 1,
+                        nextAppliedCount + 1
+                    )
+                );
+                return true;
+            }
+
+            @Override
+            public void reopen(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player
+            ) {
+                applyRuleGroupAssignmentAtIndex(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state,
+                    group,
+                    remotePeers,
+                    originWorldName,
+                    originTransform.clone(),
+                    nextIndex,
+                    nextAppliedCount
+                );
+            }
+        };
+    }
+
+    @Nonnull
+    private static UiResumeAction chainedRuleRefreshResumeAction(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull State state,
+        @Nonnull ServerRuleGroupDefinition group,
+        @Nonnull List<ConfiguredPeer> remotePeers,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        int nextIndex
+    ) {
+        return new UiResumeAction() {
+            @Override
+            public boolean continueDuringSetup(@Nonnull PlayerSetupConnectEvent event) throws IOException, GeneralSecurityException {
+                if (nextIndex >= remotePeers.size()) {
+                    return false;
+                }
+                ConfiguredPeer nextDestination = remotePeers.get(nextIndex);
+                plugin.getServerPolicySyncService().refresh(
+                    event,
+                    nextDestination,
+                    originWorldName,
+                    originTransform.clone(),
+                    chainedRuleRefreshResumeAction(
+                        plugin,
+                        state,
+                        group,
+                        remotePeers,
+                        originWorldName,
+                        originTransform,
+                        nextIndex + 1
+                    )
+                );
+                return true;
+            }
+
+            @Override
+            public void reopen(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player
+            ) {
+                refreshRuleGroupAssignmentAtIndex(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state,
+                    group,
+                    remotePeers,
+                    originWorldName,
+                    originTransform.clone(),
+                    nextIndex
+                );
+            }
+        };
     }
 
     private static GroupStatusCounts computeGroupStatusCounts(

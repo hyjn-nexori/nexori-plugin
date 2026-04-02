@@ -87,6 +87,19 @@ After `0.7.0`, the expected line before `1.0.0` is:
 
 `0.7.x` should **not** absorb minigame scope or other phase-2 work.
 
+## Current Hardening Release: `0.7.1`
+
+Nexori `0.7.1` is the current patch release line after the diagnostics
+milestone closure.
+
+`0.7.1` should stay narrow:
+
+- fix friction in already-shipped owner flows
+- polish the current HyUI/admin experience
+- harden the adventure multi-server line before `1.0.0`
+
+`0.7.1` should still avoid pulling in phase-2 or minigame scope.
+
 ## Next Phase-1 Target: `1.0.0`
 
 Nexori `1.0.0` should be the release that lets a non-coder build a simple
