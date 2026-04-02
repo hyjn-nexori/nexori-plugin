@@ -100,7 +100,7 @@ milestone closure.
 
 `0.7.1` should still avoid pulling in phase-2 or minigame scope.
 
-## Next Phase-1 Target: `1.0.0`
+## Current Stable Release: `1.0.0`
 
 Nexori `1.0.0` should be the release that lets a non-coder build a simple
 survival/adventure multi-server network with safe travel and in-game setup.
@@ -117,14 +117,15 @@ That means `1.0.0` is the version for:
 - basic owner diagnostics and collector support
 - stable owner happy path for adventure-style networks
 
-At this point, the remaining road to `1.0.0` should stay disciplined:
+At this point, `1.0.0` marks the clean close of phase 1.
 
-- only small fixes
-- polish
-- docs
-- release prep
+After this stable cut:
 
-Phase 1 should **not** start absorbing phase 2 scope.
+- `1.0.x` is for fixes, polish, and owner-flow hardening
+- `1.1.0+` should only begin when phase 2 work truly starts
+
+Phase 1 should remain closed after `1.0.0`; phase 2 should not leak backward
+into `1.0.x`.
 
 ### `1.0.0` Does Not Need
 
@@ -494,10 +495,9 @@ Simple release checklist:
 
 The main discipline after this point should be:
 
-- ship `0.7.0` cleanly
-- use `0.7.x` for fixes before `1.0.0`
-- then finish `1.0.0` cleanly
-- do not leak phase 2 into phase 1
+- keep `1.0.x` narrow and stable
+- do not leak phase 2 into `1.0.x`
+- start `1.1.0+` only when the minigame work is truly beginning
 - keep `2.0.0` tightly scoped around real minigame flow
 - avoid turning Nexori into a generic infinite platform before the first
   minigame loop actually works
