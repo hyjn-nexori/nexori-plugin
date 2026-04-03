@@ -516,6 +516,7 @@ public final class QueueCoordinatorService {
         root.addProperty("returnConnectionAddress", returnConnectionAddress);
         root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
+        root.addProperty("expectedPlayerCount", readyMembers.size());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
         MatchSessionState matchSessionState = new MatchSessionState(
             matchId,

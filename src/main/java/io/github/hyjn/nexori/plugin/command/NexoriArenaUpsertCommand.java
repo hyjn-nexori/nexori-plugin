@@ -23,6 +23,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
     private final RequiredArg<String> targetIdArg;
     private final RequiredArg<Integer> maxPlayersArg;
     private final OptionalArg<String> displayNameArg;
+    private final OptionalArg<String> resolutionTriggerIdArg;
 
     public NexoriArenaUpsertCommand(@Nonnull NexoriPlugin plugin, @Nonnull ArenaService arenaService) {
         super("nexoriarenaupsert", "Creates or updates a persisted Nexori arena definition.");
@@ -33,6 +34,11 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
         this.targetIdArg = withRequiredArg("targetId", "Remote arena target id.", ArgTypes.STRING);
         this.maxPlayersArg = withRequiredArg("maxPlayers", "Maximum supported players.", ArgTypes.INTEGER);
         this.displayNameArg = withOptionalArg("displayName", "Optional display name.", ArgTypes.STRING);
+        this.resolutionTriggerIdArg = withOptionalArg(
+            "resolutionTriggerId",
+            "Optional automatic arena resolution trigger id. Defaults to 'none'; use 'last_player_alive' to enable built-in auto resolution.",
+            ArgTypes.STRING
+        );
         setPermissionGroup(GameMode.Adventure);
     }
 
@@ -45,11 +51,19 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
         try {
             String arenaId = context.get(arenaIdArg);
             String displayName = context.provided(displayNameArg) ? context.get(displayNameArg) : arenaId;
+            String resolutionTriggerId = "";
+            if (context.provided(resolutionTriggerIdArg)) {
+                resolutionTriggerId = context.get(resolutionTriggerIdArg);
+                if (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(resolutionTriggerId)) {
+                    resolutionTriggerId = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID;
+                }
+            }
             ArenaDefinition saved = arenaService.upsert(new ArenaDefinition(
                 arenaId,
                 displayName,
                 context.get(destinationArg),
                 context.get(targetIdArg),
+                resolutionTriggerId,
                 context.get(maxPlayersArg),
                 true
             ));
@@ -57,6 +71,9 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                 "Saved arena " + saved.arenaId()
                     + " destination=" + saved.destinationConnectionAddress()
                     + " -> " + saved.destinationTargetId()
+                    + " trigger=" + (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(saved.matchResolutionTriggerId())
+                        ? "manual"
+                        : saved.matchResolutionTriggerId())
                     + " maxPlayers=" + saved.maxSupportedPlayers()
                     + "."
             ));

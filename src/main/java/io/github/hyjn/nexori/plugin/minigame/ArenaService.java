@@ -76,6 +76,7 @@ public final class ArenaService {
             normalized.displayName(),
             peer.connectionAddress(),
             normalized.destinationTargetId(),
+            normalized.matchResolutionTriggerId(),
             normalized.maxSupportedPlayers(),
             normalized.enabled()
         );

@@ -18,6 +18,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriMatchResolvePlayerCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchSessionStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
@@ -57,6 +58,8 @@ import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
+import io.github.hyjn.nexori.plugin.minigame.ArenaMatchResolutionTriggerRegistry;
+import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
@@ -132,6 +135,7 @@ public class NexoriPlugin extends JavaPlugin {
     private QueueCoordinatorService queueCoordinatorService;
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
+    private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
     private ScheduledExecutorService queueCountdownScheduler;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -179,6 +183,7 @@ public class NexoriPlugin extends JavaPlugin {
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
                 this.arenaService
             );
+            this.arenaMatchResolutionTriggerRegistry = new ArenaMatchResolutionTriggerRegistry();
             this.matchSessionService = new MatchSessionService(
                 new MatchSessionStore(this.getDataDirectory().resolve("state").resolve("match-sessions.json"))
             );
@@ -276,10 +281,17 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureReferralService,
                 this.diagnosticsService
             );
+            this.queueCountdownScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "nexori-queue-countdowns");
+                thread.setDaemon(true);
+                return thread;
+            });
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
-                this.matchSessionService
+                this.matchSessionService,
+                this.arenaService,
+                this.arenaMatchResolutionTriggerRegistry
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -293,11 +305,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getBasePermission() + ".admin",
                 this.diagnosticsService
             );
-            this.queueCountdownScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "nexori-queue-countdowns");
-                thread.setDaemon(true);
-                return thread;
-            });
             this.queueCountdownScheduler.scheduleAtFixedRate(() -> {
                 try {
                     long now = System.currentTimeMillis();
@@ -352,6 +359,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
             this.getCommandRegistry().registerCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
             this.getCommandRegistry().registerCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
+            this.getCommandRegistry().registerCommand(new NexoriMatchResolvePlayerCommand(this, this.arenaMatchService));
             this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
@@ -373,6 +381,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
+            this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
 
             this.getLogger().atInfo().log(
                 "Nexori ready. serverId=" + this.localIdentity.serverId()
@@ -501,5 +510,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ArenaMatchService getArenaMatchService() {
         return arenaMatchService;
+    }
+
+    public ArenaMatchResolutionTriggerRegistry getArenaMatchResolutionTriggerRegistry() {
+        return arenaMatchResolutionTriggerRegistry;
     }
 }

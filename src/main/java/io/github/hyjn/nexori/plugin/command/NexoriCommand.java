@@ -88,7 +88,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
         ctx.sendMessage(Message.raw("- /nexorilobbyupsert <lobbyId> <worldName> <entryTargetId> [--returnTargetId=<id>] [--displayName=\"...\"]"));
         ctx.sendMessage(Message.raw("- /nexorilobbylist"));
-        ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"]"));
+        ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"] [--resolutionTriggerId=<id|none>]"));
+        ctx.sendMessage(Message.raw("  Arena resolution trigger defaults to none. Use last_player_alive to enable the built-in auto winner flow."));
         ctx.sendMessage(Message.raw("- /nexoriarenalist"));
         ctx.sendMessage(Message.raw("- /nexoriqueueupsert <queueId> <arenaIdsCsv> <minPlayers> <maxPlayers> <countdownSeconds> <travelProfile> [--displayName=\"...\"]"));
         ctx.sendMessage(Message.raw("- /nexoriqueuelist"));
@@ -97,6 +98,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexorimatchstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchsessionstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchend <matchId> [--reason=<MATCH_ENDED|MATCH_ABORTED|RECOVERY_RETURN>]"));
+        ctx.sendMessage(Message.raw("- /nexorimatchresolveplayer <matchId> <player> <WIN|LOSS> [--delaySeconds=<0+>] [--reason=<id>]"));
         ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));
         ctx.sendMessage(Message.raw("- /nexorirecoverymode <status|enable|disable>"));
         ctx.sendMessage(Message.raw("- /nexorirecovery"));

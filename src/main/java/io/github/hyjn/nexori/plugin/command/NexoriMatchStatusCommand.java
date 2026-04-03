@@ -34,10 +34,18 @@ public final class NexoriMatchStatusCommand extends CommandBase {
                 "- " + match.matchId()
                     + " arena=" + match.arenaId()
                     + " queue=" + match.queueId()
-                    + " players=" + match.playerUuids().size()
+                    + " expected=" + match.expectedPlayerCount()
+                    + " arrived=" + match.arrivedPlayerUuids().size()
+                    + " active=" + match.activePlayerUuids().size()
+                    + " alive=" + match.alivePlayerUuids().size()
+                    + " eliminated=" + match.eliminatedPlayerUuids().size()
+                    + " pendingReturn=" + match.pendingReturnAtEpochMsByPlayerUuid().size()
                     + " return=" + match.returnConnectionAddress()
                     + " -> " + match.returnFallbackTargetId()
             );
+            if (match.hasWinner()) {
+                line.append(" winner=").append(match.winnerPlayerUuid());
+            }
             if (!match.lastError().isBlank()) {
                 line.append(" lastError=").append(match.lastError());
             }

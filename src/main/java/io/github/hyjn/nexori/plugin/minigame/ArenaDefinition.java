@@ -8,9 +8,12 @@ public record ArenaDefinition(
     String displayName,
     String destinationConnectionAddress,
     String destinationTargetId,
+    String matchResolutionTriggerId,
     int maxSupportedPlayers,
     boolean enabled
 ) {
+
+    public static final String NO_MATCH_RESOLUTION_TRIGGER_ID = "none";
 
     @Nonnull
     public ArenaDefinition normalized() {
@@ -23,6 +26,7 @@ public record ArenaDefinition(
             normalizedDisplayName,
             normalizedDestinationAddress,
             normalizedTargetId,
+            normalizeTriggerId(matchResolutionTriggerId),
             maxSupportedPlayers,
             enabled
         );
@@ -58,5 +62,14 @@ public record ArenaDefinition(
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? defaultValue : normalized;
+    }
+
+    @Nonnull
+    private static String normalizeTriggerId(String rawValue) {
+        String normalized = normalizeOptional(rawValue, "");
+        if (normalized.isBlank()) {
+            return NO_MATCH_RESOLUTION_TRIGGER_ID;
+        }
+        return normalized;
     }
 }

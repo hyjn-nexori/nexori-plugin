@@ -542,8 +542,10 @@ becoming a platform rewrite.
 - choose the arena from the queue-owned `arenaIds`
 - reuse secure cross-server travel for lobby -> arena dispatch
 - launch queued players into an arena
-- start a match with one supported victory condition:
+- support one built-in victory trigger:
   - `LAST_PLAYER_ALIVE`
+- allow arena resolution to stay optional so external mods can finish matches
+  through Nexori commands or service APIs
 - detect match end
 - persist enough runtime state to survive simple interruptions
 
