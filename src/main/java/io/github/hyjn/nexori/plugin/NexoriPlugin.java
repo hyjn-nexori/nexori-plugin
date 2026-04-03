@@ -9,18 +9,27 @@ import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriArenaListCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriArenaUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriBackupsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriBackupLimitCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalQueueBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalShowCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalUnbindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriRecoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriRecoveryModeCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriRecoveryPageCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriQueueListCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriQueueLeaveCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriQueueStatusCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriQueueUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriStartCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetAddCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriTargetHelpCommand;
@@ -42,6 +51,13 @@ import io.github.hyjn.nexori.plugin.inventory.InventoryTransferPolicyStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferReceiptStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
+import io.github.hyjn.nexori.plugin.minigame.ArenaService;
+import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
+import io.github.hyjn.nexori.plugin.minigame.LobbyService;
+import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
+import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
+import io.github.hyjn.nexori.plugin.minigame.QueueService;
+import io.github.hyjn.nexori.plugin.minigame.QueueStore;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
@@ -74,6 +90,9 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class NexoriPlugin extends JavaPlugin {
 
@@ -101,6 +120,11 @@ public class NexoriPlugin extends JavaPlugin {
     private DiagnosticsService diagnosticsService;
     private DiagnosticsCollectService diagnosticsCollectService;
     private DiagnosticsOwnerReportService diagnosticsOwnerReportService;
+    private LobbyService lobbyService;
+    private ArenaService arenaService;
+    private QueueService queueService;
+    private QueueCoordinatorService queueCoordinatorService;
+    private ScheduledExecutorService queueCountdownScheduler;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -135,6 +159,19 @@ public class NexoriPlugin extends JavaPlugin {
                 new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json")),
                 this.diagnosticsService
             );
+            this.lobbyService = new LobbyService(
+                new LobbyStore(this.getDataDirectory().resolve("config").resolve("lobbies.json")),
+                this.destinationTargetService
+            );
+            this.arenaService = new ArenaService(
+                new ArenaStore(this.getDataDirectory().resolve("config").resolve("arenas.json")),
+                this.localConnectionAddressService
+            );
+            this.queueService = new QueueService(
+                new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
+                this.arenaService
+            );
+            this.queueCoordinatorService = new QueueCoordinatorService(this.queueService);
             this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
                 new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
             );
@@ -227,10 +264,23 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 this.portalInstanceService,
                 this.triggerBindingService,
+                this.queueCoordinatorService,
                 this.secureTravelService,
                 this.getBasePermission() + ".admin",
                 this.diagnosticsService
             );
+            this.queueCountdownScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "nexori-queue-countdowns");
+                thread.setDaemon(true);
+                return thread;
+            });
+            this.queueCountdownScheduler.scheduleAtFixedRate(() -> {
+                try {
+                    this.queueCoordinatorService.advanceCountdowns(System.currentTimeMillis());
+                } catch (Exception exception) {
+                    this.getLogger().atWarning().withCause(exception).log("Failed to advance Nexori queue countdowns.");
+                }
+            }, 1L, 1L, TimeUnit.SECONDS);
             this.diagnosticsOwnerReportService = new DiagnosticsOwnerReportService(
                 this.getLogger(),
                 this.getDataDirectory(),
@@ -263,7 +313,16 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriPortalListCommand(this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.lobbyService, this.queueService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriLobbyUpsertCommand(this, this.lobbyService));
+            this.getCommandRegistry().registerCommand(new NexoriLobbyListCommand(this.lobbyService));
+            this.getCommandRegistry().registerCommand(new NexoriArenaUpsertCommand(this, this.arenaService));
+            this.getCommandRegistry().registerCommand(new NexoriArenaListCommand(this.arenaService));
+            this.getCommandRegistry().registerCommand(new NexoriQueueUpsertCommand(this, this.queueService));
+            this.getCommandRegistry().registerCommand(new NexoriQueueListCommand(this.queueService));
+            this.getCommandRegistry().registerCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
+            this.getCommandRegistry().registerCommand(new NexoriQueueLeaveCommand(this.queueCoordinatorService));
             this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
@@ -388,5 +447,21 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiagnosticsOwnerReportService getDiagnosticsOwnerReportService() {
         return diagnosticsOwnerReportService;
+    }
+
+    public LobbyService getLobbyService() {
+        return lobbyService;
+    }
+
+    public ArenaService getArenaService() {
+        return arenaService;
+    }
+
+    public QueueService getQueueService() {
+        return queueService;
+    }
+
+    public QueueCoordinatorService getQueueCoordinatorService() {
+        return queueCoordinatorService;
     }
 }

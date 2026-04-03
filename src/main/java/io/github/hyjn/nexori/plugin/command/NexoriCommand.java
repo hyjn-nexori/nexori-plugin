@@ -84,7 +84,16 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportallist"));
         ctx.sendMessage(Message.raw("- /nexoriportalshow <portalId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalbind <portalId> <host:port> <targetId> [travelProfile]"));
+        ctx.sendMessage(Message.raw("- /nexoriportalqueuebind <portalId> <queueId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
+        ctx.sendMessage(Message.raw("- /nexorilobbyupsert <lobbyId> <worldName> <entryTargetId> [--returnTargetId=<id>] [--displayName=\"...\"]"));
+        ctx.sendMessage(Message.raw("- /nexorilobbylist"));
+        ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"]"));
+        ctx.sendMessage(Message.raw("- /nexoriarenalist"));
+        ctx.sendMessage(Message.raw("- /nexoriqueueupsert <queueId> <arenaIdsCsv> <minPlayers> <maxPlayers> <countdownSeconds> <travelProfile> [--displayName=\"...\"]"));
+        ctx.sendMessage(Message.raw("- /nexoriqueuelist"));
+        ctx.sendMessage(Message.raw("- /nexoriqueuestatus"));
+        ctx.sendMessage(Message.raw("- /nexoriqueueleave"));
         ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));
         ctx.sendMessage(Message.raw("- /nexorirecoverymode <status|enable|disable>"));
         ctx.sendMessage(Message.raw("- /nexorirecovery"));
@@ -92,6 +101,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoribackups"));
         ctx.sendMessage(Message.raw("- /nexorirecover <transferId>"));
         ctx.sendMessage(Message.raw("  Travel profiles: KEEP_INVENTORY, CLEAR_INVENTORY, APPLY_INVENTORY"));
+        ctx.sendMessage(Message.raw("  Optional command args in Nexori use --name=value syntax."));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
         ctx.sendMessage(Message.raw("  Opens the main Nexori HyUI admin page for server, rules, and target setup."));
     }

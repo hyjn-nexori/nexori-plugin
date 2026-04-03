@@ -7,6 +7,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,7 +29,7 @@ public final class TriggerBindingService {
         this.store = store;
         this.diagnosticsService = diagnosticsService;
         for (TriggerBindingDefinition binding : store.loadOrCreate()) {
-            TriggerBindingDefinition normalized = binding.normalized();
+            TriggerBindingDefinition normalized = normalizeAndValidate(binding);
             bindingsById.put(normalized.id(), normalized);
         }
     }
@@ -50,7 +52,7 @@ public final class TriggerBindingService {
 
     @Nonnull
     public synchronized Optional<TriggerBindingDefinition> findPortalCollisionBinding(@Nonnull String portalId) {
-        String normalizedSourceId = portalId.trim().toLowerCase();
+        String normalizedSourceId = portalId.trim().toLowerCase(Locale.ROOT);
         return bindingsById.values().stream()
             .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
             .filter(binding -> binding.sourceId().equals(normalizedSourceId))
@@ -65,17 +67,52 @@ public final class TriggerBindingService {
         @Nonnull String travelProfileId,
         @Nonnull String contextJson
     ) throws IOException {
-        ConfiguredPeer destination = ConfiguredPeer.parse(destinationConnectionAddress);
-        TriggerBindingDefinition binding = new TriggerBindingDefinition(
+        return bindPortalCollisionTravel(portalId, destinationConnectionAddress, destinationTargetId, travelProfileId, contextJson);
+    }
+
+    @Nonnull
+    public synchronized TriggerBindingDefinition bindPortalCollisionTravel(
+        @Nonnull String portalId,
+        @Nonnull String destinationConnectionAddress,
+        @Nonnull String destinationTargetId,
+        @Nonnull String travelProfileId,
+        @Nonnull String contextJson
+    ) throws IOException {
+        TriggerBindingDefinition binding = normalizeAndValidate(new TriggerBindingDefinition(
             "",
             TriggerBindingKind.PORTAL_COLLISION_ENTER,
             portalId,
-            destination.connectionAddress(),
+            TriggerBindingAction.TRAVEL,
+            "",
+            destinationConnectionAddress,
             destinationTargetId,
             travelProfileId,
             contextJson,
             true
-        ).normalized();
+        ));
+        bindingsById.put(binding.id(), binding);
+        persist();
+        recordBindingSaved(binding, "UPSERTED");
+        return binding;
+    }
+
+    @Nonnull
+    public synchronized TriggerBindingDefinition bindPortalCollisionQueue(
+        @Nonnull String portalId,
+        @Nonnull String queueId
+    ) throws IOException {
+        TriggerBindingDefinition binding = normalizeAndValidate(new TriggerBindingDefinition(
+            "",
+            TriggerBindingKind.PORTAL_COLLISION_ENTER,
+            portalId,
+            TriggerBindingAction.JOIN_QUEUE,
+            queueId,
+            "",
+            "",
+            "",
+            "{}",
+            true
+        ));
         bindingsById.put(binding.id(), binding);
         persist();
         recordBindingSaved(binding, "UPSERTED");
@@ -124,16 +161,48 @@ public final class TriggerBindingService {
             current.id(),
             current.triggerKind(),
             current.sourceId(),
+            current.action(),
+            current.queueId(),
             current.destinationConnectionAddress(),
             current.destinationTargetId(),
             current.travelProfileId(),
             current.contextJson(),
             enabled
-        ).normalized();
+        );
+        updated = normalizeAndValidate(updated);
         bindingsById.put(updated.id(), updated);
         persist();
         recordBindingSaved(updated, "UPSERTED");
         return updated;
+    }
+
+    @Nonnull
+    private TriggerBindingDefinition normalizeAndValidate(@Nonnull TriggerBindingDefinition definition) {
+        TriggerBindingDefinition normalized = definition.normalized();
+        if (normalized.action() == TriggerBindingAction.JOIN_QUEUE) {
+            if (normalized.queueId().isBlank()) {
+                throw new IllegalArgumentException("Queue trigger bindings require a queue id.");
+            }
+            return normalized;
+        }
+
+        ConfiguredPeer destination = ConfiguredPeer.parse(normalized.destinationConnectionAddress());
+        if (normalized.destinationTargetId().isBlank()) {
+            throw new IllegalArgumentException("Travel trigger bindings require a destination target id.");
+        }
+        TravelProfileType profile = TravelProfileType.parse(normalized.travelProfileId());
+        return new TriggerBindingDefinition(
+            normalized.id(),
+            normalized.triggerKind(),
+            normalized.sourceId(),
+            TriggerBindingAction.TRAVEL,
+            "",
+            destination.connectionAddress(),
+            normalized.destinationTargetId(),
+            profile.id(),
+            normalized.contextJson(),
+            normalized.enabled()
+        );
     }
 
     private void persist() throws IOException {
@@ -156,6 +225,8 @@ public final class TriggerBindingService {
                 .changeType(changeType)
                 .bindingId(binding.id())
                 .portalId(binding.sourceId())
+                .addPreview("action", binding.action().name())
+                .addPreview("queueId", binding.queueId())
                 .targetId(binding.destinationTargetId())
                 .travelProfileId(binding.travelProfileId())
                 .remoteConnectionAddress(binding.destinationConnectionAddress())
@@ -180,6 +251,8 @@ public final class TriggerBindingService {
                 .changeType(changeType)
                 .bindingId(binding.id())
                 .portalId(binding.sourceId())
+                .addPreview("action", binding.action().name())
+                .addPreview("queueId", binding.queueId())
                 .targetId(binding.destinationTargetId())
                 .travelProfileId(binding.travelProfileId())
                 .remoteConnectionAddress(binding.destinationConnectionAddress())

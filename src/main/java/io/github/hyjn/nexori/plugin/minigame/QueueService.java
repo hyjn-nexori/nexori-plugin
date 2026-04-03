@@ -1,0 +1,90 @@
+package io.github.hyjn.nexori.plugin.minigame;
+
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
+
+import javax.annotation.Nonnull;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+public final class QueueService {
+
+    private final QueueStore store;
+    private final ArenaService arenaService;
+    private final Map<String, QueueDefinition> queuesById = new LinkedHashMap<>();
+
+    public QueueService(@Nonnull QueueStore store, @Nonnull ArenaService arenaService) throws IOException {
+        this.store = store;
+        this.arenaService = arenaService;
+        for (QueueDefinition queue : store.loadOrCreate()) {
+            QueueDefinition normalized = queue.normalized();
+            validate(normalized);
+            queuesById.put(normalized.queueId(), normalized);
+        }
+    }
+
+    @Nonnull
+    public synchronized List<QueueDefinition> list() {
+        return queuesById.values().stream()
+            .sorted(Comparator.comparing(QueueDefinition::displayName, String.CASE_INSENSITIVE_ORDER))
+            .toList();
+    }
+
+    @Nonnull
+    public synchronized Optional<QueueDefinition> find(@Nonnull String rawQueueId) {
+        if (rawQueueId == null || rawQueueId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(queuesById.get(QueueDefinition.normalizeId(rawQueueId)));
+    }
+
+    @Nonnull
+    public synchronized QueueDefinition upsert(@Nonnull QueueDefinition definition) throws IOException {
+        QueueDefinition normalized = definition.normalized();
+        validate(normalized);
+        queuesById.put(normalized.queueId(), normalized);
+        persist();
+        return normalized;
+    }
+
+    public synchronized boolean remove(@Nonnull String rawQueueId) throws IOException {
+        String normalizedQueueId = QueueDefinition.normalizeId(rawQueueId);
+        QueueDefinition removed = queuesById.remove(normalizedQueueId);
+        persist();
+        return removed != null;
+    }
+
+    private void validate(@Nonnull QueueDefinition definition) {
+        if (definition.arenaIds().isEmpty()) {
+            throw new IllegalArgumentException("Queue must reference at least one arena.");
+        }
+        if (definition.minPlayers() < 1) {
+            throw new IllegalArgumentException("Queue min players must be at least 1.");
+        }
+        if (definition.maxPlayers() < definition.minPlayers()) {
+            throw new IllegalArgumentException("Queue max players must be greater than or equal to min players.");
+        }
+        if (definition.countdownSeconds() < 0) {
+            throw new IllegalArgumentException("Queue countdown seconds cannot be negative.");
+        }
+        TravelProfileType.parse(definition.launchTravelProfileId());
+        for (String arenaId : definition.arenaIds()) {
+            ArenaDefinition arena = arenaService.find(arenaId)
+                .orElseThrow(() -> new IllegalArgumentException("Queue references missing arena '" + arenaId + "'."));
+            if (arena.maxSupportedPlayers() < definition.maxPlayers()) {
+                throw new IllegalArgumentException(
+                    "Queue max players (" + definition.maxPlayers() + ") exceed arena '" + arena.arenaId()
+                        + "' capacity (" + arena.maxSupportedPlayers() + ")."
+                );
+            }
+        }
+    }
+
+    private void persist() throws IOException {
+        store.save(new ArrayList<>(queuesById.values()));
+    }
+}

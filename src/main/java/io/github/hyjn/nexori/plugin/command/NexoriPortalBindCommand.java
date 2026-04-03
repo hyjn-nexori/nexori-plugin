@@ -56,7 +56,7 @@ public final class NexoriPortalBindCommand extends CommandBase {
         }
 
         try {
-            TriggerBindingDefinition binding = triggerBindingService.bindPortalCollision(
+            TriggerBindingDefinition binding = triggerBindingService.bindPortalCollisionTravel(
                 portalId,
                 context.get(destinationArg),
                 context.get(targetIdArg),

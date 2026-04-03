@@ -1,4 +1,4 @@
-package io.github.hyjn.nexori.plugin.binding;
+package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -12,7 +12,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class TriggerBindingStore {
+public final class ArenaStore {
 
     private static final Gson GSON = new GsonBuilder()
         .setPrettyPrinting()
@@ -20,12 +20,12 @@ public final class TriggerBindingStore {
 
     private final Path file;
 
-    public TriggerBindingStore(@Nonnull Path file) {
+    public ArenaStore(@Nonnull Path file) {
         this.file = file;
     }
 
     @Nonnull
-    public synchronized List<TriggerBindingDefinition> loadOrCreate() throws IOException {
+    public synchronized List<ArenaDefinition> loadOrCreate() throws IOException {
         ensureParent();
         if (!Files.exists(file)) {
             save(List.of());
@@ -38,34 +38,26 @@ public final class TriggerBindingStore {
             return new ArrayList<>();
         }
 
-        TriggerBindingConfigDocument document = GSON.fromJson(json, TriggerBindingConfigDocument.class);
-        if (document == null || document.triggerBindings() == null) {
+        ArenaConfigDocument document = GSON.fromJson(json, ArenaConfigDocument.class);
+        if (document == null || document.arenas() == null) {
             save(List.of());
             return new ArrayList<>();
         }
 
-        boolean rewriteRequired = document.schemaVersion() < TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION;
-        List<TriggerBindingDefinition> normalizedBindings = new ArrayList<>();
-        for (TriggerBindingDefinition binding : document.triggerBindings()) {
-            if (binding != null) {
-                TriggerBindingDefinition normalized = binding.normalized();
-                normalizedBindings.add(normalized);
-                if (!normalized.equals(binding)) {
-                    rewriteRequired = true;
-                }
+        List<ArenaDefinition> normalized = new ArrayList<>();
+        for (ArenaDefinition arena : document.arenas()) {
+            if (arena != null) {
+                normalized.add(arena.normalized());
             }
         }
-        if (rewriteRequired) {
-            save(normalizedBindings);
-        }
-        return normalizedBindings;
+        return normalized;
     }
 
-    public synchronized void save(@Nonnull List<TriggerBindingDefinition> triggerBindings) throws IOException {
+    public synchronized void save(@Nonnull List<ArenaDefinition> arenas) throws IOException {
         ensureParent();
-        TriggerBindingConfigDocument document = new TriggerBindingConfigDocument(
-            TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION,
-            triggerBindings
+        ArenaConfigDocument document = new ArenaConfigDocument(
+            ArenaConfigDocument.CURRENT_SCHEMA_VERSION,
+            arenas
         );
         String json = GSON.toJson(document);
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
@@ -82,6 +74,14 @@ public final class TriggerBindingStore {
         Path parent = file.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
+        }
+    }
+
+    private record ArenaConfigDocument(int schemaVersion, List<ArenaDefinition> arenas) {
+        private static final int CURRENT_SCHEMA_VERSION = 1;
+
+        private ArenaConfigDocument {
+            arenas = arenas == null ? List.of() : List.copyOf(arenas);
         }
     }
 }

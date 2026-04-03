@@ -4,6 +4,7 @@ import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
@@ -43,7 +44,18 @@ public final class NexoriPortalListCommand extends CommandBase {
                 + " (" + portal.blockX() + ", " + portal.blockY() + ", " + portal.blockZ() + ")"
                 + " target=" + portal.autoDestinationTargetId()
                 + " enabled=" + portal.enabled()
-                + " bound=" + (binding == null ? "no" : binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId())));
+                + " bound=" + describeBinding(binding)));
         }
+    }
+
+    @Nonnull
+    private String describeBinding(TriggerBindingDefinition binding) {
+        if (binding == null) {
+            return "no";
+        }
+        if (binding.action() == TriggerBindingAction.JOIN_QUEUE) {
+            return "JOIN_QUEUE -> " + binding.queueId();
+        }
+        return "TRAVEL -> " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId();
     }
 }

@@ -1,4 +1,4 @@
-package io.github.hyjn.nexori.plugin.binding;
+package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -12,7 +12,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class TriggerBindingStore {
+public final class QueueStore {
 
     private static final Gson GSON = new GsonBuilder()
         .setPrettyPrinting()
@@ -20,12 +20,12 @@ public final class TriggerBindingStore {
 
     private final Path file;
 
-    public TriggerBindingStore(@Nonnull Path file) {
+    public QueueStore(@Nonnull Path file) {
         this.file = file;
     }
 
     @Nonnull
-    public synchronized List<TriggerBindingDefinition> loadOrCreate() throws IOException {
+    public synchronized List<QueueDefinition> loadOrCreate() throws IOException {
         ensureParent();
         if (!Files.exists(file)) {
             save(List.of());
@@ -38,34 +38,26 @@ public final class TriggerBindingStore {
             return new ArrayList<>();
         }
 
-        TriggerBindingConfigDocument document = GSON.fromJson(json, TriggerBindingConfigDocument.class);
-        if (document == null || document.triggerBindings() == null) {
+        QueueConfigDocument document = GSON.fromJson(json, QueueConfigDocument.class);
+        if (document == null || document.queues() == null) {
             save(List.of());
             return new ArrayList<>();
         }
 
-        boolean rewriteRequired = document.schemaVersion() < TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION;
-        List<TriggerBindingDefinition> normalizedBindings = new ArrayList<>();
-        for (TriggerBindingDefinition binding : document.triggerBindings()) {
-            if (binding != null) {
-                TriggerBindingDefinition normalized = binding.normalized();
-                normalizedBindings.add(normalized);
-                if (!normalized.equals(binding)) {
-                    rewriteRequired = true;
-                }
+        List<QueueDefinition> normalized = new ArrayList<>();
+        for (QueueDefinition queue : document.queues()) {
+            if (queue != null) {
+                normalized.add(queue.normalized());
             }
         }
-        if (rewriteRequired) {
-            save(normalizedBindings);
-        }
-        return normalizedBindings;
+        return normalized;
     }
 
-    public synchronized void save(@Nonnull List<TriggerBindingDefinition> triggerBindings) throws IOException {
+    public synchronized void save(@Nonnull List<QueueDefinition> queues) throws IOException {
         ensureParent();
-        TriggerBindingConfigDocument document = new TriggerBindingConfigDocument(
-            TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION,
-            triggerBindings
+        QueueConfigDocument document = new QueueConfigDocument(
+            QueueConfigDocument.CURRENT_SCHEMA_VERSION,
+            queues
         );
         String json = GSON.toJson(document);
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
@@ -82,6 +74,14 @@ public final class TriggerBindingStore {
         Path parent = file.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
+        }
+    }
+
+    private record QueueConfigDocument(int schemaVersion, List<QueueDefinition> queues) {
+        private static final int CURRENT_SCHEMA_VERSION = 1;
+
+        private QueueConfigDocument {
+            queues = queues == null ? List.of() : List.copyOf(queues);
         }
     }
 }

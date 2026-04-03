@@ -7,7 +7,7 @@ public record TriggerBindingConfigDocument(
     int schemaVersion,
     List<TriggerBindingDefinition> triggerBindings
 ) {
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
 
     @Nonnull
     public TriggerBindingConfigDocument {

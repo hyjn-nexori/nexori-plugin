@@ -7,6 +7,8 @@ public record TriggerBindingDefinition(
     String id,
     TriggerBindingKind triggerKind,
     String sourceId,
+    TriggerBindingAction action,
+    String queueId,
     String destinationConnectionAddress,
     String destinationTargetId,
     String travelProfileId,
@@ -17,19 +19,37 @@ public record TriggerBindingDefinition(
     @Nonnull
     public TriggerBindingDefinition normalized() {
         TriggerBindingKind normalizedKind = triggerKind == null ? TriggerBindingKind.PORTAL_COLLISION_ENTER : triggerKind;
+        TriggerBindingAction normalizedAction = action == null ? TriggerBindingAction.TRAVEL : action;
         String normalizedSourceId = normalizeRequired(sourceId, "Trigger binding source id cannot be blank.");
         String normalizedId = normalizeOptional(
             id,
             normalizedKind.name().toLowerCase(Locale.ROOT) + "." + normalizedSourceId
         );
+        if (normalizedAction == TriggerBindingAction.JOIN_QUEUE) {
+            return new TriggerBindingDefinition(
+                normalizedId,
+                normalizedKind,
+                normalizedSourceId,
+                normalizedAction,
+                normalizeRequired(queueId, "Queue trigger bindings require a queue id."),
+                "",
+                "",
+                "",
+                "{}",
+                enabled
+            );
+        }
+
         return new TriggerBindingDefinition(
             normalizedId,
             normalizedKind,
             normalizedSourceId,
+            normalizedAction,
+            "",
             normalizeOptional(destinationConnectionAddress, ""),
             normalizeOptional(destinationTargetId, ""),
             normalizeOptional(travelProfileId, ""),
-            normalizeOptional(contextJson, "{}"),
+            normalizeContextJson(contextJson),
             enabled
         );
     }
@@ -55,5 +75,14 @@ public record TriggerBindingDefinition(
         }
         String normalized = rawValue.trim().toLowerCase(Locale.ROOT);
         return normalized.isBlank() ? defaultValue : normalized;
+    }
+
+    @Nonnull
+    private static String normalizeContextJson(String rawValue) {
+        if (rawValue == null) {
+            return "{}";
+        }
+        String normalized = rawValue.trim();
+        return normalized.isBlank() ? "{}" : normalized;
     }
 }

@@ -15,6 +15,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.access.NexoriAdminAccess;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
@@ -23,6 +24,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
+import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
+import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiPage;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -44,6 +47,7 @@ public final class NexoriPortalInteractionService {
     private final HytaleLogger logger;
     private final PortalInstanceService portalInstanceService;
     private final TriggerBindingService triggerBindingService;
+    private final QueueCoordinatorService queueCoordinatorService;
     private final SecureTravelService secureTravelService;
     private final String adminPermission;
     private final DiagnosticsService diagnosticsService;
@@ -54,6 +58,7 @@ public final class NexoriPortalInteractionService {
         @Nonnull HytaleLogger logger,
         @Nonnull PortalInstanceService portalInstanceService,
         @Nonnull TriggerBindingService triggerBindingService,
+        @Nonnull QueueCoordinatorService queueCoordinatorService,
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull String adminPermission,
         @Nonnull DiagnosticsService diagnosticsService
@@ -62,6 +67,7 @@ public final class NexoriPortalInteractionService {
         this.logger = logger;
         this.portalInstanceService = portalInstanceService;
         this.triggerBindingService = triggerBindingService;
+        this.queueCoordinatorService = queueCoordinatorService;
         this.secureTravelService = secureTravelService;
         this.adminPermission = adminPermission;
         this.diagnosticsService = diagnosticsService;
@@ -191,6 +197,11 @@ public final class NexoriPortalInteractionService {
             return;
         }
 
+        if (binding.get().action() == TriggerBindingAction.JOIN_QUEUE) {
+            joinQueue(player, playerRef, portal.get(), binding.get());
+            return;
+        }
+
         try {
             String operationId = diagnosticsService.newOperationId("travel");
             secureTravelService.travel(
@@ -242,6 +253,52 @@ public final class NexoriPortalInteractionService {
             );
             player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
             logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
+        }
+    }
+
+    private void joinQueue(
+        @Nonnull Player player,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull PortalInstanceDefinition portal,
+        @Nonnull TriggerBindingDefinition binding
+    ) {
+        LobbyDefinition lobby = plugin.getLobbyService().findByWorldName(portal.worldName()).orElse(null);
+        if (lobby == null || !lobby.enabled()) {
+            player.sendMessage(Message.raw("This Nexori portal is not in an enabled lobby world, so queue join is unavailable."));
+            return;
+        }
+
+        QueueCoordinatorService.JoinResult result = queueCoordinatorService.joinQueue(
+            playerRef.getUuid(),
+            playerRef.getUsername(),
+            binding.queueId(),
+            portal.portalId()
+        );
+        switch (result.outcome()) {
+            case JOINED -> {
+                int waiting = result.state().waitingMembers().size();
+                int ready = result.state().readyMembers().size();
+                String suffix = result.state().phase() == io.github.hyjn.nexori.plugin.minigame.QueuePhase.COUNTDOWN
+                    ? " countdown running."
+                    : (result.state().phase() == io.github.hyjn.nexori.plugin.minigame.QueuePhase.READY
+                        ? " ready batch pending."
+                        : "");
+                player.sendMessage(Message.raw(
+                    "Joined Nexori queue " + result.state().queueId()
+                        + ". waiting=" + waiting
+                        + " ready=" + ready
+                        + "." + suffix
+                ));
+            }
+            case ALREADY_QUEUED -> player.sendMessage(Message.raw(
+                "You are already in Nexori queue " + result.existingQueueId() + "."
+            ));
+            case QUEUE_MISSING -> player.sendMessage(Message.raw(
+                "This Nexori portal points to queue '" + binding.queueId() + "', but that queue does not exist."
+            ));
+            case QUEUE_DISABLED -> player.sendMessage(Message.raw(
+                "This Nexori queue is currently disabled."
+            ));
         }
     }
 

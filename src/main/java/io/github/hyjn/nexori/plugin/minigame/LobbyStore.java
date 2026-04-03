@@ -1,4 +1,4 @@
-package io.github.hyjn.nexori.plugin.binding;
+package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -12,7 +12,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class TriggerBindingStore {
+public final class LobbyStore {
 
     private static final Gson GSON = new GsonBuilder()
         .setPrettyPrinting()
@@ -20,12 +20,12 @@ public final class TriggerBindingStore {
 
     private final Path file;
 
-    public TriggerBindingStore(@Nonnull Path file) {
+    public LobbyStore(@Nonnull Path file) {
         this.file = file;
     }
 
     @Nonnull
-    public synchronized List<TriggerBindingDefinition> loadOrCreate() throws IOException {
+    public synchronized List<LobbyDefinition> loadOrCreate() throws IOException {
         ensureParent();
         if (!Files.exists(file)) {
             save(List.of());
@@ -38,34 +38,26 @@ public final class TriggerBindingStore {
             return new ArrayList<>();
         }
 
-        TriggerBindingConfigDocument document = GSON.fromJson(json, TriggerBindingConfigDocument.class);
-        if (document == null || document.triggerBindings() == null) {
+        LobbyConfigDocument document = GSON.fromJson(json, LobbyConfigDocument.class);
+        if (document == null || document.lobbies() == null) {
             save(List.of());
             return new ArrayList<>();
         }
 
-        boolean rewriteRequired = document.schemaVersion() < TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION;
-        List<TriggerBindingDefinition> normalizedBindings = new ArrayList<>();
-        for (TriggerBindingDefinition binding : document.triggerBindings()) {
-            if (binding != null) {
-                TriggerBindingDefinition normalized = binding.normalized();
-                normalizedBindings.add(normalized);
-                if (!normalized.equals(binding)) {
-                    rewriteRequired = true;
-                }
+        List<LobbyDefinition> normalized = new ArrayList<>();
+        for (LobbyDefinition lobby : document.lobbies()) {
+            if (lobby != null) {
+                normalized.add(lobby.normalized());
             }
         }
-        if (rewriteRequired) {
-            save(normalizedBindings);
-        }
-        return normalizedBindings;
+        return normalized;
     }
 
-    public synchronized void save(@Nonnull List<TriggerBindingDefinition> triggerBindings) throws IOException {
+    public synchronized void save(@Nonnull List<LobbyDefinition> lobbies) throws IOException {
         ensureParent();
-        TriggerBindingConfigDocument document = new TriggerBindingConfigDocument(
-            TriggerBindingConfigDocument.CURRENT_SCHEMA_VERSION,
-            triggerBindings
+        LobbyConfigDocument document = new LobbyConfigDocument(
+            LobbyConfigDocument.CURRENT_SCHEMA_VERSION,
+            lobbies
         );
         String json = GSON.toJson(document);
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
@@ -82,6 +74,14 @@ public final class TriggerBindingStore {
         Path parent = file.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
+        }
+    }
+
+    private record LobbyConfigDocument(int schemaVersion, List<LobbyDefinition> lobbies) {
+        private static final int CURRENT_SCHEMA_VERSION = 1;
+
+        private LobbyConfigDocument {
+            lobbies = lobbies == null ? List.of() : List.copyOf(lobbies);
         }
     }
 }

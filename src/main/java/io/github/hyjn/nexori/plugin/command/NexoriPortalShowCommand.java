@@ -6,6 +6,7 @@ import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
@@ -44,9 +45,18 @@ public final class NexoriPortalShowCommand extends CommandBase {
         context.sendMessage(Message.raw("Location: " + portal.worldName() + " (" + portal.blockX() + ", " + portal.blockY() + ", " + portal.blockZ() + ")"));
         context.sendMessage(Message.raw("Auto destination target: " + portal.autoDestinationTargetId()));
         context.sendMessage(Message.raw("Enabled: " + portal.enabled()));
-        context.sendMessage(Message.raw("Collision binding: " + (binding == null
-            ? "<none>"
-            : binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()
-                + (binding.travelProfileId().isBlank() ? "" : " profile=" + binding.travelProfileId()))));
+        if (binding == null) {
+            context.sendMessage(Message.raw("Collision binding: <none>"));
+            return;
+        }
+
+        context.sendMessage(Message.raw("Collision binding action: " + binding.action()));
+        if (binding.action() == TriggerBindingAction.JOIN_QUEUE) {
+            context.sendMessage(Message.raw("Collision queue: " + binding.queueId()));
+            return;
+        }
+
+        context.sendMessage(Message.raw("Collision destination: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()));
+        context.sendMessage(Message.raw("Collision travel profile: " + binding.travelProfileId()));
     }
 }
