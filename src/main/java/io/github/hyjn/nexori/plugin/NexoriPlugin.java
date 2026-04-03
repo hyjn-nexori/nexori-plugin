@@ -18,6 +18,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriMatchSessionStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
@@ -58,6 +59,8 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
+import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
+import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.minigame.QueueStore;
@@ -127,6 +130,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaService arenaService;
     private QueueService queueService;
     private QueueCoordinatorService queueCoordinatorService;
+    private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
     private ScheduledExecutorService queueCountdownScheduler;
 
@@ -174,6 +178,9 @@ public class NexoriPlugin extends JavaPlugin {
             this.queueService = new QueueService(
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
                 this.arenaService
+            );
+            this.matchSessionService = new MatchSessionService(
+                new MatchSessionStore(this.getDataDirectory().resolve("state").resolve("match-sessions.json"))
             );
             this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
                 new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
@@ -256,6 +263,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.queueService,
                 this.arenaService,
                 this.lobbyService,
+                this.matchSessionService,
                 this.localConnectionAddressService,
                 this.secureTravelService,
                 this.getLogger()
@@ -270,7 +278,8 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
-                this.secureTravelService
+                this.secureTravelService,
+                this.matchSessionService
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -341,6 +350,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
             this.getCommandRegistry().registerCommand(new NexoriQueueLeaveCommand(this.queueCoordinatorService));
             this.getCommandRegistry().registerCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
+            this.getCommandRegistry().registerCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
             this.getCommandRegistry().registerCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
             this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
@@ -483,6 +493,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public QueueCoordinatorService getQueueCoordinatorService() {
         return queueCoordinatorService;
+    }
+
+    public MatchSessionService getMatchSessionService() {
+        return matchSessionService;
     }
 
     public ArenaMatchService getArenaMatchService() {

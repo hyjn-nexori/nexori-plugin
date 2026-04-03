@@ -95,6 +95,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriqueuestatus"));
         ctx.sendMessage(Message.raw("- /nexoriqueueleave"));
         ctx.sendMessage(Message.raw("- /nexorimatchstatus"));
+        ctx.sendMessage(Message.raw("- /nexorimatchsessionstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchend <matchId> [--reason=<MATCH_ENDED|MATCH_ABORTED|RECOVERY_RETURN>]"));
         ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));
         ctx.sendMessage(Message.raw("- /nexorirecoverymode <status|enable|disable>"));

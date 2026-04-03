@@ -28,15 +28,18 @@ public final class ArenaMatchService {
 
     private final HytaleLogger logger;
     private final SecureTravelService secureTravelService;
+    private final MatchSessionService matchSessionService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
 
     public ArenaMatchService(
         @Nonnull HytaleLogger logger,
-        @Nonnull SecureTravelService secureTravelService
+        @Nonnull SecureTravelService secureTravelService,
+        @Nonnull MatchSessionService matchSessionService
     ) {
         this.logger = logger;
         this.secureTravelService = secureTravelService;
+        this.matchSessionService = matchSessionService;
     }
 
     public synchronized void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -219,12 +222,42 @@ public final class ArenaMatchService {
     }
 
     private void handleReturnArrival(@Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
+        String matchId = readRequired(context, "matchId");
         String queueId = readRequired(context, "queueId");
+        String originLobbyId = readRequired(context, "originLobbyId");
         String sourceArenaId = readRequired(context, "sourceArenaId");
         String reason = readRequired(context, "returnReason");
-        playerRef.sendMessage(Message.raw(
-            "Returned from Nexori arena " + sourceArenaId + " queue=" + queueId + " reason=" + reason + "."
-        ));
+        MatchSessionService.ReturnResult result;
+        try {
+            result = matchSessionService.registerReturn(
+                matchId,
+                queueId,
+                originLobbyId,
+                sourceArenaId,
+                reason,
+                playerRef.getUuid()
+            );
+        } catch (IOException exception) {
+            logger.atWarning().withCause(exception).log("Failed to persist Nexori match return state.");
+            playerRef.sendMessage(Message.raw("Returned from Nexori arena, but saving return state failed: " + exception.getMessage()));
+            return;
+        }
+
+        switch (result.outcome()) {
+            case RETURNED -> playerRef.sendMessage(Message.raw(
+                "Returned from Nexori arena " + sourceArenaId + " for match " + matchId + "."
+            ));
+            case COMPLETED -> playerRef.sendMessage(Message.raw(
+                "Returned from Nexori arena " + sourceArenaId + ". Match " + matchId + " is now complete."
+            ));
+            case ALREADY_RETURNED -> playerRef.sendMessage(Message.raw(
+                "This Nexori match return had already been recorded."
+            ));
+            case MISSING, INVALID -> playerRef.sendMessage(Message.raw(
+                "Returned from Nexori arena, but the lobby could not validate the match context."
+                    + (result.errorMessage().isBlank() ? "" : " " + result.errorMessage())
+            ));
+        }
     }
 
     private void removeMatchPlayers(@Nonnull String matchId, @Nonnull List<UUID> playerUuids) {

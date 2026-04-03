@@ -28,6 +28,7 @@ public final class QueueCoordinatorService {
     private final QueueService queueService;
     private final ArenaService arenaService;
     private final LobbyService lobbyService;
+    private final MatchSessionService matchSessionService;
     private final LocalConnectionAddressService localConnectionAddressService;
     private final SecureTravelService secureTravelService;
     private final HytaleLogger logger;
@@ -38,6 +39,7 @@ public final class QueueCoordinatorService {
         @Nonnull QueueService queueService,
         @Nonnull ArenaService arenaService,
         @Nonnull LobbyService lobbyService,
+        @Nonnull MatchSessionService matchSessionService,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull HytaleLogger logger
@@ -45,6 +47,7 @@ public final class QueueCoordinatorService {
         this.queueService = queueService;
         this.arenaService = arenaService;
         this.lobbyService = lobbyService;
+        this.matchSessionService = matchSessionService;
         this.localConnectionAddressService = localConnectionAddressService;
         this.secureTravelService = secureTravelService;
         this.logger = logger;
@@ -309,11 +312,18 @@ public final class QueueCoordinatorService {
                 continue;
             }
 
-            String contextJson;
+            PreparedLaunch preparedLaunch;
             try {
-                contextJson = buildLaunchContextJson(queue, arena.get(), liveReadyMembers, nowEpochMs);
+                preparedLaunch = prepareLaunch(queue, arena.get(), liveReadyMembers, nowEpochMs);
             } catch (IllegalStateException exception) {
                 stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, exception.getMessage()));
+                continue;
+            }
+            try {
+                matchSessionService.upsert(preparedLaunch.matchSessionState());
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to persist Nexori match session before launch.");
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, "Failed to persist match session state before launch."));
                 continue;
             }
             List<LaunchCandidate> launched = new ArrayList<>();
@@ -326,7 +336,7 @@ public final class QueueCoordinatorService {
                         arena.get().destinationTargetId(),
                         "",
                         queue.launchTravelProfileId(),
-                        contextJson
+                        preparedLaunch.contextJson()
                     );
                     launched.add(candidate);
                 } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
@@ -363,12 +373,26 @@ public final class QueueCoordinatorService {
             }
 
             if (launched.isEmpty()) {
+                try {
+                    matchSessionService.remove(preparedLaunch.matchId());
+                } catch (IOException exception) {
+                    logger.atWarning().withCause(exception).log("Failed to remove unused Nexori match session after launch failure.");
+                }
                 stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, launchError));
                 continue;
             }
 
             for (LaunchCandidate candidate : launched) {
                 queueIdByPlayerUuid.remove(candidate.member().playerUuid());
+            }
+            try {
+                matchSessionService.upsert(preparedLaunch.matchSessionState().withExpectedPlayers(
+                    launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                    nowEpochMs,
+                    launchError
+                ));
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to shrink Nexori match session roster after partial launch.");
             }
 
             List<QueueMemberState> unlaunchedReady = new ArrayList<>();
@@ -464,7 +488,7 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
-    private String buildLaunchContextJson(
+    private PreparedLaunch prepareLaunch(
         @Nonnull QueueDefinition queue,
         @Nonnull ArenaDefinition arena,
         @Nonnull List<QueueMemberState> readyMembers,
@@ -482,9 +506,10 @@ public final class QueueCoordinatorService {
         if (returnConnectionAddress.isBlank()) {
             throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
         }
+        String matchId = UUID.randomUUID().toString().toLowerCase();
         JsonObject root = new JsonObject();
         root.addProperty("flowType", "minigame.launch");
-        root.addProperty("matchId", UUID.randomUUID().toString());
+        root.addProperty("matchId", matchId);
         root.addProperty("queueId", queue.queueId());
         root.addProperty("arenaId", arena.arenaId());
         root.addProperty("originLobbyId", originLobby.lobbyId());
@@ -492,7 +517,21 @@ public final class QueueCoordinatorService {
         root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
-        return GSON.toJson(root);
+        MatchSessionState matchSessionState = new MatchSessionState(
+            matchId,
+            queue.queueId(),
+            arena.arenaId(),
+            originLobby.lobbyId(),
+            returnConnectionAddress,
+            originLobby.returnTargetId(),
+            queue.launchTravelProfileId(),
+            readyMembers.stream().map(QueueMemberState::playerUuid).toList(),
+            List.of(),
+            nowEpochMs,
+            nowEpochMs,
+            ""
+        ).normalized();
+        return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState);
     }
 
     @Nonnull
@@ -514,6 +553,13 @@ public final class QueueCoordinatorService {
     private record LaunchCandidate(
         QueueMemberState member,
         PlayerRef playerRef
+    ) {
+    }
+
+    private record PreparedLaunch(
+        String matchId,
+        String contextJson,
+        MatchSessionState matchSessionState
     ) {
     }
 
