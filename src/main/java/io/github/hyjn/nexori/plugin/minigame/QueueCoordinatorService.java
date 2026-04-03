@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 
@@ -26,6 +27,8 @@ public final class QueueCoordinatorService {
 
     private final QueueService queueService;
     private final ArenaService arenaService;
+    private final LobbyService lobbyService;
+    private final LocalConnectionAddressService localConnectionAddressService;
     private final SecureTravelService secureTravelService;
     private final HytaleLogger logger;
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
@@ -34,11 +37,15 @@ public final class QueueCoordinatorService {
     public QueueCoordinatorService(
         @Nonnull QueueService queueService,
         @Nonnull ArenaService arenaService,
+        @Nonnull LobbyService lobbyService,
+        @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull HytaleLogger logger
     ) {
         this.queueService = queueService;
         this.arenaService = arenaService;
+        this.lobbyService = lobbyService;
+        this.localConnectionAddressService = localConnectionAddressService;
         this.secureTravelService = secureTravelService;
         this.logger = logger;
     }
@@ -48,6 +55,7 @@ public final class QueueCoordinatorService {
         @Nonnull UUID playerUuid,
         @Nonnull String playerName,
         @Nonnull String rawQueueId,
+        @Nonnull String sourceLobbyId,
         @Nonnull String sourcePortalId
     ) {
         String normalizedQueueId = QueueDefinition.normalizeId(rawQueueId);
@@ -66,7 +74,7 @@ public final class QueueCoordinatorService {
 
         long now = System.currentTimeMillis();
         QueueRuntimeState currentState = state(normalizedQueueId, now);
-        QueueMemberState member = new QueueMemberState(playerUuid, playerName, sourcePortalId, now).normalized();
+        QueueMemberState member = new QueueMemberState(playerUuid, playerName, sourceLobbyId, sourcePortalId, now).normalized();
         List<QueueMemberState> waitingMembers = new ArrayList<>(currentState.waitingMembers());
         waitingMembers.add(member);
         queueIdByPlayerUuid.put(playerUuid, normalizedQueueId);
@@ -301,7 +309,13 @@ public final class QueueCoordinatorService {
                 continue;
             }
 
-            String contextJson = buildLaunchContextJson(queue, arena.get(), nowEpochMs);
+            String contextJson;
+            try {
+                contextJson = buildLaunchContextJson(queue, arena.get(), liveReadyMembers, nowEpochMs);
+            } catch (IllegalStateException exception) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, exception.getMessage()));
+                continue;
+            }
             List<LaunchCandidate> launched = new ArrayList<>();
             String launchError = "";
             for (LaunchCandidate candidate : launchCandidates) {
@@ -450,11 +464,33 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
-    private String buildLaunchContextJson(@Nonnull QueueDefinition queue, @Nonnull ArenaDefinition arena, long nowEpochMs) {
+    private String buildLaunchContextJson(
+        @Nonnull QueueDefinition queue,
+        @Nonnull ArenaDefinition arena,
+        @Nonnull List<QueueMemberState> readyMembers,
+        long nowEpochMs
+    ) {
+        if (readyMembers.isEmpty()) {
+            throw new IllegalStateException("Cannot build a launch context for an empty ready batch.");
+        }
+        String originLobbyId = readyMembers.get(0).sourceLobbyId();
+        LobbyDefinition originLobby = lobbyService.find(originLobbyId)
+            .orElseThrow(() -> new IllegalStateException(
+                "Queue ready batch references missing lobby '" + originLobbyId + "'."
+            ));
+        String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
+        if (returnConnectionAddress.isBlank()) {
+            throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
+        }
         JsonObject root = new JsonObject();
         root.addProperty("flowType", "minigame.launch");
+        root.addProperty("matchId", UUID.randomUUID().toString());
         root.addProperty("queueId", queue.queueId());
         root.addProperty("arenaId", arena.arenaId());
+        root.addProperty("originLobbyId", originLobby.lobbyId());
+        root.addProperty("returnConnectionAddress", returnConnectionAddress);
+        root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
+        root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
         return GSON.toJson(root);
     }

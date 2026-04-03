@@ -272,6 +272,7 @@ public final class NexoriPortalInteractionService {
             playerRef.getUuid(),
             playerRef.getUsername(),
             binding.queueId(),
+            lobby.lobbyId(),
             portal.portalId()
         );
         switch (result.outcome()) {

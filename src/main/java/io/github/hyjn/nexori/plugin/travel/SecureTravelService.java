@@ -41,6 +41,7 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -57,6 +58,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final InventoryTransferService inventoryTransferService;
     private final DiagnosticsService diagnosticsService;
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
 
     public SecureTravelService(
         @Nonnull HytaleLogger logger,
@@ -329,9 +331,15 @@ public final class SecureTravelService implements SecureReferralHandler {
             return;
         }
 
+        recentArrivals.put(playerRef.getUuid(), arrival);
         applyArrivalTeleport(event, playerRef, arrival);
         event.getPlayer().sendMessage(Message.raw(buildArrivalMessage(arrival)));
         inventoryTransferService.handlePlayerReady(event);
+    }
+
+    @Nonnull
+    public Optional<PendingArrival> consumeRecentArrival(@Nonnull UUID playerUuid) {
+        return Optional.ofNullable(recentArrivals.remove(playerUuid));
     }
 
     private void applyArrivalTeleport(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {

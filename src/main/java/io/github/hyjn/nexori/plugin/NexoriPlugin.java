@@ -17,6 +17,8 @@ import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriMatchStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
@@ -53,6 +55,7 @@ import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
+import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
@@ -124,6 +127,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaService arenaService;
     private QueueService queueService;
     private QueueCoordinatorService queueCoordinatorService;
+    private ArenaMatchService arenaMatchService;
     private ScheduledExecutorService queueCountdownScheduler;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -251,6 +255,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.queueCoordinatorService = new QueueCoordinatorService(
                 this.queueService,
                 this.arenaService,
+                this.lobbyService,
+                this.localConnectionAddressService,
                 this.secureTravelService,
                 this.getLogger()
             );
@@ -261,6 +267,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.discoveredDestinationTargetCacheService,
                 this.secureReferralService,
                 this.diagnosticsService
+            );
+            this.arenaMatchService = new ArenaMatchService(
+                this.getLogger(),
+                this.secureTravelService
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -330,6 +340,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriQueueListCommand(this.queueService));
             this.getCommandRegistry().registerCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
             this.getCommandRegistry().registerCommand(new NexoriQueueLeaveCommand(this.queueCoordinatorService));
+            this.getCommandRegistry().registerCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
+            this.getCommandRegistry().registerCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
             this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
@@ -345,6 +357,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
@@ -470,5 +483,9 @@ public class NexoriPlugin extends JavaPlugin {
 
     public QueueCoordinatorService getQueueCoordinatorService() {
         return queueCoordinatorService;
+    }
+
+    public ArenaMatchService getArenaMatchService() {
+        return arenaMatchService;
     }
 }

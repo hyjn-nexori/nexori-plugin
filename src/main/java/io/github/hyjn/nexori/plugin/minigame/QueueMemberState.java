@@ -7,6 +7,7 @@ import java.util.UUID;
 public record QueueMemberState(
     UUID playerUuid,
     String playerNameSnapshot,
+    String sourceLobbyId,
     String sourcePortalId,
     long joinedAtEpochMs
 ) {
@@ -19,9 +20,19 @@ public record QueueMemberState(
         return new QueueMemberState(
             playerUuid,
             normalizePlayerName(playerNameSnapshot, playerUuid.toString()),
+            normalizeRequiredLower(sourceLobbyId, "Queue member source lobby id cannot be blank."),
             normalizeOptionalLower(sourcePortalId),
             joinedAtEpochMs <= 0 ? System.currentTimeMillis() : joinedAtEpochMs
         );
+    }
+
+    @Nonnull
+    private static String normalizeRequiredLower(String rawValue, @Nonnull String message) {
+        String normalized = normalizeOptionalLower(rawValue);
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException(message);
+        }
+        return normalized;
     }
 
     @Nonnull
