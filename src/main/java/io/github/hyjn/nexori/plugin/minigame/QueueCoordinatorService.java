@@ -1,24 +1,46 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.Universe;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
+
 import javax.annotation.Nonnull;
+import java.io.IOException;
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 public final class QueueCoordinatorService {
 
+    private static final Gson GSON = new Gson();
+    private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;
+
     private final QueueService queueService;
+    private final ArenaService arenaService;
+    private final SecureTravelService secureTravelService;
+    private final HytaleLogger logger;
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
 
-    public QueueCoordinatorService(@Nonnull QueueService queueService) {
+    public QueueCoordinatorService(
+        @Nonnull QueueService queueService,
+        @Nonnull ArenaService arenaService,
+        @Nonnull SecureTravelService secureTravelService,
+        @Nonnull HytaleLogger logger
+    ) {
         this.queueService = queueService;
+        this.arenaService = arenaService;
+        this.secureTravelService = secureTravelService;
+        this.logger = logger;
     }
 
     @Nonnull
@@ -56,7 +78,9 @@ public final class QueueCoordinatorService {
             currentState.readyMembers(),
             currentState.countdownEndsAtEpochMs(),
             currentState.readyAtEpochMs(),
-            now
+            now,
+            currentState.lastLaunchAttemptAtEpochMs(),
+            currentState.lastLaunchError()
         ).normalized();
         updated = maybeStartCountdown(updated, queue.get(), now);
         stateByQueueId.put(normalizedQueueId, updated);
@@ -85,7 +109,9 @@ public final class QueueCoordinatorService {
             readyMembers,
             currentState.countdownEndsAtEpochMs(),
             currentState.readyAtEpochMs(),
-            now
+            now,
+            currentState.lastLaunchAttemptAtEpochMs(),
+            currentState.lastLaunchError()
         ).normalized();
 
         if (updated.hasReadyBatch() && updated.readyMembers().size() < queue.minPlayers()) {
@@ -98,7 +124,9 @@ public final class QueueCoordinatorService {
                 List.of(),
                 0L,
                 0L,
-                now
+                now,
+                0L,
+                ""
             ).normalized();
         }
 
@@ -110,7 +138,9 @@ public final class QueueCoordinatorService {
                 updated.readyMembers(),
                 0L,
                 updated.readyAtEpochMs(),
-                now
+                now,
+                updated.lastLaunchAttemptAtEpochMs(),
+                updated.lastLaunchError()
             ).normalized();
         }
 
@@ -166,7 +196,9 @@ public final class QueueCoordinatorService {
                     currentState.readyMembers(),
                     0L,
                     currentState.readyAtEpochMs(),
-                    nowEpochMs
+                    nowEpochMs,
+                    currentState.lastLaunchAttemptAtEpochMs(),
+                    currentState.lastLaunchError()
                 ).normalized());
                 continue;
             }
@@ -184,8 +216,166 @@ public final class QueueCoordinatorService {
                 List.copyOf(readyMembers),
                 0L,
                 nowEpochMs,
-                nowEpochMs
+                nowEpochMs,
+                0L,
+                ""
             ).normalized();
+            stateByQueueId.put(queue.queueId(), updated);
+        }
+    }
+
+    public synchronized void launchReadyBatches(long nowEpochMs) {
+        for (QueueDefinition queue : queueService.list()) {
+            if (!queue.enabled()) {
+                continue;
+            }
+
+            QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
+            if (!currentState.hasReadyBatch()) {
+                continue;
+            }
+            if (currentState.lastLaunchAttemptAtEpochMs() > 0L
+                && nowEpochMs - currentState.lastLaunchAttemptAtEpochMs() < LAUNCH_RETRY_INTERVAL_MS) {
+                continue;
+            }
+
+            Optional<ArenaDefinition> arena = selectLaunchArena(queue);
+            if (arena.isEmpty()) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(
+                    currentState,
+                    nowEpochMs,
+                    "No enabled arena is currently available for this queue."
+                ));
+                continue;
+            }
+
+            List<LaunchCandidate> launchCandidates = new ArrayList<>();
+            List<QueueMemberState> liveReadyMembers = new ArrayList<>();
+            for (QueueMemberState member : currentState.readyMembers()) {
+                PlayerRef playerRef = Universe.get().getPlayer(member.playerUuid());
+                if (playerRef == null || !playerRef.isValid()) {
+                    queueIdByPlayerUuid.remove(member.playerUuid());
+                    continue;
+                }
+                launchCandidates.add(new LaunchCandidate(member, playerRef));
+                liveReadyMembers.add(member);
+            }
+
+            if (liveReadyMembers.size() < queue.minPlayers()) {
+                List<QueueMemberState> mergedWaiting = new ArrayList<>(currentState.waitingMembers());
+                mergedWaiting.addAll(liveReadyMembers);
+                QueueRuntimeState updated = new QueueRuntimeState(
+                    currentState.queueId(),
+                    QueuePhase.WAITING,
+                    List.copyOf(mergedWaiting),
+                    List.of(),
+                    0L,
+                    0L,
+                    nowEpochMs,
+                    0L,
+                    ""
+                ).normalized();
+                updated = maybeStartCountdown(updated, queue, nowEpochMs);
+                stateByQueueId.put(queue.queueId(), updated);
+                continue;
+            }
+
+            QueueRuntimeState readyState = new QueueRuntimeState(
+                currentState.queueId(),
+                QueuePhase.READY,
+                currentState.waitingMembers(),
+                List.copyOf(liveReadyMembers),
+                0L,
+                currentState.readyAtEpochMs(),
+                nowEpochMs,
+                nowEpochMs,
+                ""
+            ).normalized();
+            stateByQueueId.put(queue.queueId(), readyState);
+
+            ConfiguredPeer destination;
+            try {
+                destination = ConfiguredPeer.parse(arena.get().destinationConnectionAddress());
+            } catch (IllegalArgumentException exception) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, exception.getMessage()));
+                continue;
+            }
+
+            String contextJson = buildLaunchContextJson(queue, arena.get(), nowEpochMs);
+            List<LaunchCandidate> launched = new ArrayList<>();
+            String launchError = "";
+            for (LaunchCandidate candidate : launchCandidates) {
+                try {
+                    secureTravelService.travel(
+                        candidate.playerRef(),
+                        destination,
+                        arena.get().destinationTargetId(),
+                        "",
+                        queue.launchTravelProfileId(),
+                        contextJson
+                    );
+                    launched.add(candidate);
+                } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+                    launchError = exception.getMessage();
+                    logger.atWarning().withCause(exception).log(
+                        "Failed to launch Nexori queue "
+                            + queue.queueId()
+                            + " to arena "
+                            + arena.get().arenaId()
+                            + "."
+                    );
+                    break;
+                }
+            }
+
+            if (launchError.isBlank()) {
+                for (LaunchCandidate candidate : launched) {
+                    queueIdByPlayerUuid.remove(candidate.member().playerUuid());
+                }
+                QueueRuntimeState updated = new QueueRuntimeState(
+                    readyState.queueId(),
+                    QueuePhase.WAITING,
+                    readyState.waitingMembers(),
+                    List.of(),
+                    0L,
+                    0L,
+                    nowEpochMs,
+                    0L,
+                    ""
+                ).normalized();
+                updated = maybeStartCountdown(updated, queue, nowEpochMs);
+                stateByQueueId.put(queue.queueId(), updated);
+                continue;
+            }
+
+            if (launched.isEmpty()) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, launchError));
+                continue;
+            }
+
+            for (LaunchCandidate candidate : launched) {
+                queueIdByPlayerUuid.remove(candidate.member().playerUuid());
+            }
+
+            List<QueueMemberState> unlaunchedReady = new ArrayList<>();
+            for (int index = launched.size(); index < launchCandidates.size(); index++) {
+                unlaunchedReady.add(launchCandidates.get(index).member());
+            }
+
+            List<QueueMemberState> mergedWaiting = new ArrayList<>(readyState.waitingMembers());
+            mergedWaiting.addAll(unlaunchedReady);
+            QueueRuntimeState updated = new QueueRuntimeState(
+                readyState.queueId(),
+                QueuePhase.WAITING,
+                List.copyOf(mergedWaiting),
+                List.of(),
+                0L,
+                0L,
+                nowEpochMs,
+                0L,
+                ""
+            ).normalized();
+            updated = maybeStartCountdown(updated, queue, nowEpochMs);
             stateByQueueId.put(queue.queueId(), updated);
         }
     }
@@ -206,7 +396,9 @@ public final class QueueCoordinatorService {
                 state.readyMembers(),
                 0L,
                 state.readyAtEpochMs(),
-                nowEpochMs
+                nowEpochMs,
+                state.lastLaunchAttemptAtEpochMs(),
+                state.lastLaunchError()
             ).normalized();
         }
         if (state.phase() == QueuePhase.COUNTDOWN && state.countdownEndsAtEpochMs() > 0L) {
@@ -220,8 +412,51 @@ public final class QueueCoordinatorService {
             state.readyMembers(),
             countdownEndsAt,
             state.readyAtEpochMs(),
-            nowEpochMs
+            nowEpochMs,
+            state.lastLaunchAttemptAtEpochMs(),
+            state.lastLaunchError()
         ).normalized();
+    }
+
+    @Nonnull
+    private QueueRuntimeState rememberLaunchFailure(
+        @Nonnull QueueRuntimeState state,
+        long nowEpochMs,
+        @Nonnull String rawError
+    ) {
+        String launchError = rawError == null || rawError.isBlank() ? "Unknown queue launch failure." : rawError.trim();
+        return new QueueRuntimeState(
+            state.queueId(),
+            QueuePhase.READY,
+            state.waitingMembers(),
+            state.readyMembers(),
+            0L,
+            state.readyAtEpochMs() <= 0L ? nowEpochMs : state.readyAtEpochMs(),
+            nowEpochMs,
+            nowEpochMs,
+            launchError
+        ).normalized();
+    }
+
+    @Nonnull
+    private Optional<ArenaDefinition> selectLaunchArena(@Nonnull QueueDefinition queue) {
+        for (String arenaId : queue.arenaIds()) {
+            ArenaDefinition arena = arenaService.find(arenaId).orElse(null);
+            if (arena != null && arena.enabled()) {
+                return Optional.of(arena);
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Nonnull
+    private String buildLaunchContextJson(@Nonnull QueueDefinition queue, @Nonnull ArenaDefinition arena, long nowEpochMs) {
+        JsonObject root = new JsonObject();
+        root.addProperty("flowType", "minigame.launch");
+        root.addProperty("queueId", queue.queueId());
+        root.addProperty("arenaId", arena.arenaId());
+        root.addProperty("launchedAtEpochMs", nowEpochMs);
+        return GSON.toJson(root);
     }
 
     @Nonnull
@@ -238,6 +473,12 @@ public final class QueueCoordinatorService {
             }
         }
         return List.copyOf(filtered);
+    }
+
+    private record LaunchCandidate(
+        QueueMemberState member,
+        PlayerRef playerRef
+    ) {
     }
 
     public enum JoinOutcome {

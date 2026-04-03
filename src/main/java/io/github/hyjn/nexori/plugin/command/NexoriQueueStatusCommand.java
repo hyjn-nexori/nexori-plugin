@@ -34,13 +34,17 @@ public final class NexoriQueueStatusCommand extends CommandBase {
             long countdownRemaining = state.countdownEndsAtEpochMs() <= 0L
                 ? 0L
                 : Math.max(0L, (state.countdownEndsAtEpochMs() - now + 999L) / 1000L);
-            context.sendMessage(Message.raw(
+            StringBuilder line = new StringBuilder(
                 "- " + state.queueId()
                     + " phase=" + state.phase()
                     + " waiting=" + state.waitingMembers().size()
                     + " ready=" + state.readyMembers().size()
                     + " countdownRemaining=" + countdownRemaining + "s"
-            ));
+            );
+            if (!state.lastLaunchError().isBlank()) {
+                line.append(" launchError=").append(state.lastLaunchError());
+            }
+            context.sendMessage(Message.raw(line.toString()));
         }
     }
 }

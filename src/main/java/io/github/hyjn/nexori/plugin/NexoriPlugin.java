@@ -171,7 +171,6 @@ public class NexoriPlugin extends JavaPlugin {
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
                 this.arenaService
             );
-            this.queueCoordinatorService = new QueueCoordinatorService(this.queueService);
             this.discoveredDestinationTargetCacheService = new DiscoveredDestinationTargetCacheService(
                 new DiscoveredDestinationTargetCacheStore(this.getDataDirectory().resolve("config").resolve("discovered-destination-targets.json"))
             );
@@ -249,6 +248,12 @@ public class NexoriPlugin extends JavaPlugin {
                 this.inventoryTransferService,
                 this.diagnosticsService
             );
+            this.queueCoordinatorService = new QueueCoordinatorService(
+                this.queueService,
+                this.arenaService,
+                this.secureTravelService,
+                this.getLogger()
+            );
             this.destinationTargetDiscoveryService = new DestinationTargetDiscoveryService(
                 this.getLogger(),
                 this.trustBundleStore,
@@ -276,7 +281,9 @@ public class NexoriPlugin extends JavaPlugin {
             });
             this.queueCountdownScheduler.scheduleAtFixedRate(() -> {
                 try {
-                    this.queueCoordinatorService.advanceCountdowns(System.currentTimeMillis());
+                    long now = System.currentTimeMillis();
+                    this.queueCoordinatorService.advanceCountdowns(now);
+                    this.queueCoordinatorService.launchReadyBatches(now);
                 } catch (Exception exception) {
                     this.getLogger().atWarning().withCause(exception).log("Failed to advance Nexori queue countdowns.");
                 }

@@ -11,7 +11,9 @@ public record QueueRuntimeState(
     List<QueueMemberState> readyMembers,
     long countdownEndsAtEpochMs,
     long readyAtEpochMs,
-    long lastStateChangeEpochMs
+    long lastStateChangeEpochMs,
+    long lastLaunchAttemptAtEpochMs,
+    String lastLaunchError
 ) {
 
     @Nonnull
@@ -26,7 +28,9 @@ public record QueueRuntimeState(
             normalizeMembers(readyMembers),
             Math.max(0L, countdownEndsAtEpochMs),
             Math.max(0L, readyAtEpochMs),
-            lastStateChangeEpochMs <= 0 ? now : lastStateChangeEpochMs
+            lastStateChangeEpochMs <= 0 ? now : lastStateChangeEpochMs,
+            Math.max(0L, lastLaunchAttemptAtEpochMs),
+            normalizeOptionalText(lastLaunchError)
         );
     }
 
@@ -39,7 +43,9 @@ public record QueueRuntimeState(
             List.of(),
             0L,
             0L,
-            nowEpochMs
+            nowEpochMs,
+            0L,
+            ""
         );
     }
 
@@ -63,5 +69,14 @@ public record QueueRuntimeState(
             }
         }
         return List.copyOf(normalized);
+    }
+
+    @Nonnull
+    private static String normalizeOptionalText(String rawValue) {
+        if (rawValue == null) {
+            return "";
+        }
+        String normalized = rawValue.trim();
+        return normalized.isBlank() ? "" : normalized;
     }
 }
