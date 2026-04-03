@@ -4,6 +4,7 @@ import javax.annotation.Nonnull;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 public final class ArenaMatchResolutionTriggerRegistry {
 
@@ -23,6 +24,11 @@ public final class ArenaMatchResolutionTriggerRegistry {
             return Optional.empty();
         }
         return Optional.ofNullable(triggersById.get(normalizeId(rawId)));
+    }
+
+    @Nonnull
+    public synchronized Set<String> listIds() {
+        return Set.copyOf(triggersById.keySet());
     }
 
     @Nonnull

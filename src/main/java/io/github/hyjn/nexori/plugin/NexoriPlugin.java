@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin;
 
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapRunStore;
@@ -64,6 +65,7 @@ import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
+import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.minigame.QueueStore;
@@ -136,6 +138,7 @@ public class NexoriPlugin extends JavaPlugin {
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
     private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
+    private NexoriMinigameApi minigameApi;
     private ScheduledExecutorService queueCountdownScheduler;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -293,6 +296,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaService,
                 this.arenaMatchResolutionTriggerRegistry
             );
+            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.arenaMatchResolutionTriggerRegistry);
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
             this.portalInteractionService = new NexoriPortalInteractionService(
@@ -514,5 +518,13 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ArenaMatchResolutionTriggerRegistry getArenaMatchResolutionTriggerRegistry() {
         return arenaMatchResolutionTriggerRegistry;
+    }
+
+    /**
+     * Returns Nexori's public minigame integration surface for other mods.
+     * Prefer this API over touching internal runtime services directly.
+     */
+    public NexoriMinigameApi getMinigameApi() {
+        return minigameApi;
     }
 }

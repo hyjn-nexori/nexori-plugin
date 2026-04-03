@@ -347,7 +347,7 @@ public final class ArenaMatchService {
     }
 
     @Nonnull
-    private ArenaActiveMatch markPlayerLossInternal(
+    ArenaActiveMatch markPlayerLossInternal(
         @Nonnull ArenaActiveMatch match,
         @Nonnull UUID playerUuid,
         @Nonnull String reason,
