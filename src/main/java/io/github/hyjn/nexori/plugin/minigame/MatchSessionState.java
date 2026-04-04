@@ -19,6 +19,8 @@ public record MatchSessionState(
     List<UUID> returnedPlayerUuids,
     long createdAtEpochMs,
     long updatedAtEpochMs,
+    long handoffCompletedAtEpochMs,
+    long expiresAtEpochMs,
     String lastError
 ) {
 
@@ -37,12 +39,14 @@ public record MatchSessionState(
             normalizePlayers(returnedPlayerUuids),
             createdAtEpochMs <= 0L ? now : createdAtEpochMs,
             updatedAtEpochMs <= 0L ? now : updatedAtEpochMs,
+            Math.max(0L, handoffCompletedAtEpochMs),
+            Math.max(0L, expiresAtEpochMs),
             normalizeOptional(lastError)
         );
     }
 
     @Nonnull
-    public MatchSessionState withExpectedPlayers(@Nonnull List<UUID> playerUuids, long nowEpochMs, @Nonnull String rawLastError) {
+    public MatchSessionState withLaunchedPlayers(@Nonnull List<UUID> playerUuids, long nowEpochMs, @Nonnull String rawLastError) {
         return new MatchSessionState(
             matchId(),
             queueId(),
@@ -52,17 +56,19 @@ public record MatchSessionState(
             returnFallbackTargetId(),
             launchTravelProfileId(),
             playerUuids,
-            filterExistingReturned(playerUuids, returnedPlayerUuids()),
+            filterExistingObserved(playerUuids, returnedPlayerUuids()),
             createdAtEpochMs(),
             nowEpochMs,
+            handoffCompletedAtEpochMs(),
+            expiresAtEpochMs(),
             rawLastError
         ).normalized();
     }
 
     @Nonnull
-    public MatchSessionState withReturnedPlayer(@Nonnull UUID playerUuid, long nowEpochMs) {
-        LinkedHashSet<UUID> returned = new LinkedHashSet<>(returnedPlayerUuids());
-        returned.add(playerUuid);
+    public MatchSessionState withObservedPlayer(@Nonnull UUID playerUuid, long nowEpochMs) {
+        LinkedHashSet<UUID> observed = new LinkedHashSet<>(returnedPlayerUuids());
+        observed.add(playerUuid);
         return new MatchSessionState(
             matchId(),
             queueId(),
@@ -72,27 +78,100 @@ public record MatchSessionState(
             returnFallbackTargetId(),
             launchTravelProfileId(),
             expectedPlayerUuids(),
-            List.copyOf(returned),
+            List.copyOf(observed),
             createdAtEpochMs(),
             nowEpochMs,
+            handoffCompletedAtEpochMs(),
+            expiresAtEpochMs(),
             lastError()
         ).normalized();
     }
 
-    public boolean expectsPlayer(@Nonnull UUID playerUuid) {
-        return expectedPlayerUuids().contains(playerUuid);
-    }
-
-    public boolean hasReturned(@Nonnull UUID playerUuid) {
-        return returnedPlayerUuids().contains(playerUuid);
-    }
-
-    public boolean isComplete() {
-        return !expectedPlayerUuids().isEmpty() && returnedPlayerUuids().containsAll(expectedPlayerUuids());
+    @Nonnull
+    public MatchSessionState withHandoffCompleted(
+        @Nonnull List<UUID> launchedPlayerUuids,
+        long expiresAtEpochMs,
+        long nowEpochMs,
+        @Nonnull String rawLastError
+    ) {
+        return new MatchSessionState(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            launchedPlayerUuids,
+            filterExistingObserved(launchedPlayerUuids, returnedPlayerUuids()),
+            createdAtEpochMs(),
+            nowEpochMs,
+            nowEpochMs,
+            expiresAtEpochMs,
+            rawLastError
+        ).normalized();
     }
 
     @Nonnull
-    private static List<UUID> filterExistingReturned(@Nonnull List<UUID> expectedPlayerUuids, @Nonnull List<UUID> returnedPlayerUuids) {
+    public MatchSessionState withLastError(@Nonnull String rawLastError, long nowEpochMs) {
+        return new MatchSessionState(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            expectedPlayerUuids(),
+            returnedPlayerUuids(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            handoffCompletedAtEpochMs(),
+            expiresAtEpochMs(),
+            rawLastError
+        ).normalized();
+    }
+
+    @Nonnull
+    public List<UUID> launchedPlayerUuids() {
+        return expectedPlayerUuids();
+    }
+
+    @Nonnull
+    public List<UUID> observedPlayerUuids() {
+        return returnedPlayerUuids();
+    }
+
+    public boolean expectsPlayer(@Nonnull UUID playerUuid) {
+        return launchedPlayerUuids().contains(playerUuid);
+    }
+
+    public boolean hasObservedPlayer(@Nonnull UUID playerUuid) {
+        return observedPlayerUuids().contains(playerUuid);
+    }
+
+    public boolean hasHandoffCompleted() {
+        return handoffCompletedAtEpochMs() > 0L;
+    }
+
+    public boolean allLaunchedPlayersObserved() {
+        return !launchedPlayerUuids().isEmpty() && observedPlayerUuids().containsAll(launchedPlayerUuids());
+    }
+
+    public boolean hasObservedReturns() {
+        return !observedPlayerUuids().isEmpty();
+    }
+
+    public boolean hasReturned(@Nonnull UUID playerUuid) {
+        return hasObservedPlayer(playerUuid);
+    }
+
+    public boolean isExpired(long nowEpochMs) {
+        return expiresAtEpochMs() > 0L && expiresAtEpochMs() <= nowEpochMs;
+    }
+
+    @Nonnull
+    private static List<UUID> filterExistingObserved(@Nonnull List<UUID> expectedPlayerUuids, @Nonnull List<UUID> returnedPlayerUuids) {
         LinkedHashSet<UUID> expected = new LinkedHashSet<>(expectedPlayerUuids);
         LinkedHashSet<UUID> filtered = new LinkedHashSet<>();
         for (UUID returned : returnedPlayerUuids) {

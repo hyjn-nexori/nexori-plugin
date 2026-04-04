@@ -7,7 +7,9 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
+import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
@@ -81,6 +83,75 @@ public final class ArenaMatchService {
         }
         if ("minigame.return".equalsIgnoreCase(flowType)) {
             handleReturnArrival(playerRef, context);
+        }
+    }
+
+    public synchronized void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
+        PlayerRef playerRef = event.getPlayerRef();
+        if (playerRef == null) {
+            return;
+        }
+
+        String matchId = matchIdByPlayerUuid.remove(playerRef.getUuid());
+        if (matchId == null) {
+            return;
+        }
+
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPlayer(playerRef.getUuid())) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        ArenaActiveMatch updated = match.withoutReturnedPlayer(playerRef.getUuid(), now)
+            .withLastError("Player disconnected: " + event.getDisconnectReason(), now);
+        updated = applyAutomaticResolutionTrigger(updated, now);
+
+        if (updated.isEmpty()) {
+            matchesById.remove(updated.matchId());
+        } else {
+            matchesById.put(updated.matchId(), updated);
+        }
+    }
+
+    public synchronized void handlePlayerSetupDisconnect(@Nonnull PlayerSetupDisconnectEvent event) {
+        PendingArrival arrival = secureTravelService.peekPendingArrival(event.getUuid()).orElse(null);
+        if (arrival == null) {
+            return;
+        }
+
+        JsonObject context = parseContext(arrival.contextJson());
+        if (context == null || !context.has("flowType")) {
+            return;
+        }
+
+        String flowType = context.get("flowType").getAsString();
+        if (!"minigame.launch".equalsIgnoreCase(flowType) && !"minigame.return".equalsIgnoreCase(flowType)) {
+            return;
+        }
+
+        secureTravelService.removePendingArrival(event.getUuid());
+        long now = System.currentTimeMillis();
+        String reason = "Player setup disconnect before ready: " + event.getDisconnectReason();
+
+        try {
+            if ("minigame.launch".equalsIgnoreCase(flowType)) {
+                LaunchContext launch = LaunchContext.from(context);
+                ArenaActiveMatch match = matchesById.get(launch.matchId());
+                if (match != null) {
+                    ArenaActiveMatch updated = match.withExpectedPlayerCount(match.expectedPlayerCount() - 1, now)
+                        .withLastError(reason, now);
+                    updated = applyAutomaticResolutionTrigger(updated, now);
+                    if (updated.isEmpty()) {
+                        matchesById.remove(updated.matchId());
+                    } else {
+                        matchesById.put(updated.matchId(), updated);
+                    }
+                }
+                return;
+            }
+        } catch (IllegalArgumentException exception) {
+            logger.atWarning().withCause(exception).log("Failed to process Nexori player setup disconnect context.");
         }
     }
 
@@ -236,6 +307,7 @@ public final class ArenaMatchService {
                 launch.returnConnectionAddress(),
                 launch.returnFallbackTargetId(),
                 launch.launchTravelProfileId(),
+                launch.matchResolutionTriggerId(),
                 launch.expectedPlayerCount(),
                 List.of(playerRef.getUuid()),
                 List.of(playerRef.getUuid()),
@@ -295,13 +367,13 @@ public final class ArenaMatchService {
                 "Returned from Nexori arena " + sourceArenaId + " for match " + matchId + "."
             ));
             case COMPLETED -> playerRef.sendMessage(Message.raw(
-                "Returned from Nexori arena " + sourceArenaId + ". Match " + matchId + " is now complete."
+                "Returned from Nexori arena " + sourceArenaId + ". The lobby has now observed every launched player for match " + matchId + "."
             ));
             case ALREADY_RETURNED -> playerRef.sendMessage(Message.raw(
-                "This Nexori match return had already been recorded."
+                "This Nexori match return had already been observed by the lobby."
             ));
             case MISSING, INVALID -> playerRef.sendMessage(Message.raw(
-                "Returned from Nexori arena, but the lobby could not validate the match context."
+                "Returned from Nexori arena, but the lobby handoff record was missing or did not validate this context."
                     + (result.errorMessage().isBlank() ? "" : " " + result.errorMessage())
             ));
         }
@@ -317,15 +389,15 @@ public final class ArenaMatchService {
             return match;
         }
 
-        ArenaDefinition arena = arenaService.find(match.arenaId()).orElse(null);
-        if (arena == null || ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(arena.matchResolutionTriggerId())) {
+        if (match.matchResolutionTriggerId().isBlank()
+            || ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(match.matchResolutionTriggerId())) {
             return match;
         }
 
-        ArenaMatchResolutionTrigger trigger = triggerRegistry.find(arena.matchResolutionTriggerId()).orElse(null);
+        ArenaMatchResolutionTrigger trigger = triggerRegistry.find(match.matchResolutionTriggerId()).orElse(null);
         if (trigger == null) {
             return match.withLastError(
-                "Unknown arena match resolution trigger '" + arena.matchResolutionTriggerId() + "'.",
+                "Unknown arena match resolution trigger '" + match.matchResolutionTriggerId() + "'.",
                 nowEpochMs
             );
         }
@@ -496,6 +568,7 @@ public final class ArenaMatchService {
         String returnConnectionAddress,
         String returnFallbackTargetId,
         String launchTravelProfileId,
+        String matchResolutionTriggerId,
         int expectedPlayerCount
     ) {
 
@@ -509,6 +582,9 @@ public final class ArenaMatchService {
                 readRequired(root, "returnConnectionAddress"),
                 readRequired(root, "returnFallbackTargetId"),
                 readRequired(root, "launchTravelProfileId").toLowerCase(),
+                root.has("matchResolutionTriggerId")
+                    ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
+                    : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
                 root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0
             );
         }

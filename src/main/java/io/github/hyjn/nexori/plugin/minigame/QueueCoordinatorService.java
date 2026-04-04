@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
@@ -24,6 +25,7 @@ public final class QueueCoordinatorService {
 
     private static final Gson GSON = new Gson();
     private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;
+    private static final long WORLD_TICK_ADVANCE_INTERVAL_MS = 1000L;
 
     private final QueueService queueService;
     private final ArenaService arenaService;
@@ -34,6 +36,7 @@ public final class QueueCoordinatorService {
     private final HytaleLogger logger;
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
+    private long lastWorldTickAdvanceAtEpochMs;
 
     public QueueCoordinatorService(
         @Nonnull QueueService queueService,
@@ -100,64 +103,19 @@ public final class QueueCoordinatorService {
 
     @Nonnull
     public synchronized LeaveResult leaveCurrentQueue(@Nonnull UUID playerUuid) {
-        String queueId = queueIdByPlayerUuid.remove(playerUuid);
-        if (queueId == null) {
+        RemovedPlayerResult removed = removePlayerFromQueue(playerUuid, System.currentTimeMillis());
+        if (!removed.removed()) {
             return LeaveResult.notQueued();
         }
+        return LeaveResult.left(removed.queueId(), removed.state());
+    }
 
-        QueueDefinition queue = queueService.find(queueId)
-            .orElseThrow(() -> new IllegalStateException("Queue runtime references missing queue '" + queueId + "'."));
-
-        long now = System.currentTimeMillis();
-        QueueRuntimeState currentState = state(queueId, now);
-
-        List<QueueMemberState> waitingMembers = removePlayer(currentState.waitingMembers(), playerUuid);
-        List<QueueMemberState> readyMembers = removePlayer(currentState.readyMembers(), playerUuid);
-        QueueRuntimeState updated = new QueueRuntimeState(
-            currentState.queueId(),
-            currentState.phase(),
-            waitingMembers,
-            readyMembers,
-            currentState.countdownEndsAtEpochMs(),
-            currentState.readyAtEpochMs(),
-            now,
-            currentState.lastLaunchAttemptAtEpochMs(),
-            currentState.lastLaunchError()
-        ).normalized();
-
-        if (updated.hasReadyBatch() && updated.readyMembers().size() < queue.minPlayers()) {
-            List<QueueMemberState> mergedWaiting = new ArrayList<>(updated.readyMembers());
-            mergedWaiting.addAll(updated.waitingMembers());
-            updated = new QueueRuntimeState(
-                updated.queueId(),
-                QueuePhase.WAITING,
-                List.copyOf(mergedWaiting),
-                List.of(),
-                0L,
-                0L,
-                now,
-                0L,
-                ""
-            ).normalized();
+    public synchronized void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
+        PlayerRef playerRef = event.getPlayerRef();
+        if (playerRef == null) {
+            return;
         }
-
-        if (updated.phase() == QueuePhase.COUNTDOWN && updated.waitingMembers().size() < queue.minPlayers()) {
-            updated = new QueueRuntimeState(
-                updated.queueId(),
-                QueuePhase.WAITING,
-                updated.waitingMembers(),
-                updated.readyMembers(),
-                0L,
-                updated.readyAtEpochMs(),
-                now,
-                updated.lastLaunchAttemptAtEpochMs(),
-                updated.lastLaunchError()
-            ).normalized();
-        }
-
-        updated = maybeStartCountdown(updated, queue, now);
-        stateByQueueId.put(queueId, updated);
-        return LeaveResult.left(queueId, updated);
+        removePlayerFromQueue(playerRef.getUuid(), System.currentTimeMillis());
     }
 
     public synchronized boolean isQueued(@Nonnull UUID playerUuid) {
@@ -191,6 +149,20 @@ public final class QueueCoordinatorService {
         return stateByQueueId.values().stream()
             .sorted(Comparator.comparing(QueueRuntimeState::queueId))
             .toList();
+    }
+
+    public synchronized void advanceWorldTick(long nowEpochMs) {
+        if (nowEpochMs - lastWorldTickAdvanceAtEpochMs < WORLD_TICK_ADVANCE_INTERVAL_MS) {
+            return;
+        }
+        lastWorldTickAdvanceAtEpochMs = nowEpochMs;
+        advanceCountdowns(nowEpochMs);
+        launchReadyBatches(nowEpochMs);
+        try {
+            matchSessionService.pruneExpired(nowEpochMs);
+        } catch (IOException exception) {
+            logger.atWarning().withCause(exception).log("Failed to prune Nexori handoff records on world tick.");
+        }
     }
 
     public synchronized void advanceCountdowns(long nowEpochMs) {
@@ -353,6 +325,16 @@ public final class QueueCoordinatorService {
             }
 
             if (launchError.isBlank()) {
+                try {
+                    matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
+                        launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                        nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
+                        nowEpochMs,
+                        ""
+                    ));
+                } catch (IOException exception) {
+                    logger.atWarning().withCause(exception).log("Failed to finalize Nexori match handoff record after launch.");
+                }
                 for (LaunchCandidate candidate : launched) {
                     queueIdByPlayerUuid.remove(candidate.member().playerUuid());
                 }
@@ -386,13 +368,14 @@ public final class QueueCoordinatorService {
                 queueIdByPlayerUuid.remove(candidate.member().playerUuid());
             }
             try {
-                matchSessionService.upsert(preparedLaunch.matchSessionState().withExpectedPlayers(
+                matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
                     launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                    nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
                     nowEpochMs,
                     launchError
                 ));
             } catch (IOException exception) {
-                logger.atWarning().withCause(exception).log("Failed to shrink Nexori match session roster after partial launch.");
+                logger.atWarning().withCause(exception).log("Failed to finalize partial Nexori match handoff record after launch.");
             }
 
             List<QueueMemberState> unlaunchedReady = new ArrayList<>();
@@ -516,6 +499,7 @@ public final class QueueCoordinatorService {
         root.addProperty("returnConnectionAddress", returnConnectionAddress);
         root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
+        root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
         MatchSessionState matchSessionState = new MatchSessionState(
@@ -530,6 +514,8 @@ public final class QueueCoordinatorService {
             List.of(),
             nowEpochMs,
             nowEpochMs,
+            0L,
+            nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
             ""
         ).normalized();
         return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState);
@@ -538,6 +524,66 @@ public final class QueueCoordinatorService {
     @Nonnull
     private QueueRuntimeState state(@Nonnull String queueId, long nowEpochMs) {
         return stateByQueueId.computeIfAbsent(QueueDefinition.normalizeId(queueId), ignored -> QueueRuntimeState.empty(queueId, nowEpochMs));
+    }
+
+    @Nonnull
+    private RemovedPlayerResult removePlayerFromQueue(@Nonnull UUID playerUuid, long now) {
+        String queueId = queueIdByPlayerUuid.remove(playerUuid);
+        if (queueId == null) {
+            return RemovedPlayerResult.notRemoved();
+        }
+
+        QueueDefinition queue = queueService.find(queueId)
+            .orElseThrow(() -> new IllegalStateException("Queue runtime references missing queue '" + queueId + "'."));
+
+        QueueRuntimeState currentState = state(queueId, now);
+        List<QueueMemberState> waitingMembers = removePlayer(currentState.waitingMembers(), playerUuid);
+        List<QueueMemberState> readyMembers = removePlayer(currentState.readyMembers(), playerUuid);
+        QueueRuntimeState updated = new QueueRuntimeState(
+            currentState.queueId(),
+            currentState.phase(),
+            waitingMembers,
+            readyMembers,
+            currentState.countdownEndsAtEpochMs(),
+            currentState.readyAtEpochMs(),
+            now,
+            currentState.lastLaunchAttemptAtEpochMs(),
+            currentState.lastLaunchError()
+        ).normalized();
+
+        if (updated.hasReadyBatch() && updated.readyMembers().size() < queue.minPlayers()) {
+            List<QueueMemberState> mergedWaiting = new ArrayList<>(updated.readyMembers());
+            mergedWaiting.addAll(updated.waitingMembers());
+            updated = new QueueRuntimeState(
+                updated.queueId(),
+                QueuePhase.WAITING,
+                List.copyOf(mergedWaiting),
+                List.of(),
+                0L,
+                0L,
+                now,
+                0L,
+                ""
+            ).normalized();
+        }
+
+        if (updated.phase() == QueuePhase.COUNTDOWN && updated.waitingMembers().size() < queue.minPlayers()) {
+            updated = new QueueRuntimeState(
+                updated.queueId(),
+                QueuePhase.WAITING,
+                updated.waitingMembers(),
+                updated.readyMembers(),
+                0L,
+                updated.readyAtEpochMs(),
+                now,
+                updated.lastLaunchAttemptAtEpochMs(),
+                updated.lastLaunchError()
+            ).normalized();
+        }
+
+        updated = maybeStartCountdown(updated, queue, now);
+        stateByQueueId.put(queueId, updated);
+        return RemovedPlayerResult.removed(queueId, updated);
     }
 
     @Nonnull
@@ -562,6 +608,23 @@ public final class QueueCoordinatorService {
         String contextJson,
         MatchSessionState matchSessionState
     ) {
+    }
+
+    private record RemovedPlayerResult(
+        boolean removed,
+        String queueId,
+        QueueRuntimeState state
+    ) {
+
+        @Nonnull
+        private static RemovedPlayerResult removed(@Nonnull String queueId, @Nonnull QueueRuntimeState state) {
+            return new RemovedPlayerResult(true, QueueDefinition.normalizeId(queueId), state);
+        }
+
+        @Nonnull
+        private static RemovedPlayerResult notRemoved() {
+            return new RemovedPlayerResult(false, "", null);
+        }
     }
 
     public enum JoinOutcome {

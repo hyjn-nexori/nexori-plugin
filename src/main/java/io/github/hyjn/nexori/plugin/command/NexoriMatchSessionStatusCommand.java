@@ -24,19 +24,25 @@ public final class NexoriMatchSessionStatusCommand extends CommandBase {
     protected void executeSync(@Nonnull CommandContext context) {
         List<MatchSessionState> sessions = matchSessionService.list();
         if (sessions.isEmpty()) {
-            context.sendMessage(Message.raw("No persisted Nexori match sessions are active on this server."));
+            context.sendMessage(Message.raw("No retained Nexori handoff records are active on this server."));
             return;
         }
 
-        context.sendMessage(Message.raw("Persisted Nexori match sessions:"));
+        long now = System.currentTimeMillis();
+        context.sendMessage(Message.raw("Retained Nexori handoff records:"));
         for (MatchSessionState session : sessions) {
             StringBuilder line = new StringBuilder(
                 "- " + session.matchId()
                     + " queue=" + session.queueId()
                     + " arena=" + session.arenaId()
-                    + " expected=" + session.expectedPlayerUuids().size()
-                    + " returned=" + session.returnedPlayerUuids().size()
+                    + " launched=" + session.launchedPlayerUuids().size()
+                    + " observed=" + session.observedPlayerUuids().size()
+                    + " handoff=" + (session.hasHandoffCompleted() ? "done" : "prepared")
             );
+            if (session.expiresAtEpochMs() > 0L) {
+                long secondsRemaining = Math.max((session.expiresAtEpochMs() - now + 999L) / 1000L, 0L);
+                line.append(" expiresIn=").append(secondsRemaining).append("s");
+            }
             if (!session.lastError().isBlank()) {
                 line.append(" lastError=").append(session.lastError());
             }

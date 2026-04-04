@@ -12,15 +12,22 @@ import java.util.UUID;
 
 public final class MatchSessionService {
 
+    public static final long PREPARED_SESSION_GRACE_MS = 5L * 60L * 1000L;
+    public static final long HANDOFF_RECORD_RETENTION_MS = 6L * 60L * 60L * 1000L;
+
     private final MatchSessionStore store;
     private final Map<String, MatchSessionState> sessionsById = new LinkedHashMap<>();
 
     public MatchSessionService(@Nonnull MatchSessionStore store) throws IOException {
         this.store = store;
+        long now = System.currentTimeMillis();
         for (MatchSessionState session : store.loadOrCreate()) {
             MatchSessionState normalized = session.normalized();
-            sessionsById.put(normalized.matchId(), normalized);
+            if (!normalized.isExpired(now)) {
+                sessionsById.put(normalized.matchId(), normalized);
+            }
         }
+        persist();
     }
 
     @Nonnull
@@ -84,20 +91,32 @@ public final class MatchSessionService {
         if (!session.expectsPlayer(playerUuid)) {
             return ReturnResult.invalid(session, "Player is not part of expected match roster.");
         }
-        if (session.hasReturned(playerUuid)) {
+        if (session.hasObservedPlayer(playerUuid)) {
             return ReturnResult.alreadyReturned(session, returnReason);
         }
 
-        MatchSessionState updated = session.withReturnedPlayer(playerUuid, System.currentTimeMillis());
-        if (updated.isComplete()) {
-            sessionsById.remove(updated.matchId());
-            persist();
-            return ReturnResult.completed(updated, returnReason);
-        }
-
+        MatchSessionState updated = session.withObservedPlayer(playerUuid, System.currentTimeMillis());
         sessionsById.put(updated.matchId(), updated);
         persist();
+        if (updated.allLaunchedPlayersObserved()) {
+            return ReturnResult.completed(updated, returnReason);
+        }
         return ReturnResult.returned(updated, returnReason);
+    }
+
+    public synchronized int pruneExpired(long nowEpochMs) throws IOException {
+        List<String> expiredMatchIds = sessionsById.values().stream()
+            .filter(session -> session.isExpired(nowEpochMs))
+            .map(MatchSessionState::matchId)
+            .toList();
+        if (expiredMatchIds.isEmpty()) {
+            return 0;
+        }
+        for (String matchId : expiredMatchIds) {
+            sessionsById.remove(matchId);
+        }
+        persist();
+        return expiredMatchIds.size();
     }
 
     private void persist() throws IOException {
@@ -163,4 +182,5 @@ public final class MatchSessionService {
             return new ReturnResult(ReturnOutcome.INVALID, session.matchId(), "", errorMessage, session);
         }
     }
+
 }

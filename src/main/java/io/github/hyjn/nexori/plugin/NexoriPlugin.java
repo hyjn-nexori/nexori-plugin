@@ -67,6 +67,7 @@ import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
+import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.minigame.QueueStore;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
@@ -92,8 +93,10 @@ import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
 
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
+import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
+import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 
@@ -101,9 +104,6 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class NexoriPlugin extends JavaPlugin {
 
@@ -139,7 +139,6 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaMatchService arenaMatchService;
     private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
     private NexoriMinigameApi minigameApi;
-    private ScheduledExecutorService queueCountdownScheduler;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -284,11 +283,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureReferralService,
                 this.diagnosticsService
             );
-            this.queueCountdownScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "nexori-queue-countdowns");
-                thread.setDaemon(true);
-                return thread;
-            });
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
@@ -309,15 +303,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getBasePermission() + ".admin",
                 this.diagnosticsService
             );
-            this.queueCountdownScheduler.scheduleAtFixedRate(() -> {
-                try {
-                    long now = System.currentTimeMillis();
-                    this.queueCoordinatorService.advanceCountdowns(now);
-                    this.queueCoordinatorService.launchReadyBatches(now);
-                } catch (Exception exception) {
-                    this.getLogger().atWarning().withCause(exception).log("Failed to advance Nexori queue countdowns.");
-                }
-            }, 1L, 1L, TimeUnit.SECONDS);
             this.diagnosticsOwnerReportService = new DiagnosticsOwnerReportService(
                 this.getLogger(),
                 this.getDataDirectory(),
@@ -376,8 +361,11 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this));
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.bootstrapCoordinator::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
+            this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.arenaMatchService::handlePlayerSetupDisconnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
+            this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.queueCoordinatorService::handlePlayerDisconnect);
+            this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.arenaMatchService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
@@ -385,6 +373,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
+            this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
             this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
 
             this.getLogger().atInfo().log(

@@ -342,6 +342,16 @@ public final class SecureTravelService implements SecureReferralHandler {
         return Optional.ofNullable(recentArrivals.remove(playerUuid));
     }
 
+    @Nonnull
+    public Optional<PendingArrival> peekPendingArrival(@Nonnull UUID playerUuid) {
+        return Optional.ofNullable(pendingArrivals.get(playerUuid));
+    }
+
+    @Nonnull
+    public Optional<PendingArrival> removePendingArrival(@Nonnull UUID playerUuid) {
+        return Optional.ofNullable(pendingArrivals.remove(playerUuid));
+    }
+
     private void applyArrivalTeleport(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {
         Transform transform = resolveArrivalTransform(arrival, playerRef.getUuid());
         if (transform == null) {
