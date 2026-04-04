@@ -51,9 +51,17 @@ public final class NexoriPortalShowCommand extends CommandBase {
         }
 
         context.sendMessage(Message.raw("Collision binding action: " + binding.action()));
-        if (binding.action() == TriggerBindingAction.JOIN_QUEUE) {
-            context.sendMessage(Message.raw("Collision queue: " + binding.queueId()));
-            return;
+        switch (binding.action()) {
+            case JOIN_QUEUE, LEAVE_QUEUE -> {
+                context.sendMessage(Message.raw("Collision queue: " + binding.queueId()));
+                return;
+            }
+            case LOCAL_TARGET -> {
+                context.sendMessage(Message.raw("Collision local target: " + binding.destinationTargetId()));
+                return;
+            }
+            case TRAVEL -> {
+            }
         }
 
         context.sendMessage(Message.raw("Collision destination: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()));

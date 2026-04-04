@@ -99,16 +99,43 @@ public final class TriggerBindingService {
     @Nonnull
     public synchronized TriggerBindingDefinition bindPortalCollisionQueue(
         @Nonnull String portalId,
-        @Nonnull String queueId
+        @Nonnull String queueId,
+        @Nonnull TriggerBindingAction action
+    ) throws IOException {
+        if (action != TriggerBindingAction.JOIN_QUEUE && action != TriggerBindingAction.LEAVE_QUEUE) {
+            throw new IllegalArgumentException("Queue portal bindings must use JOIN_QUEUE or LEAVE_QUEUE.");
+        }
+        TriggerBindingDefinition binding = normalizeAndValidate(new TriggerBindingDefinition(
+            "",
+            TriggerBindingKind.PORTAL_COLLISION_ENTER,
+            portalId,
+            action,
+            queueId,
+            "",
+            "",
+            "",
+            "{}",
+            true
+        ));
+        bindingsById.put(binding.id(), binding);
+        persist();
+        recordBindingSaved(binding, "UPSERTED");
+        return binding;
+    }
+
+    @Nonnull
+    public synchronized TriggerBindingDefinition bindPortalCollisionLocalTarget(
+        @Nonnull String portalId,
+        @Nonnull String destinationTargetId
     ) throws IOException {
         TriggerBindingDefinition binding = normalizeAndValidate(new TriggerBindingDefinition(
             "",
             TriggerBindingKind.PORTAL_COLLISION_ENTER,
             portalId,
-            TriggerBindingAction.JOIN_QUEUE,
-            queueId,
+            TriggerBindingAction.LOCAL_TARGET,
             "",
             "",
+            destinationTargetId,
             "",
             "{}",
             true
@@ -179,11 +206,29 @@ public final class TriggerBindingService {
     @Nonnull
     private TriggerBindingDefinition normalizeAndValidate(@Nonnull TriggerBindingDefinition definition) {
         TriggerBindingDefinition normalized = definition.normalized();
-        if (normalized.action() == TriggerBindingAction.JOIN_QUEUE) {
+        if (normalized.action() == TriggerBindingAction.JOIN_QUEUE || normalized.action() == TriggerBindingAction.LEAVE_QUEUE) {
             if (normalized.queueId().isBlank()) {
                 throw new IllegalArgumentException("Queue trigger bindings require a queue id.");
             }
             return normalized;
+        }
+
+        if (normalized.action() == TriggerBindingAction.LOCAL_TARGET) {
+            if (normalized.destinationTargetId().isBlank()) {
+                throw new IllegalArgumentException("Local target trigger bindings require a destination target id.");
+            }
+            return new TriggerBindingDefinition(
+                normalized.id(),
+                normalized.triggerKind(),
+                normalized.sourceId(),
+                TriggerBindingAction.LOCAL_TARGET,
+                "",
+                "",
+                normalized.destinationTargetId(),
+                "",
+                "{}",
+                normalized.enabled()
+            );
         }
 
         ConfiguredPeer destination = ConfiguredPeer.parse(normalized.destinationConnectionAddress());

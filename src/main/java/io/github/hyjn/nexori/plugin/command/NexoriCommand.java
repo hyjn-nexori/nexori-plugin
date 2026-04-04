@@ -84,7 +84,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportallist"));
         ctx.sendMessage(Message.raw("- /nexoriportalshow <portalId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalbind <portalId> <host:port> <targetId> [travelProfile]"));
-        ctx.sendMessage(Message.raw("- /nexoriportalqueuebind <portalId> <queueId>"));
+        ctx.sendMessage(Message.raw("- /nexoriportallocalbind <portalId> <targetId>"));
+        ctx.sendMessage(Message.raw("- /nexoriportalqueuebind <portalId> <queueId> [--mode=<join|leave>]"));
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
         ctx.sendMessage(Message.raw("- /nexorilobbyupsert <lobbyId> <worldName> <entryTargetId> [--returnTargetId=<id>] [--displayName=\"...\"]"));
         ctx.sendMessage(Message.raw("- /nexorilobbylist"));

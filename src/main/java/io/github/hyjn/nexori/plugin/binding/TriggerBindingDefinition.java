@@ -25,7 +25,7 @@ public record TriggerBindingDefinition(
             id,
             normalizedKind.name().toLowerCase(Locale.ROOT) + "." + normalizedSourceId
         );
-        if (normalizedAction == TriggerBindingAction.JOIN_QUEUE) {
+        if (normalizedAction == TriggerBindingAction.JOIN_QUEUE || normalizedAction == TriggerBindingAction.LEAVE_QUEUE) {
             return new TriggerBindingDefinition(
                 normalizedId,
                 normalizedKind,
@@ -34,6 +34,21 @@ public record TriggerBindingDefinition(
                 normalizeRequired(queueId, "Queue trigger bindings require a queue id."),
                 "",
                 "",
+                "",
+                "{}",
+                enabled
+            );
+        }
+
+        if (normalizedAction == TriggerBindingAction.LOCAL_TARGET) {
+            return new TriggerBindingDefinition(
+                normalizedId,
+                normalizedKind,
+                normalizedSourceId,
+                normalizedAction,
+                "",
+                "",
+                normalizeRequired(destinationTargetId, "Local target trigger bindings require a destination target id."),
                 "",
                 "{}",
                 enabled

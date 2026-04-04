@@ -3,10 +3,12 @@ package io.github.hyjn.nexori.plugin.command;
 import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
+import com.hypixel.hytale.server.core.command.system.arguments.system.OptionalArg;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
@@ -27,6 +29,7 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
     private final TriggerBindingService triggerBindingService;
     private final RequiredArg<String> portalIdArg;
     private final RequiredArg<String> queueIdArg;
+    private final OptionalArg<String> modeArg;
 
     public NexoriPortalQueueBindCommand(
         @Nonnull NexoriPlugin plugin,
@@ -35,7 +38,7 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
         @Nonnull QueueService queueService,
         @Nonnull TriggerBindingService triggerBindingService
     ) {
-        super("nexoriportalqueuebind", "Binds a placed Nexori portal to JOIN_QUEUE for one persisted queue.");
+        super("nexoriportalqueuebind", "Binds a placed Nexori portal to JOIN_QUEUE or LEAVE_QUEUE for one persisted queue.");
         this.plugin = plugin;
         this.portalInstanceService = portalInstanceService;
         this.lobbyService = lobbyService;
@@ -43,6 +46,7 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
         this.triggerBindingService = triggerBindingService;
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
         this.queueIdArg = withRequiredArg("queueId", "Queue id.", ArgTypes.STRING);
+        this.modeArg = withOptionalArg("mode", "Queue portal mode: join or leave.", ArgTypes.STRING);
         setPermissionGroup(GameMode.Adventure);
     }
 
@@ -61,7 +65,7 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
         }
         LobbyDefinition lobby = lobbyService.findByWorldName(portal.worldName()).orElse(null);
         if (lobby == null || !lobby.enabled()) {
-            context.sendMessage(Message.raw("That portal is not in an enabled Nexori lobby world, so it cannot bind to JOIN_QUEUE."));
+            context.sendMessage(Message.raw("That portal is not in an enabled Nexori lobby world, so it cannot bind to a Nexori queue action."));
             return;
         }
         if (queueService.find(queueId).isEmpty()) {
@@ -69,14 +73,32 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
             return;
         }
 
+        TriggerBindingAction mode = parseMode(context);
+        if (mode == null) {
+            return;
+        }
+
         try {
-            TriggerBindingDefinition binding = triggerBindingService.bindPortalCollisionQueue(portalId, queueId);
+            TriggerBindingDefinition binding = triggerBindingService.bindPortalCollisionQueue(portalId, queueId, mode);
             context.sendMessage(Message.raw(
-                "Bound portal " + portalId + " to JOIN_QUEUE -> " + binding.queueId() + "."
+                "Bound portal " + portalId + " to " + binding.action() + " -> " + binding.queueId() + "."
             ));
         } catch (IOException | IllegalArgumentException exception) {
             context.sendMessage(Message.raw("Failed to bind the Nexori portal to queue: " + exception.getMessage()));
         }
+    }
+
+    private TriggerBindingAction parseMode(@Nonnull CommandContext context) {
+        String rawMode = context.provided(modeArg) ? context.get(modeArg) : "join";
+        String normalized = rawMode == null ? "join" : rawMode.trim().toLowerCase();
+        return switch (normalized) {
+            case "join" -> TriggerBindingAction.JOIN_QUEUE;
+            case "leave" -> TriggerBindingAction.LEAVE_QUEUE;
+            default -> {
+                context.sendMessage(Message.raw("Unknown queue portal mode '" + rawMode + "'. Use --mode=join or --mode=leave."));
+                yield null;
+            }
+        };
     }
 
     private boolean hasAdminPermission(@Nonnull CommandContext context) {

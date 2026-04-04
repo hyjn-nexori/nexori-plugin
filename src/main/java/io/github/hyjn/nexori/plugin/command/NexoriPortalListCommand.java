@@ -53,9 +53,10 @@ public final class NexoriPortalListCommand extends CommandBase {
         if (binding == null) {
             return "no";
         }
-        if (binding.action() == TriggerBindingAction.JOIN_QUEUE) {
-            return "JOIN_QUEUE -> " + binding.queueId();
-        }
-        return "TRAVEL -> " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId();
+        return switch (binding.action()) {
+            case JOIN_QUEUE, LEAVE_QUEUE -> binding.action() + " -> " + binding.queueId();
+            case LOCAL_TARGET -> "LOCAL_TARGET -> " + binding.destinationTargetId();
+            case TRAVEL -> "TRAVEL -> " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId();
+        };
     }
 }

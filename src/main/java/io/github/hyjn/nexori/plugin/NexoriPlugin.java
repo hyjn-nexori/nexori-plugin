@@ -25,6 +25,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriMatchSessionStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalGiveCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriPortalLocalBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalQueueBindCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalShowCommand;
@@ -336,6 +337,12 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriPortalListCommand(this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
+            this.getCommandRegistry().registerCommand(new NexoriPortalLocalBindCommand(
+                this,
+                this.portalInstanceService,
+                this.destinationTargetService,
+                this.triggerBindingService
+            ));
             this.getCommandRegistry().registerCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.lobbyService, this.queueService, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
             this.getCommandRegistry().registerCommand(new NexoriLobbyUpsertCommand(this, this.lobbyService));

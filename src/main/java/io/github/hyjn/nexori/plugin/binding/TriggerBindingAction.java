@@ -2,5 +2,7 @@ package io.github.hyjn.nexori.plugin.binding;
 
 public enum TriggerBindingAction {
     TRAVEL,
-    JOIN_QUEUE
+    LOCAL_TARGET,
+    JOIN_QUEUE,
+    LEAVE_QUEUE
 }

@@ -5,13 +5,17 @@ import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Vector3i;
+import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.protocol.BlockPosition;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.InteractionContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
+import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.OpenCustomUIInteraction;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.access.NexoriAdminAccess;
@@ -29,6 +33,9 @@ import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiPage;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
+import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
+import io.github.hyjn.nexori.plugin.target.ResolvedDestinationTarget;
+import io.github.hyjn.nexori.plugin.target.WorldSpawnResolver;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -153,7 +160,7 @@ public final class NexoriPortalInteractionService {
             : new Vector3i(targetBlock.x, targetBlock.y, targetBlock.z);
 
         Optional<PortalInstanceDefinition> portal = resolvePortal(player.getWorld().getName(), blockPosition);
-        triggerPortalTravel(player, playerRef, portal);
+        triggerPortalTravel(ref, player, playerRef, portal);
         return null;
     }
 
@@ -184,6 +191,7 @@ public final class NexoriPortalInteractionService {
     }
 
     private void triggerPortalTravel(
+        @Nonnull Ref<EntityStore> ref,
         @Nonnull Player player,
         @Nonnull PlayerRef playerRef,
         @Nonnull Optional<PortalInstanceDefinition> portal
@@ -197,9 +205,21 @@ public final class NexoriPortalInteractionService {
             return;
         }
 
-        if (binding.get().action() == TriggerBindingAction.JOIN_QUEUE) {
-            joinQueue(player, playerRef, portal.get(), binding.get());
-            return;
+        switch (binding.get().action()) {
+            case JOIN_QUEUE -> {
+                joinQueue(player, playerRef, portal.get(), binding.get());
+                return;
+            }
+            case LEAVE_QUEUE -> {
+                leaveQueue(player, playerRef, binding.get());
+                return;
+            }
+            case LOCAL_TARGET -> {
+                triggerLocalTargetTravel(ref, player, playerRef, binding.get());
+                return;
+            }
+            case TRAVEL -> {
+            }
         }
 
         try {
@@ -256,6 +276,63 @@ public final class NexoriPortalInteractionService {
         }
     }
 
+    private void leaveQueue(
+        @Nonnull Player player,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull TriggerBindingDefinition binding
+    ) {
+        String currentQueueId = queueCoordinatorService.findQueuedQueueId(playerRef.getUuid()).orElse("");
+        if (currentQueueId.isBlank()) {
+            player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
+            return;
+        }
+        if (!currentQueueId.equals(binding.queueId())) {
+            player.sendMessage(Message.raw(
+                "This portal leaves Nexori queue " + binding.queueId() + ", but you are currently in " + currentQueueId + "."
+            ));
+            return;
+        }
+
+        QueueCoordinatorService.LeaveResult result = queueCoordinatorService.leaveCurrentQueue(playerRef.getUuid());
+        if (result.outcome() == QueueCoordinatorService.LeaveOutcome.LEFT) {
+            player.sendMessage(Message.raw("Left Nexori queue " + result.queueId() + "."));
+            return;
+        }
+        player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
+    }
+
+    private void triggerLocalTargetTravel(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Player player,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull TriggerBindingDefinition binding
+    ) {
+        ResolvedDestinationTarget resolvedTarget = plugin.getDestinationTargetService()
+            .resolve(binding.destinationTargetId(), "")
+            .orElse(null);
+        if (resolvedTarget == null) {
+            player.sendMessage(Message.raw(
+                "This Nexori portal points to local target '" + binding.destinationTargetId() + "', but that target does not exist."
+            ));
+            return;
+        }
+
+        Transform transform = resolveLocalTargetTransform(resolvedTarget, playerRef.getUuid());
+        if (transform == null) {
+            player.sendMessage(Message.raw(
+                "This Nexori portal could not resolve its local target transform."
+            ));
+            return;
+        }
+
+        World targetWorld = Universe.get().getWorld(resolvedTarget.effectiveWorldName());
+        Teleport teleport = targetWorld == null
+            ? Teleport.createForPlayer(transform.clone())
+            : Teleport.createForPlayer(targetWorld, transform.clone());
+        ref.getStore().addComponent(ref, Teleport.getComponentType(), teleport);
+        player.sendMessage(Message.raw("Teleported to Nexori target " + binding.destinationTargetId() + "."));
+    }
+
     private void joinQueue(
         @Nonnull Player player,
         @Nonnull PlayerRef playerRef,
@@ -300,6 +377,56 @@ public final class NexoriPortalInteractionService {
             case QUEUE_DISABLED -> player.sendMessage(Message.raw(
                 "This Nexori queue is currently disabled."
             ));
+        }
+    }
+
+    private Transform resolveLocalTargetTransform(@Nonnull ResolvedDestinationTarget target, @Nonnull UUID playerUuid) {
+        DestinationTargetKind targetKind = target.definition().kind();
+        World world = Universe.get().getWorld(target.effectiveWorldName());
+        if (targetKind == DestinationTargetKind.NATURAL_SPAWN && world != null) {
+            try {
+                Transform spawnTransform = world.getWorldConfig().getSpawnProvider().getSpawnPoint(world, playerUuid);
+                if (spawnTransform != null) {
+                    return spawnTransform.clone();
+                }
+            } catch (Exception exception) {
+                logger.atWarning().withCause(exception).log(
+                    "Falling back to configured spawn resolution for local Nexori target '" + target.definition().id() + "'."
+                );
+            }
+
+            Transform configuredSpawn = WorldSpawnResolver.resolveConfiguredSpawn(world).orElse(null);
+            if (configuredSpawn != null) {
+                return configuredSpawn.clone();
+            }
+
+            return new Transform(0.0, 0.0, 0.0, 0.0f, 0.0f, 0.0f);
+        }
+
+        try {
+            var root = com.google.gson.JsonParser.parseString(target.definition().metadataJson()).getAsJsonObject();
+            if (root == null || !root.has("position")) {
+                return null;
+            }
+            var position = root.getAsJsonObject("position");
+            var rotation = root.has("rotation") ? root.getAsJsonObject("rotation") : null;
+            return new Transform(
+                new com.hypixel.hytale.math.vector.Vector3d(
+                    position.has("x") ? position.get("x").getAsDouble() : 0.0,
+                    position.has("y") ? position.get("y").getAsDouble() : 0.0,
+                    position.has("z") ? position.get("z").getAsDouble() : 0.0
+                ),
+                new com.hypixel.hytale.math.vector.Vector3f(
+                    rotation != null && rotation.has("pitch") ? (float) rotation.get("pitch").getAsDouble() : 0.0f,
+                    rotation != null && rotation.has("yaw") ? (float) rotation.get("yaw").getAsDouble() : 0.0f,
+                    rotation != null && rotation.has("roll") ? (float) rotation.get("roll").getAsDouble() : 0.0f
+                )
+            );
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log(
+                "Failed to parse metadata for local Nexori target '" + target.definition().id() + "'."
+            );
+            return null;
         }
     }
 
