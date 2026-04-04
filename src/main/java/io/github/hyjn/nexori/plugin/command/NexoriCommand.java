@@ -91,6 +91,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"] [--instanceTemplateId=<name|none>] [--resolutionTriggerId=<id|none>]"));
         ctx.sendMessage(Message.raw("  Arena resolution trigger defaults to none. Use last_player_alive to enable the built-in auto winner flow."));
         ctx.sendMessage(Message.raw("- /nexoriarenalist"));
+        ctx.sendMessage(Message.raw("- /nexoriinstancelist"));
         ctx.sendMessage(Message.raw("- /nexoriqueueupsert <queueId> <arenaIdsCsv> <minPlayers> <maxPlayers> <countdownSeconds> <travelProfile> [--displayName=\"...\"]"));
         ctx.sendMessage(Message.raw("- /nexoriqueuelist"));
         ctx.sendMessage(Message.raw("- /nexoriqueuestatus"));

@@ -16,6 +16,7 @@ import io.github.hyjn.nexori.plugin.command.NexoriBackupsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriBackupLimitCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
+import io.github.hyjn.nexori.plugin.command.NexoriInstanceListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
@@ -341,6 +342,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriLobbyListCommand(this.lobbyService));
             this.getCommandRegistry().registerCommand(new NexoriArenaUpsertCommand(this, this.arenaService));
             this.getCommandRegistry().registerCommand(new NexoriArenaListCommand(this.arenaService));
+            this.getCommandRegistry().registerCommand(new NexoriInstanceListCommand());
             this.getCommandRegistry().registerCommand(new NexoriQueueUpsertCommand(this, this.queueService));
             this.getCommandRegistry().registerCommand(new NexoriQueueListCommand(this.queueService));
             this.getCommandRegistry().registerCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
