@@ -111,6 +111,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("  Optional command args in Nexori use --name=value syntax."));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
         ctx.sendMessage(Message.raw("  Opens the main Nexori HyUI admin page for server, rules, and target setup."));
+        ctx.sendMessage(Message.raw("- /nexorimenuv2"));
+        ctx.sendMessage(Message.raw("  Opens the new full-size Nexori menu shell that will replace the old menu over time."));
     }
 
     private void sendStatus(CommandContext ctx) {

@@ -93,6 +93,7 @@ import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.ui.NexoriMenuCommand;
 import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
+import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Command;
 
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
@@ -368,6 +369,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriStartCommand(this.bootstrapCoordinator, this.getBasePermission() + ".admin"));
             this.getCommandRegistry().registerCommand(new NexoriTravelCommand(this.secureTravelService));
             this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this));
+            this.getCommandRegistry().registerCommand(new NexoriMenuV2Command(this));
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.bootstrapCoordinator::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.arenaMatchService::handlePlayerSetupDisconnect);
