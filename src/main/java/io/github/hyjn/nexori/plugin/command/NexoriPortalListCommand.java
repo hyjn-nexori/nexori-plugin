@@ -38,25 +38,28 @@ public final class NexoriPortalListCommand extends CommandBase {
 
         context.sendMessage(Message.raw("Nexori portals on this server:"));
         for (PortalInstanceDefinition portal : portals) {
-            TriggerBindingDefinition binding = triggerBindingService.findPortalCollisionBinding(portal.portalId()).orElse(null);
+            List<TriggerBindingDefinition> bindings = triggerBindingService.listPortalCollisionBindings(portal.portalId());
             context.sendMessage(Message.raw("- " + portal.portalId()
                 + " @ " + portal.worldName()
                 + " (" + portal.blockX() + ", " + portal.blockY() + ", " + portal.blockZ() + ")"
                 + " target=" + portal.autoDestinationTargetId()
                 + " enabled=" + portal.enabled()
-                + " bound=" + describeBinding(binding)));
+                + " bound=" + describeBindings(bindings)));
         }
     }
 
     @Nonnull
-    private String describeBinding(TriggerBindingDefinition binding) {
-        if (binding == null) {
+    private String describeBindings(@Nonnull List<TriggerBindingDefinition> bindings) {
+        if (bindings.isEmpty()) {
             return "no";
         }
-        return switch (binding.action()) {
-            case JOIN_QUEUE, LEAVE_QUEUE -> binding.action() + " -> " + binding.queueId();
-            case LOCAL_TARGET -> "LOCAL_TARGET -> " + binding.destinationTargetId();
-            case TRAVEL -> "TRAVEL -> " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId();
-        };
+        return bindings.stream()
+            .map(binding -> switch (binding.action()) {
+                case JOIN_QUEUE, LEAVE_QUEUE -> binding.action() + " -> " + binding.queueId();
+                case LOCAL_TARGET -> "LOCAL_TARGET -> " + binding.destinationTargetId();
+                case TRAVEL -> "TRAVEL -> " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId();
+            })
+            .reduce((left, right) -> left + ", " + right)
+            .orElse("no");
     }
 }

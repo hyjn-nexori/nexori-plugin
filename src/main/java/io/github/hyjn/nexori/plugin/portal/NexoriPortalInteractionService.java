@@ -41,6 +41,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -200,83 +201,94 @@ public final class NexoriPortalInteractionService {
             return;
         }
 
-        Optional<TriggerBindingDefinition> binding = triggerBindingService.findPortalCollisionBinding(portal.get().portalId());
-        if (binding.isEmpty() || !binding.get().enabled()) {
+        List<TriggerBindingDefinition> bindings = triggerBindingService.listPortalCollisionBindings(portal.get().portalId()).stream()
+            .filter(TriggerBindingDefinition::enabled)
+            .toList();
+        if (bindings.isEmpty()) {
             return;
         }
 
-        switch (binding.get().action()) {
-            case JOIN_QUEUE -> {
-                joinQueue(player, playerRef, portal.get(), binding.get());
-                return;
+        for (TriggerBindingDefinition binding : bindings) {
+            switch (binding.action()) {
+                case JOIN_QUEUE -> {
+                    if (!joinQueue(player, playerRef, portal.get(), binding)) {
+                        return;
+                    }
+                    continue;
+                }
+                case LEAVE_QUEUE -> {
+                    if (!leaveQueue(player, playerRef, binding)) {
+                        return;
+                    }
+                    continue;
+                }
+                case LOCAL_TARGET -> {
+                    if (!triggerLocalTargetTravel(ref, player, playerRef, binding)) {
+                        return;
+                    }
+                    continue;
+                }
+                case TRAVEL -> {
+                }
             }
-            case LEAVE_QUEUE -> {
-                leaveQueue(player, playerRef, binding.get());
-                return;
-            }
-            case LOCAL_TARGET -> {
-                triggerLocalTargetTravel(ref, player, playerRef, binding.get());
-                return;
-            }
-            case TRAVEL -> {
-            }
-        }
 
-        try {
-            String operationId = diagnosticsService.newOperationId("travel");
-            secureTravelService.travel(
-                playerRef,
-                ConfiguredPeer.parse(binding.get().destinationConnectionAddress()),
-                binding.get().destinationTargetId(),
-                "",
-                binding.get().travelProfileId(),
-                binding.get().contextJson(),
-                operationId
-            );
-            diagnosticsService.record(
-                DiagnosticsCategory.TRAVEL,
-                DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
-                DiagnosticsOutcome.SUCCEEDED,
-                DiagnosticsReasonClass.NORMAL,
-                DiagnosticsReasonCode.PORTAL_TRIGGER_DISPATCHED,
-                "Triggered secure portal travel from a Nexori portal.",
-                operationId,
-                event -> event
-                    .playerUuid(playerRef.getUuid().toString())
-                    .playerNameClaimed(playerRef.getUsername())
-                    .portalId(portal.get().portalId())
-                    .portalDisplayName(portal.get().displayName())
-                    .bindingId(binding.get().id())
-                    .targetId(binding.get().destinationTargetId())
-                    .travelProfileId(binding.get().travelProfileId())
-                    .remoteConnectionAddress(binding.get().destinationConnectionAddress())
-            );
-        } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
-            String operationId = diagnosticsService.newOperationId("travel");
-            diagnosticsService.record(
-                DiagnosticsCategory.TRAVEL,
-                DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
-                DiagnosticsOutcome.FAILED,
-                DiagnosticsReasonClass.IO,
-                DiagnosticsReasonCode.PORTAL_TRIGGER_FAILED,
-                "This Nexori portal could not start its secure travel: " + exception.getMessage(),
-                operationId,
-                event -> event
-                    .playerUuid(playerRef.getUuid().toString())
-                    .playerNameClaimed(playerRef.getUsername())
-                    .portalId(portal.get().portalId())
-                    .portalDisplayName(portal.get().displayName())
-                    .bindingId(binding.get().id())
-                    .targetId(binding.get().destinationTargetId())
-                    .travelProfileId(binding.get().travelProfileId())
-                    .remoteConnectionAddress(binding.get().destinationConnectionAddress())
-            );
-            player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
-            logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
+            try {
+                String operationId = diagnosticsService.newOperationId("travel");
+                secureTravelService.travel(
+                    playerRef,
+                    ConfiguredPeer.parse(binding.destinationConnectionAddress()),
+                    binding.destinationTargetId(),
+                    "",
+                    binding.travelProfileId(),
+                    binding.contextJson(),
+                    operationId
+                );
+                diagnosticsService.record(
+                    DiagnosticsCategory.TRAVEL,
+                    DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
+                    DiagnosticsOutcome.SUCCEEDED,
+                    DiagnosticsReasonClass.NORMAL,
+                    DiagnosticsReasonCode.PORTAL_TRIGGER_DISPATCHED,
+                    "Triggered secure portal travel from a Nexori portal.",
+                    operationId,
+                    event -> event
+                        .playerUuid(playerRef.getUuid().toString())
+                        .playerNameClaimed(playerRef.getUsername())
+                        .portalId(portal.get().portalId())
+                        .portalDisplayName(portal.get().displayName())
+                        .bindingId(binding.id())
+                        .targetId(binding.destinationTargetId())
+                        .travelProfileId(binding.travelProfileId())
+                        .remoteConnectionAddress(binding.destinationConnectionAddress())
+                );
+            } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+                String operationId = diagnosticsService.newOperationId("travel");
+                diagnosticsService.record(
+                    DiagnosticsCategory.TRAVEL,
+                    DiagnosticsAction.TRAVEL_PORTAL_TRIGGER,
+                    DiagnosticsOutcome.FAILED,
+                    DiagnosticsReasonClass.IO,
+                    DiagnosticsReasonCode.PORTAL_TRIGGER_FAILED,
+                    "This Nexori portal could not start its secure travel: " + exception.getMessage(),
+                    operationId,
+                    event -> event
+                        .playerUuid(playerRef.getUuid().toString())
+                        .playerNameClaimed(playerRef.getUsername())
+                        .portalId(portal.get().portalId())
+                        .portalDisplayName(portal.get().displayName())
+                        .bindingId(binding.id())
+                        .targetId(binding.destinationTargetId())
+                        .travelProfileId(binding.travelProfileId())
+                        .remoteConnectionAddress(binding.destinationConnectionAddress())
+                );
+                player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
+                logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
+            }
+            return;
         }
     }
 
-    private void leaveQueue(
+    private boolean leaveQueue(
         @Nonnull Player player,
         @Nonnull PlayerRef playerRef,
         @Nonnull TriggerBindingDefinition binding
@@ -284,24 +296,25 @@ public final class NexoriPortalInteractionService {
         String currentQueueId = queueCoordinatorService.findQueuedQueueId(playerRef.getUuid()).orElse("");
         if (currentQueueId.isBlank()) {
             player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
-            return;
+            return false;
         }
         if (!currentQueueId.equals(binding.queueId())) {
             player.sendMessage(Message.raw(
                 "This portal leaves Nexori queue " + binding.queueId() + ", but you are currently in " + currentQueueId + "."
             ));
-            return;
+            return false;
         }
 
         QueueCoordinatorService.LeaveResult result = queueCoordinatorService.leaveCurrentQueue(playerRef.getUuid());
         if (result.outcome() == QueueCoordinatorService.LeaveOutcome.LEFT) {
             player.sendMessage(Message.raw("Left Nexori queue " + result.queueId() + "."));
-            return;
+            return true;
         }
         player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
+        return false;
     }
 
-    private void triggerLocalTargetTravel(
+    private boolean triggerLocalTargetTravel(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Player player,
         @Nonnull PlayerRef playerRef,
@@ -314,7 +327,7 @@ public final class NexoriPortalInteractionService {
             player.sendMessage(Message.raw(
                 "This Nexori portal points to local target '" + binding.destinationTargetId() + "', but that target does not exist."
             ));
-            return;
+            return false;
         }
 
         Transform transform = resolveLocalTargetTransform(resolvedTarget, playerRef.getUuid());
@@ -322,18 +335,24 @@ public final class NexoriPortalInteractionService {
             player.sendMessage(Message.raw(
                 "This Nexori portal could not resolve its local target transform."
             ));
-            return;
+            return false;
         }
 
         World targetWorld = Universe.get().getWorld(resolvedTarget.effectiveWorldName());
         Teleport teleport = targetWorld == null
             ? Teleport.createForPlayer(transform.clone())
             : Teleport.createForPlayer(targetWorld, transform.clone());
-        ref.getStore().addComponent(ref, Teleport.getComponentType(), teleport);
+        World currentWorld = player.getWorld();
+        if (currentWorld == null) {
+            player.sendMessage(Message.raw("This Nexori portal could not find your current world for local teleport."));
+            return false;
+        }
+        currentWorld.execute(() -> ref.getStore().addComponent(ref, Teleport.getComponentType(), teleport));
         player.sendMessage(Message.raw("Teleported to Nexori target " + binding.destinationTargetId() + "."));
+        return true;
     }
 
-    private void joinQueue(
+    private boolean joinQueue(
         @Nonnull Player player,
         @Nonnull PlayerRef playerRef,
         @Nonnull PortalInstanceDefinition portal,
@@ -342,7 +361,7 @@ public final class NexoriPortalInteractionService {
         LobbyDefinition lobby = plugin.getLobbyService().findByWorldName(portal.worldName()).orElse(null);
         if (lobby == null || !lobby.enabled()) {
             player.sendMessage(Message.raw("This Nexori portal is not in an enabled lobby world, so queue join is unavailable."));
-            return;
+            return false;
         }
 
         QueueCoordinatorService.JoinResult result = queueCoordinatorService.joinQueue(
@@ -367,17 +386,28 @@ public final class NexoriPortalInteractionService {
                         + " ready=" + ready
                         + "." + suffix
                 ));
+                return true;
             }
-            case ALREADY_QUEUED -> player.sendMessage(Message.raw(
-                "You are already in Nexori queue " + result.existingQueueId() + "."
-            ));
-            case QUEUE_MISSING -> player.sendMessage(Message.raw(
-                "This Nexori portal points to queue '" + binding.queueId() + "', but that queue does not exist."
-            ));
-            case QUEUE_DISABLED -> player.sendMessage(Message.raw(
-                "This Nexori queue is currently disabled."
-            ));
+            case ALREADY_QUEUED -> {
+                player.sendMessage(Message.raw(
+                    "You are already in Nexori queue " + result.existingQueueId() + "."
+                ));
+                return result.existingQueueId().equals(binding.queueId());
+            }
+            case QUEUE_MISSING -> {
+                player.sendMessage(Message.raw(
+                    "This Nexori portal points to queue '" + binding.queueId() + "', but that queue does not exist."
+                ));
+                return false;
+            }
+            case QUEUE_DISABLED -> {
+                player.sendMessage(Message.raw(
+                    "This Nexori queue is currently disabled."
+                ));
+                return false;
+            }
         }
+        return false;
     }
 
     private Transform resolveLocalTargetTransform(@Nonnull ResolvedDestinationTarget target, @Nonnull UUID playerUuid) {

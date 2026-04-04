@@ -52,11 +52,17 @@ public final class TriggerBindingService {
 
     @Nonnull
     public synchronized Optional<TriggerBindingDefinition> findPortalCollisionBinding(@Nonnull String portalId) {
+        return listPortalCollisionBindings(portalId).stream().findFirst();
+    }
+
+    @Nonnull
+    public synchronized List<TriggerBindingDefinition> listPortalCollisionBindings(@Nonnull String portalId) {
         String normalizedSourceId = portalId.trim().toLowerCase(Locale.ROOT);
         return bindingsById.values().stream()
             .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
             .filter(binding -> binding.sourceId().equals(normalizedSourceId))
-            .findFirst();
+            .sorted(Comparator.comparingInt(binding -> actionPriority(binding.action())))
+            .toList();
     }
 
     @Nonnull
@@ -90,7 +96,7 @@ public final class TriggerBindingService {
             contextJson,
             true
         ));
-        bindingsById.put(binding.id(), binding);
+        upsertBinding(binding);
         persist();
         recordBindingSaved(binding, "UPSERTED");
         return binding;
@@ -117,7 +123,7 @@ public final class TriggerBindingService {
             "{}",
             true
         ));
-        bindingsById.put(binding.id(), binding);
+        upsertBinding(binding);
         persist();
         recordBindingSaved(binding, "UPSERTED");
         return binding;
@@ -140,7 +146,7 @@ public final class TriggerBindingService {
             "{}",
             true
         ));
-        bindingsById.put(binding.id(), binding);
+        upsertBinding(binding);
         persist();
         recordBindingSaved(binding, "UPSERTED");
         return binding;
@@ -157,14 +163,17 @@ public final class TriggerBindingService {
     }
 
     public synchronized boolean removePortalCollisionBinding(@Nonnull String portalId) throws IOException {
-        Optional<TriggerBindingDefinition> binding = findPortalCollisionBinding(portalId);
-        if (binding.isEmpty()) {
+        List<TriggerBindingDefinition> bindings = listPortalCollisionBindings(portalId);
+        if (bindings.isEmpty()) {
             return false;
         }
-        TriggerBindingDefinition removed = binding.get();
-        bindingsById.remove(removed.id());
+        for (TriggerBindingDefinition binding : bindings) {
+            bindingsById.remove(binding.id());
+        }
         persist();
-        recordBindingDeleted(removed, "DELETED");
+        for (TriggerBindingDefinition binding : bindings) {
+            recordBindingDeleted(binding, "DELETED");
+        }
         return true;
     }
 
@@ -248,6 +257,42 @@ public final class TriggerBindingService {
             normalized.contextJson(),
             normalized.enabled()
         );
+    }
+
+    private void upsertBinding(@Nonnull TriggerBindingDefinition binding) {
+        List<TriggerBindingDefinition> existingBindings = bindingsById.values().stream()
+            .filter(existing -> existing.triggerKind() == binding.triggerKind())
+            .filter(existing -> existing.sourceId().equals(binding.sourceId()))
+            .toList();
+        for (TriggerBindingDefinition existing : existingBindings) {
+            if (existing.action() == binding.action()) {
+                bindingsById.remove(existing.id());
+                continue;
+            }
+            if (isQueueAction(existing.action()) && isQueueAction(binding.action())) {
+                bindingsById.remove(existing.id());
+                continue;
+            }
+            if (existing.action() == TriggerBindingAction.TRAVEL || binding.action() == TriggerBindingAction.TRAVEL) {
+                throw new IllegalArgumentException(
+                    "TRAVEL bindings cannot be combined with other portal actions. Remove the existing portal bindings first."
+                );
+            }
+        }
+        bindingsById.put(binding.id(), binding);
+    }
+
+    private static int actionPriority(@Nonnull TriggerBindingAction action) {
+        return switch (action) {
+            case JOIN_QUEUE -> 0;
+            case LEAVE_QUEUE -> 1;
+            case LOCAL_TARGET -> 2;
+            case TRAVEL -> 3;
+        };
+    }
+
+    private static boolean isQueueAction(@Nonnull TriggerBindingAction action) {
+        return action == TriggerBindingAction.JOIN_QUEUE || action == TriggerBindingAction.LEAVE_QUEUE;
     }
 
     private void persist() throws IOException {

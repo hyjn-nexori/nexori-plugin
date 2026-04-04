@@ -21,10 +21,7 @@ public record TriggerBindingDefinition(
         TriggerBindingKind normalizedKind = triggerKind == null ? TriggerBindingKind.PORTAL_COLLISION_ENTER : triggerKind;
         TriggerBindingAction normalizedAction = action == null ? TriggerBindingAction.TRAVEL : action;
         String normalizedSourceId = normalizeRequired(sourceId, "Trigger binding source id cannot be blank.");
-        String normalizedId = normalizeOptional(
-            id,
-            normalizedKind.name().toLowerCase(Locale.ROOT) + "." + normalizedSourceId
-        );
+        String normalizedId = normalizeOptional(id, buildDefaultId(normalizedKind, normalizedSourceId, normalizedAction));
         if (normalizedAction == TriggerBindingAction.JOIN_QUEUE || normalizedAction == TriggerBindingAction.LEAVE_QUEUE) {
             return new TriggerBindingDefinition(
                 normalizedId,
@@ -72,6 +69,19 @@ public record TriggerBindingDefinition(
     @Nonnull
     public static String normalizeId(@Nonnull String rawId) {
         return normalizeRequired(rawId, "Trigger binding id cannot be blank.");
+    }
+
+    @Nonnull
+    public static String buildDefaultId(
+        @Nonnull TriggerBindingKind triggerKind,
+        @Nonnull String sourceId,
+        @Nonnull TriggerBindingAction action
+    ) {
+        return triggerKind.name().toLowerCase(Locale.ROOT)
+            + "."
+            + normalizeRequired(sourceId, "Trigger binding source id cannot be blank.")
+            + "."
+            + action.name().toLowerCase(Locale.ROOT);
     }
 
     @Nonnull

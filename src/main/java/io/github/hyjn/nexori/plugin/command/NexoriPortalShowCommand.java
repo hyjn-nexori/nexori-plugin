@@ -13,6 +13,7 @@ import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
 
 import javax.annotation.Nonnull;
+import java.util.List;
 
 public final class NexoriPortalShowCommand extends CommandBase {
 
@@ -39,32 +40,28 @@ public final class NexoriPortalShowCommand extends CommandBase {
             return;
         }
 
-        TriggerBindingDefinition binding = triggerBindingService.findPortalCollisionBinding(portal.portalId()).orElse(null);
+        List<TriggerBindingDefinition> bindings = triggerBindingService.listPortalCollisionBindings(portal.portalId());
         context.sendMessage(Message.raw("Portal id: " + portal.portalId()));
         context.sendMessage(Message.raw("Display name: " + portal.displayName()));
         context.sendMessage(Message.raw("Location: " + portal.worldName() + " (" + portal.blockX() + ", " + portal.blockY() + ", " + portal.blockZ() + ")"));
         context.sendMessage(Message.raw("Auto destination target: " + portal.autoDestinationTargetId()));
         context.sendMessage(Message.raw("Enabled: " + portal.enabled()));
-        if (binding == null) {
+        if (bindings.isEmpty()) {
             context.sendMessage(Message.raw("Collision binding: <none>"));
             return;
         }
 
-        context.sendMessage(Message.raw("Collision binding action: " + binding.action()));
-        switch (binding.action()) {
-            case JOIN_QUEUE, LEAVE_QUEUE -> {
-                context.sendMessage(Message.raw("Collision queue: " + binding.queueId()));
-                return;
-            }
-            case LOCAL_TARGET -> {
-                context.sendMessage(Message.raw("Collision local target: " + binding.destinationTargetId()));
-                return;
-            }
-            case TRAVEL -> {
+        context.sendMessage(Message.raw("Collision bindings:"));
+        for (TriggerBindingDefinition binding : bindings) {
+            context.sendMessage(Message.raw("- action: " + binding.action()));
+            switch (binding.action()) {
+                case JOIN_QUEUE, LEAVE_QUEUE -> context.sendMessage(Message.raw("  queue: " + binding.queueId()));
+                case LOCAL_TARGET -> context.sendMessage(Message.raw("  local target: " + binding.destinationTargetId()));
+                case TRAVEL -> {
+                    context.sendMessage(Message.raw("  destination: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()));
+                    context.sendMessage(Message.raw("  travel profile: " + binding.travelProfileId()));
+                }
             }
         }
-
-        context.sendMessage(Message.raw("Collision destination: " + binding.destinationConnectionAddress() + " -> " + binding.destinationTargetId()));
-        context.sendMessage(Message.raw("Collision travel profile: " + binding.travelProfileId()));
     }
 }
