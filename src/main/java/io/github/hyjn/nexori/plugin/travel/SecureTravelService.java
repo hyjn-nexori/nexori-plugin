@@ -2,6 +2,9 @@ package io.github.hyjn.nexori.plugin.travel;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.math.vector.Vector3d;
@@ -14,6 +17,7 @@ import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
@@ -26,6 +30,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
+import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
+import io.github.hyjn.nexori.plugin.minigame.ArenaInstanceRuntime;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
@@ -43,6 +49,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class SecureTravelService implements SecureReferralHandler {
@@ -332,7 +339,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         }
 
         recentArrivals.put(playerRef.getUuid(), arrival);
-        applyArrivalTeleport(event, playerRef, arrival);
+        if (!tryQueueInstanceArrival(event, playerRef, arrival)) {
+            applyArrivalTeleport(event, playerRef, arrival);
+        }
         event.getPlayer().sendMessage(Message.raw(buildArrivalMessage(arrival)));
         inventoryTransferService.handlePlayerReady(event);
     }
@@ -350,6 +359,78 @@ public final class SecureTravelService implements SecureReferralHandler {
     @Nonnull
     public Optional<PendingArrival> removePendingArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(pendingArrivals.remove(playerUuid));
+    }
+
+    private boolean tryQueueInstanceArrival(
+        @Nonnull PlayerReadyEvent event,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull PendingArrival arrival
+    ) {
+        JsonObject context = parseContext(arrival.contextJson());
+        if (context == null || !context.has("flowType") || !context.has("matchId")) {
+            return false;
+        }
+        if (!"minigame.launch".equalsIgnoreCase(context.get("flowType").getAsString())) {
+            return false;
+        }
+
+        String instanceTemplateId = context.has("instanceTemplateId")
+            ? normalizeOptional(context.get("instanceTemplateId").getAsString())
+            : "";
+        if (instanceTemplateId.isBlank()
+            || ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(instanceTemplateId)
+            || !InstancesPlugin.doesInstanceAssetExist(instanceTemplateId)) {
+            return false;
+        }
+
+        String matchId = normalizeOptional(context.get("matchId").getAsString()).toLowerCase();
+        if (matchId.isBlank()) {
+            return false;
+        }
+
+        Transform arrivalTransform = resolveArrivalTransform(arrival, playerRef.getUuid());
+        World baseWorld = Universe.get().getWorld(arrival.worldName());
+        if (arrivalTransform == null || baseWorld == null) {
+            return false;
+        }
+
+        Ref<EntityStore> playerEntityRef = event.getPlayerRef();
+        Store<EntityStore> store = playerEntityRef.getStore();
+        String instanceWorldName = ArenaInstanceRuntime.buildInstanceWorldName(matchId);
+        CompletableFuture<World> instanceFuture;
+        try {
+            World existingWorld = Universe.get().getWorld(instanceWorldName);
+            instanceFuture = existingWorld != null && existingWorld.isAlive()
+                ? CompletableFuture.completedFuture(existingWorld)
+                : InstancesPlugin.get().spawnInstance(
+                    instanceTemplateId,
+                    instanceWorldName,
+                    baseWorld,
+                    arrivalTransform.clone()
+                );
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log(
+                "Failed to prepare Nexori instance arrival for match " + matchId + "."
+            );
+            return false;
+        }
+
+        instanceFuture.whenComplete((instanceWorld, throwable) -> {
+            if (throwable != null) {
+                logger.atWarning().withCause(throwable).log(
+                    "Failed to materialize Nexori instance world '" + instanceWorldName + "' for match " + matchId + "."
+                );
+                baseWorld.execute(() -> store.addComponent(
+                    playerEntityRef,
+                    Teleport.getComponentType(),
+                    Teleport.createForPlayer(baseWorld, arrivalTransform.clone())
+                ));
+                return;
+            }
+            ArenaInstanceRuntime.configureInstanceLifecycle(instanceWorld);
+        });
+        InstancesPlugin.teleportPlayerToLoadingInstance(playerEntityRef, store, instanceFuture, null);
+        return true;
     }
 
     private void applyArrivalTeleport(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {
@@ -488,6 +569,27 @@ public final class SecureTravelService implements SecureReferralHandler {
 
     private double getDouble(@Nonnull JsonObject object, @Nonnull String key) {
         return object.has(key) ? object.get(key).getAsDouble() : 0.0;
+    }
+
+    private JsonObject parseContext(String rawContextJson) {
+        if (rawContextJson == null || rawContextJson.isBlank()) {
+            return null;
+        }
+        try {
+            return GSON.fromJson(rawContextJson, JsonObject.class);
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log("Failed to parse Nexori travel context JSON.");
+            return null;
+        }
+    }
+
+    @Nonnull
+    private String normalizeOptional(String rawValue) {
+        if (rawValue == null) {
+            return "";
+        }
+        String normalized = rawValue.trim();
+        return normalized.isBlank() ? "" : normalized;
     }
 
     private boolean isTrustedDestination(@Nonnull ConfiguredPeer destination) {
