@@ -40,6 +40,9 @@ public final class NexoriMatchStatusCommand extends CommandBase {
                     + " alive=" + match.alivePlayerUuids().size()
                     + " eliminated=" + match.eliminatedPlayerUuids().size()
                     + " pendingReturn=" + match.pendingReturnAtEpochMsByPlayerUuid().size()
+                    + " instance=" + (match.usesInstanceTemplate()
+                        ? match.instanceTemplateId() + (match.instanceWorldName().isBlank() ? "" : "@" + match.instanceWorldName())
+                        : "direct")
                     + " return=" + match.returnConnectionAddress()
                     + " -> " + match.returnFallbackTargetId()
             );

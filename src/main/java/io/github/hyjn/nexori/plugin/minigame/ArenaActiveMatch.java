@@ -16,6 +16,8 @@ public record ArenaActiveMatch(
     String returnConnectionAddress,
     String returnFallbackTargetId,
     String launchTravelProfileId,
+    String instanceTemplateId,
+    String instanceWorldName,
     String matchResolutionTriggerId,
     int expectedPlayerCount,
     List<UUID> arrivedPlayerUuids,
@@ -39,6 +41,8 @@ public record ArenaActiveMatch(
             normalizeRequired(returnConnectionAddress, "Arena match return connection address cannot be blank."),
             normalizeRequired(returnFallbackTargetId, "Arena match return fallback target id cannot be blank."),
             normalizeRequired(launchTravelProfileId, "Arena match travel profile id cannot be blank."),
+            normalizeInstanceTemplateId(instanceTemplateId),
+            normalizeOptional(instanceWorldName),
             normalizeOptional(matchResolutionTriggerId),
             Math.max(expectedPlayerCount, 0),
             normalizePlayers(arrivedPlayerUuids),
@@ -66,10 +70,37 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             List.copyOf(arrived),
             List.copyOf(active),
+            eliminatedPlayerUuids(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            winnerPlayerUuid(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            lastError()
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withInstanceWorldName(@Nonnull String rawInstanceWorldName, long nowEpochMs) {
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            rawInstanceWorldName,
+            matchResolutionTriggerId(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
             eliminatedPlayerUuids(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
@@ -93,6 +124,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
@@ -118,6 +151,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
@@ -143,6 +178,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
@@ -167,6 +204,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             normalizedExpected,
             arrivedPlayerUuids(),
@@ -190,6 +229,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
@@ -223,6 +264,8 @@ public record ArenaActiveMatch(
             returnConnectionAddress(),
             returnFallbackTargetId(),
             launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
             matchResolutionTriggerId(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
@@ -250,6 +293,10 @@ public record ArenaActiveMatch(
 
     public boolean hasWinner() {
         return !winnerPlayerUuid().isBlank();
+    }
+
+    public boolean usesInstanceTemplate() {
+        return !instanceTemplateId().isBlank() && !ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(instanceTemplateId());
     }
 
     public boolean allExpectedPlayersArrived() {
@@ -322,5 +369,14 @@ public record ArenaActiveMatch(
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? "" : normalized;
+    }
+
+    @Nonnull
+    private static String normalizeInstanceTemplateId(String rawValue) {
+        String normalized = normalizeOptional(rawValue);
+        if (normalized.isBlank() || ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(normalized)) {
+            return ArenaDefinition.NO_INSTANCE_TEMPLATE_ID;
+        }
+        return normalized;
     }
 }

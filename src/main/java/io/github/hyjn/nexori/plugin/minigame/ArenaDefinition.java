@@ -8,11 +8,13 @@ public record ArenaDefinition(
     String displayName,
     String destinationConnectionAddress,
     String destinationTargetId,
+    String instanceTemplateId,
     String matchResolutionTriggerId,
     int maxSupportedPlayers,
     boolean enabled
 ) {
 
+    public static final String NO_INSTANCE_TEMPLATE_ID = "none";
     public static final String NO_MATCH_RESOLUTION_TRIGGER_ID = "none";
 
     @Nonnull
@@ -26,10 +28,15 @@ public record ArenaDefinition(
             normalizedDisplayName,
             normalizedDestinationAddress,
             normalizedTargetId,
+            normalizeInstanceTemplateId(instanceTemplateId),
             normalizeTriggerId(matchResolutionTriggerId),
             maxSupportedPlayers,
             enabled
         );
+    }
+
+    public boolean usesInstanceTemplate() {
+        return !NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(instanceTemplateId);
     }
 
     @Nonnull
@@ -69,6 +76,18 @@ public record ArenaDefinition(
         String normalized = normalizeOptional(rawValue, "");
         if (normalized.isBlank()) {
             return NO_MATCH_RESOLUTION_TRIGGER_ID;
+        }
+        return normalized;
+    }
+
+    @Nonnull
+    private static String normalizeInstanceTemplateId(String rawValue) {
+        if (rawValue == null) {
+            return NO_INSTANCE_TEMPLATE_ID;
+        }
+        String normalized = rawValue.trim();
+        if (normalized.isBlank() || NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(normalized)) {
+            return NO_INSTANCE_TEMPLATE_ID;
         }
         return normalized;
     }

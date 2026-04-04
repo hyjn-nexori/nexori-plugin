@@ -499,6 +499,7 @@ public final class QueueCoordinatorService {
         root.addProperty("returnConnectionAddress", returnConnectionAddress);
         root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
+        root.addProperty("instanceTemplateId", arena.instanceTemplateId());
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
         root.addProperty("launchedAtEpochMs", nowEpochMs);

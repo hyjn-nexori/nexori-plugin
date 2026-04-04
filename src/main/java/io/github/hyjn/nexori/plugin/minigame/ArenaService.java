@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 
@@ -67,6 +68,11 @@ public final class ArenaService {
         if (normalized.maxSupportedPlayers() < 1) {
             throw new IllegalArgumentException("Arena max supported players must be at least 1.");
         }
+        if (normalized.usesInstanceTemplate() && !InstancesPlugin.doesInstanceAssetExist(normalized.instanceTemplateId())) {
+            throw new IllegalArgumentException(
+                "Arena instance template '" + normalized.instanceTemplateId() + "' does not exist in this server's loaded assets."
+            );
+        }
         String localConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
         if (!localConnectionAddress.isBlank() && peer.connectionAddress().equalsIgnoreCase(localConnectionAddress)) {
             throw new IllegalArgumentException("Arena destination must point to another server, not this server.");
@@ -76,6 +82,7 @@ public final class ArenaService {
             normalized.displayName(),
             peer.connectionAddress(),
             normalized.destinationTargetId(),
+            normalized.instanceTemplateId(),
             normalized.matchResolutionTriggerId(),
             normalized.maxSupportedPlayers(),
             normalized.enabled()

@@ -4,6 +4,9 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.builtin.instances.InstancesPlugin;
+import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
+import com.hypixel.hytale.builtin.instances.removal.WorldEmptyCondition;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
@@ -22,6 +25,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +46,7 @@ public final class ArenaMatchService {
     private final ArenaMatchResolutionTriggerRegistry triggerRegistry;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
+    private final Map<String, CompletableFuture<com.hypixel.hytale.server.core.universe.world.World>> instanceFutureByMatchId = new LinkedHashMap<>();
 
     public ArenaMatchService(
         @Nonnull HytaleLogger logger,
@@ -78,7 +83,7 @@ public final class ArenaMatchService {
 
         String flowType = context.get("flowType").getAsString();
         if ("minigame.launch".equalsIgnoreCase(flowType)) {
-            handleLaunchArrival(playerRef, context);
+            handleLaunchArrival(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef, context);
             return;
         }
         if ("minigame.return".equalsIgnoreCase(flowType)) {
@@ -109,6 +114,7 @@ public final class ArenaMatchService {
 
         if (updated.isEmpty()) {
             matchesById.remove(updated.matchId());
+            instanceFutureByMatchId.remove(updated.matchId());
         } else {
             matchesById.put(updated.matchId(), updated);
         }
@@ -144,6 +150,7 @@ public final class ArenaMatchService {
                     updated = applyAutomaticResolutionTrigger(updated, now);
                     if (updated.isEmpty()) {
                         matchesById.remove(updated.matchId());
+                        instanceFutureByMatchId.remove(updated.matchId());
                     } else {
                         matchesById.put(updated.matchId(), updated);
                     }
@@ -202,6 +209,7 @@ public final class ArenaMatchService {
 
         if (updated.isEmpty()) {
             matchesById.remove(updated.matchId());
+            instanceFutureByMatchId.remove(updated.matchId());
         } else {
             matchesById.put(updated.matchId(), updated);
         }
@@ -294,7 +302,12 @@ public final class ArenaMatchService {
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
     }
 
-    private void handleLaunchArrival(@Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
+    private void handleLaunchArrival(
+        @Nonnull Ref<com.hypixel.hytale.server.core.universe.world.storage.EntityStore> playerRefStoreRef,
+        @Nonnull Store<com.hypixel.hytale.server.core.universe.world.storage.EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull JsonObject context
+    ) {
         LaunchContext launch = LaunchContext.from(context);
         long now = System.currentTimeMillis();
         ArenaActiveMatch existing = matchesById.get(launch.matchId());
@@ -307,6 +320,8 @@ public final class ArenaMatchService {
                 launch.returnConnectionAddress(),
                 launch.returnFallbackTargetId(),
                 launch.launchTravelProfileId(),
+                launch.instanceTemplateId(),
+                "",
                 launch.matchResolutionTriggerId(),
                 launch.expectedPlayerCount(),
                 List.of(playerRef.getUuid()),
@@ -327,6 +342,7 @@ public final class ArenaMatchService {
                 ArenaActiveMatch previousUpdated = previous.withoutReturnedPlayer(playerRef.getUuid(), now);
                 if (previousUpdated.isEmpty()) {
                     matchesById.remove(previousMatchId);
+                    instanceFutureByMatchId.remove(previousMatchId);
                 } else {
                     matchesById.put(previousMatchId, previousUpdated);
                 }
@@ -335,6 +351,7 @@ public final class ArenaMatchService {
 
         updated = applyAutomaticResolutionTrigger(updated, now);
         matchesById.put(updated.matchId(), updated);
+        maybeSendPlayerIntoInstance(playerRefStoreRef, store, playerRef, updated, now);
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
         ));
@@ -402,6 +419,89 @@ public final class ArenaMatchService {
             );
         }
         return trigger.evaluate(this, match, nowEpochMs);
+    }
+
+    private void maybeSendPlayerIntoInstance(
+        @Nonnull Ref<EntityStore> playerRefStoreRef,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ArenaActiveMatch match,
+        long nowEpochMs
+    ) {
+        if (!match.usesInstanceTemplate()) {
+            return;
+        }
+
+        com.hypixel.hytale.server.core.universe.world.World currentWorld = Universe.get().getWorld(playerRef.getWorldUuid());
+        if (currentWorld == null) {
+            matchesById.put(
+                match.matchId(),
+                match.withLastError("Could not resolve the current arena world before entering the instance.", nowEpochMs)
+            );
+            return;
+        }
+
+        String instanceWorldName = buildInstanceWorldName(match.matchId());
+        CompletableFuture<com.hypixel.hytale.server.core.universe.world.World> future = instanceFutureByMatchId.computeIfAbsent(
+            match.matchId(),
+            ignored -> {
+                com.hypixel.hytale.server.core.universe.world.World existingWorld = Universe.get().getWorld(instanceWorldName);
+                if (existingWorld != null && existingWorld.isAlive()) {
+                    return CompletableFuture.completedFuture(existingWorld);
+                }
+                return InstancesPlugin.get().spawnInstance(
+                    match.instanceTemplateId(),
+                    instanceWorldName,
+                    currentWorld,
+                    playerRef.getTransform().clone()
+                );
+            }
+        );
+
+        future.whenComplete((instanceWorld, throwable) -> {
+            synchronized (ArenaMatchService.this) {
+                ArenaActiveMatch currentMatch = matchesById.get(match.matchId());
+                if (currentMatch == null) {
+                    instanceFutureByMatchId.remove(match.matchId());
+                    return;
+                }
+                if (throwable != null) {
+                    instanceFutureByMatchId.remove(match.matchId());
+                    matchesById.put(
+                        currentMatch.matchId(),
+                        currentMatch.withLastError(
+                            normalizeOptional(throwable.getMessage(), throwable.getClass().getSimpleName()),
+                            System.currentTimeMillis()
+                        )
+                    );
+                    return;
+                }
+                configureInstanceLifecycle(instanceWorld);
+                if (!instanceWorld.getName().equals(currentMatch.instanceWorldName())) {
+                    matchesById.put(
+                        currentMatch.matchId(),
+                        currentMatch.withInstanceWorldName(instanceWorld.getName(), System.currentTimeMillis())
+                    );
+                }
+            }
+        });
+
+        InstancesPlugin.teleportPlayerToLoadingInstance(playerRefStoreRef, store, future, null);
+    }
+
+    private void configureInstanceLifecycle(@Nonnull com.hypixel.hytale.server.core.universe.world.World world) {
+        world.execute(() -> {
+            com.hypixel.hytale.server.core.universe.world.WorldConfig worldConfig = world.getWorldConfig();
+            worldConfig.setDeleteOnRemove(true);
+            InstanceWorldConfig instanceConfig = InstanceWorldConfig.ensureAndGet(worldConfig);
+            instanceConfig.setRemovalConditions(new WorldEmptyCondition(20.0));
+            worldConfig.markChanged();
+        });
+    }
+
+    @Nonnull
+    private String buildInstanceWorldName(@Nonnull String matchId) {
+        return InstancesPlugin.safeName("nexori-match-" + matchId);
     }
 
     @Nonnull
@@ -568,6 +668,7 @@ public final class ArenaMatchService {
         String returnConnectionAddress,
         String returnFallbackTargetId,
         String launchTravelProfileId,
+        String instanceTemplateId,
         String matchResolutionTriggerId,
         int expectedPlayerCount
     ) {
@@ -582,6 +683,9 @@ public final class ArenaMatchService {
                 readRequired(root, "returnConnectionAddress"),
                 readRequired(root, "returnFallbackTargetId"),
                 readRequired(root, "launchTravelProfileId").toLowerCase(),
+                root.has("instanceTemplateId")
+                    ? normalizeOptional(root.get("instanceTemplateId").getAsString(), ArenaDefinition.NO_INSTANCE_TEMPLATE_ID)
+                    : ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
                 root.has("matchResolutionTriggerId")
                     ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
                     : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
