@@ -33,13 +33,19 @@ public final class ConfiguredPeerService {
     @Nonnull
     public synchronized List<ConfiguredPeer> list() {
         return peersByAddress.values().stream()
-            .sorted(Comparator.comparing(ConfiguredPeer::connectionAddress))
+            .sorted(Comparator.comparing(ConfiguredPeer::displayName).thenComparing(ConfiguredPeer::connectionAddress))
             .toList();
     }
 
     @Nonnull
     public synchronized ConfiguredPeer add(@Nonnull String rawConnectionAddress) throws IOException {
         ConfiguredPeer peer = ConfiguredPeer.parse(rawConnectionAddress);
+        return add(peer.displayName(), peer.connectionAddress());
+    }
+
+    @Nonnull
+    public synchronized ConfiguredPeer add(@Nonnull String rawDisplayName, @Nonnull String rawConnectionAddress) throws IOException {
+        ConfiguredPeer peer = ConfiguredPeer.create(rawDisplayName, rawConnectionAddress);
         peersByAddress.put(peer.connectionAddress(), peer);
         persist();
         String operationId = diagnosticsService.newOperationId("config");
@@ -56,9 +62,47 @@ public final class ConfiguredPeerService {
                 .entityId(peer.connectionAddress())
                 .changeType("ADDED")
                 .remoteConnectionAddress(peer.connectionAddress())
+                .addPreview("displayName", peer.displayName())
                 .addPreview("connectionAddress", peer.connectionAddress())
         );
         return peer;
+    }
+
+    @Nonnull
+    public synchronized ConfiguredPeer update(@Nonnull String rawExistingConnectionAddress, @Nonnull String rawDisplayName, @Nonnull String rawConnectionAddress) throws IOException {
+        ConfiguredPeer existingKey = ConfiguredPeer.parse(rawExistingConnectionAddress);
+        ConfiguredPeer existing = peersByAddress.get(existingKey.connectionAddress());
+        if (existing == null) {
+            throw new IllegalArgumentException("No configured server exists for " + existingKey.connectionAddress() + ".");
+        }
+
+        ConfiguredPeer updated = ConfiguredPeer.create(rawDisplayName, rawConnectionAddress);
+        if (!existing.connectionAddress().equalsIgnoreCase(updated.connectionAddress())
+            && peersByAddress.containsKey(updated.connectionAddress())) {
+            throw new IllegalArgumentException("Another configured server already uses " + updated.connectionAddress() + ".");
+        }
+
+        peersByAddress.remove(existing.connectionAddress());
+        peersByAddress.put(updated.connectionAddress(), updated);
+        persist();
+        String operationId = diagnosticsService.newOperationId("config");
+        diagnosticsService.record(
+            DiagnosticsCategory.CONFIG,
+            DiagnosticsAction.CONFIG_BOOTSTRAP_PEER_UPDATE,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.BOOTSTRAP_PEER_UPDATED,
+            "Updated a bootstrap peer in this server's local setup input.",
+            operationId,
+            event -> event
+                .entityType("BOOTSTRAP_PEER")
+                .entityId(updated.connectionAddress())
+                .changeType("UPDATED")
+                .remoteConnectionAddress(updated.connectionAddress())
+                .addPreview("displayName", updated.displayName())
+                .addPreview("connectionAddress", updated.connectionAddress())
+        );
+        return updated;
     }
 
     public synchronized boolean remove(@Nonnull String rawConnectionAddress) throws IOException {

@@ -48,6 +48,7 @@ public final class DiagnosticsAction {
     public static final String RULES_CACHE_SAVE = "rules.cache.save";
 
     public static final String CONFIG_BOOTSTRAP_PEER_ADD = "config.bootstrap_peer.add";
+    public static final String CONFIG_BOOTSTRAP_PEER_UPDATE = "config.bootstrap_peer.update";
     public static final String CONFIG_BOOTSTRAP_PEER_REMOVE = "config.bootstrap_peer.remove";
     public static final String CONFIG_BOOTSTRAP_PEER_CLEAR = "config.bootstrap_peer.clear";
     public static final String CONFIG_TARGET_SAVE = "config.target.save";

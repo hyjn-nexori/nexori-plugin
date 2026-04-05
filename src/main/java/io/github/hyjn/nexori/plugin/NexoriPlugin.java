@@ -94,7 +94,10 @@ import io.github.hyjn.nexori.plugin.ui.NexoriMenuCommand;
 import io.github.hyjn.nexori.plugin.ui.PortalSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Command;
+import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Page;
+import io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State;
 
+import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
@@ -378,6 +381,25 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.queueCoordinatorService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.arenaMatchService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
+                io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State resumeState = null;
+                com.hypixel.hytale.server.core.universe.PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
+                    event.getPlayerRef(),
+                    com.hypixel.hytale.server.core.universe.Universe.get().getPlayerRefComponentType()
+                );
+                if (playerRef == null) {
+                    return;
+                }
+
+                String resumeStatus = this.bootstrapCoordinator.consumePendingMenuResumeStatus(playerRef.getUuid());
+                if (resumeStatus.isBlank()) {
+                    return;
+                }
+
+                event.getPlayer().sendMessage(Message.raw(resumeStatus));
+                resumeState = NexoriMenuV2State.initial().withStatusText(resumeStatus);
+                NexoriMenuV2Page.open(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef, event.getPlayer(), this, resumeState);
+            });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);

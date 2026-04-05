@@ -70,6 +70,7 @@ public final class DiagnosticsReasonCode {
     public static final String RULES_CACHE_SAVE_FAILED = "RULES_CACHE_SAVE_FAILED";
 
     public static final String BOOTSTRAP_PEER_ADDED = "BOOTSTRAP_PEER_ADDED";
+    public static final String BOOTSTRAP_PEER_UPDATED = "BOOTSTRAP_PEER_UPDATED";
     public static final String BOOTSTRAP_PEER_REMOVED = "BOOTSTRAP_PEER_REMOVED";
     public static final String BOOTSTRAP_PEERS_CLEARED = "BOOTSTRAP_PEERS_CLEARED";
     public static final String TARGET_SAVED = "TARGET_SAVED";

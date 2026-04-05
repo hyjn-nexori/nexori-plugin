@@ -1,12 +1,13 @@
 package io.github.hyjn.nexori.plugin.ui.menu;
 
 public enum NexoriMenuV2View {
-    HOME("Home"),
+    HOME("Servers"),
     PORTALS("Portals"),
     TARGETS("Targets"),
     RULES("Rules"),
-    MATCHMAKING("Matchmaking"),
-    OPERATIONS("Operations");
+    QUEUES("Queues"),
+    OPERATIONS("Operations"),
+    ABOUT("HOW TO USE");
 
     private final String label;
 
@@ -16,5 +17,9 @@ public enum NexoriMenuV2View {
 
     public String label() {
         return label;
+    }
+
+    public boolean isAbout() {
+        return this == ABOUT;
     }
 }

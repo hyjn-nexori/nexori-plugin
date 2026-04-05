@@ -44,6 +44,8 @@ public final class BootstrapCoordinator {
     private final BootstrapPayloadCodec payloadCodec;
     private final DiagnosticsService diagnosticsService;
     private final Map<UUID, String> pendingMessages = new ConcurrentHashMap<>();
+    private final Map<UUID, Boolean> pendingMenuResumeRequests = new ConcurrentHashMap<>();
+    private final Map<UUID, String> pendingMenuResumeStatuses = new ConcurrentHashMap<>();
 
     public BootstrapCoordinator(
         @Nonnull HytaleLogger logger,
@@ -170,10 +172,10 @@ public final class BootstrapCoordinator {
 
         bootstrapRunStore.clear();
         bootstrapStateStore.closeSession();
-        pendingMessages.remove(playerRef.getUuid());
+        clearPendingUiState(playerRef.getUuid());
         if (currentRun != null) {
             try {
-                pendingMessages.remove(UUID.fromString(currentRun.startedByPlayerUuid()));
+                clearPendingUiState(UUID.fromString(currentRun.startedByPlayerUuid()));
             } catch (IllegalArgumentException ignored) {
             }
             logger.atInfo().log("Reset Nexori bootstrap session " + currentRun.sessionId() + " on the origin server.");
@@ -220,6 +222,16 @@ public final class BootstrapCoordinator {
         if (pendingMessage != null && !pendingMessage.isBlank()) {
             event.getPlayerRef().sendMessage(Message.raw(pendingMessage));
         }
+    }
+
+    public void requestMenuResume(@Nonnull UUID playerUuid) {
+        pendingMenuResumeRequests.put(playerUuid, Boolean.TRUE);
+    }
+
+    @Nonnull
+    public String consumePendingMenuResumeStatus(@Nonnull UUID playerUuid) {
+        String status = pendingMenuResumeStatuses.remove(playerUuid);
+        return status == null ? "" : status;
     }
 
     @Nonnull
@@ -784,9 +796,20 @@ public final class BootstrapCoordinator {
 
     private void queueStatus(@Nonnull String startedByPlayerUuid, @Nonnull String message) {
         try {
-            pendingMessages.put(UUID.fromString(startedByPlayerUuid), message);
+            UUID playerUuid = UUID.fromString(startedByPlayerUuid);
+            if (pendingMenuResumeRequests.remove(playerUuid) != null) {
+                pendingMenuResumeStatuses.put(playerUuid, message);
+                return;
+            }
+            pendingMessages.put(playerUuid, message);
         } catch (IllegalArgumentException ignored) {
         }
+    }
+
+    private void clearPendingUiState(@Nonnull UUID playerUuid) {
+        pendingMessages.remove(playerUuid);
+        pendingMenuResumeRequests.remove(playerUuid);
+        pendingMenuResumeStatuses.remove(playerUuid);
     }
 
     private BootstrapReferralPayload decode(@Nonnull PlayerSetupConnectEvent event) {
