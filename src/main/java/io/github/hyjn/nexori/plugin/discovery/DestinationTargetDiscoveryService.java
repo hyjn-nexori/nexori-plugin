@@ -20,10 +20,14 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
+import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
+import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
+import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -43,6 +47,7 @@ public final class DestinationTargetDiscoveryService {
     private final HytaleLogger logger;
     private final TrustBundleStore trustBundleStore;
     private final DestinationTargetService destinationTargetService;
+    private final PortalInstanceService portalInstanceService;
     private final DiscoveredDestinationTargetCacheService cacheService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
@@ -55,6 +60,7 @@ public final class DestinationTargetDiscoveryService {
         @Nonnull HytaleLogger logger,
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull DestinationTargetService destinationTargetService,
+        @Nonnull PortalInstanceService portalInstanceService,
         @Nonnull DiscoveredDestinationTargetCacheService cacheService,
         @Nonnull SecureReferralService secureReferralService,
         @Nonnull DiagnosticsService diagnosticsService
@@ -62,6 +68,7 @@ public final class DestinationTargetDiscoveryService {
         this.logger = logger;
         this.trustBundleStore = trustBundleStore;
         this.destinationTargetService = destinationTargetService;
+        this.portalInstanceService = portalInstanceService;
         this.cacheService = cacheService;
         this.secureReferralService = secureReferralService;
         this.diagnosticsService = diagnosticsService;
@@ -148,6 +155,63 @@ public final class DestinationTargetDiscoveryService {
         );
     }
 
+    public void discover(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        UiResumeAction resumeAction
+    ) throws IOException, GeneralSecurityException {
+        if (!isTrustedDestination(destination)) {
+            String operationId = diagnosticsService.newOperationId("discovery");
+            diagnosticsService.record(
+                DiagnosticsCategory.DISCOVERY,
+                DiagnosticsAction.DISCOVERY_REQUEST_SEND,
+                DiagnosticsOutcome.DENIED,
+                DiagnosticsReasonClass.SECURITY,
+                DiagnosticsReasonCode.DISCOVERY_DESTINATION_NOT_TRUSTED,
+                "The destination is not in the current Nexori trust bundle.",
+                operationId,
+                diag -> diag.remoteConnectionAddress(destination.connectionAddress())
+            );
+            throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
+        }
+
+        String requestId = UUID.randomUUID().toString();
+        pendingRequests.put(requestId, new PendingDiscoveryRequest(
+            requestId,
+            event.getUuid(),
+            destination.connectionAddress(),
+            originWorldName,
+            originTransform.clone(),
+            Instant.now().plusSeconds(30).toEpochMilli(),
+            resumeAction
+        ));
+
+        byte[] encoded = secureReferralService.createPayload(
+            event.getUuid(),
+            event.getUsername(),
+            REQUEST_PAYLOAD_TYPE,
+            new DestinationTargetDiscoveryRequestPayload(requestId),
+            Duration.ofSeconds(30)
+        );
+        event.referToServer(destination.host(), destination.port(), encoded);
+        diagnosticsService.record(
+            DiagnosticsCategory.DISCOVERY,
+            DiagnosticsAction.DISCOVERY_REQUEST_SEND,
+            DiagnosticsOutcome.STARTED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.DISCOVERY_REQUEST_SENT,
+            "Started destination target discovery against a trusted server.",
+            requestId,
+            diag -> diag
+                .requestId(requestId)
+                .playerUuid(event.getUuid().toString())
+                .playerNameClaimed(event.getUsername())
+                .remoteConnectionAddress(destination.connectionAddress())
+        );
+    }
+
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
         PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
             event.getPlayerRef(),
@@ -167,15 +231,17 @@ public final class DestinationTargetDiscoveryService {
             ? Teleport.createForPlayer(pendingReturn.originTransform().clone())
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
         event.getPlayerRef().getStore().addComponent(event.getPlayerRef(), Teleport.getComponentType(), teleport);
-        event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
         if (pendingReturn.resumeAction() != null) {
-            pendingReturn.resumeAction().reopen(
+            pendingReturn.resumeAction().reopenWithStatus(
                 event.getPlayerRef(),
                 event.getPlayerRef().getStore(),
                 playerRef,
-                event.getPlayer()
+                event.getPlayer(),
+                pendingReturn.message()
             );
+            return;
         }
+        event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
     }
 
     private void handleRequest(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
@@ -188,8 +254,15 @@ public final class DestinationTargetDiscoveryService {
             return;
         }
 
+        Map<String, String> portalIdsByTargetId = new ConcurrentHashMap<>();
+        for (PortalInstanceDefinition portal : portalInstanceService.list()) {
+            if (!portal.autoDestinationTargetId().isBlank()) {
+                portalIdsByTargetId.put(portal.autoDestinationTargetId(), portal.portalId());
+            }
+        }
+
         List<DiscoveredDestinationTargetSummary> targets = destinationTargetService.list().stream()
-            .map(DiscoveredDestinationTargetSummary::from)
+            .map(target -> summarizeTarget(target, portalIdsByTargetId))
             .toList();
 
         try {
@@ -221,6 +294,20 @@ public final class DestinationTargetDiscoveryService {
         }
     }
 
+    @Nonnull
+    private static DiscoveredDestinationTargetSummary summarizeTarget(
+        @Nonnull DestinationTargetDefinition target,
+        @Nonnull Map<String, String> portalIdsByTargetId
+    ) {
+        if (target.kind() != DestinationTargetKind.PORTAL) {
+            return DiscoveredDestinationTargetSummary.from(target);
+        }
+        return DiscoveredDestinationTargetSummary.from(
+            target,
+            portalIdsByTargetId.getOrDefault(target.id(), "")
+        );
+    }
+
     private void handleResponse(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
         DestinationTargetDiscoveryResponsePayload payload = referral.decodePayload(
             secureReferralService.gson(),
@@ -238,6 +325,22 @@ public final class DestinationTargetDiscoveryService {
                 referral.issuer().serverId(),
                 payload.targets() == null ? List.of() : payload.targets()
             );
+            if (pendingRequest.resumeAction() != null) {
+                try {
+                    if (pendingRequest.resumeAction().continueDuringSetup(event)) {
+                        return;
+                    }
+                } catch (IOException | GeneralSecurityException exception) {
+                    logger.atWarning().withCause(exception).log("Received Nexori discovery response, but continuing the chained discovery during setup failed.");
+                    pendingReturns.put(event.getUuid(), new PendingDiscoveryReturn(
+                        pendingRequest.originWorldName(),
+                        pendingRequest.originTransform(),
+                        "The discovery response arrived, but continuing the sync flow failed: " + exception.getMessage(),
+                        pendingRequest.resumeAction()
+                    ));
+                    return;
+                }
+            }
             pendingReturns.put(event.getUuid(), new PendingDiscoveryReturn(
                 pendingRequest.originWorldName(),
                 pendingRequest.originTransform(),

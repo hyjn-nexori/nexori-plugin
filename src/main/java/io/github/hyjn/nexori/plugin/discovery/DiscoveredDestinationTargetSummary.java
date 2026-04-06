@@ -9,17 +9,27 @@ public record DiscoveredDestinationTargetSummary(
     String displayName,
     String kind,
     String worldName,
-    String arrivalPointId
+    String arrivalPointId,
+    String portalId
 ) {
 
     @Nonnull
     public static DiscoveredDestinationTargetSummary from(@Nonnull DestinationTargetDefinition target) {
+        return from(target, "");
+    }
+
+    @Nonnull
+    public static DiscoveredDestinationTargetSummary from(
+        @Nonnull DestinationTargetDefinition target,
+        @Nonnull String portalId
+    ) {
         return new DiscoveredDestinationTargetSummary(
             target.id(),
             target.displayName(),
             target.kind().name(),
             target.worldName(),
-            target.arrivalPointId()
+            target.arrivalPointId(),
+            portalId == null ? "" : portalId.trim().toLowerCase()
         );
     }
 }

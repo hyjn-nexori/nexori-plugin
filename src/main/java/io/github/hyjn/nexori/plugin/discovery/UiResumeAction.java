@@ -18,6 +18,27 @@ public interface UiResumeAction {
         return false;
     }
 
+    default void reopenWithStatus(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull String status
+    ) {
+        reopen(ref, store, playerRef, player);
+    }
+
+    default void reopenWithStatus(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull String status,
+        boolean success
+    ) {
+        reopenWithStatus(ref, store, playerRef, player, status);
+    }
+
     void reopen(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,

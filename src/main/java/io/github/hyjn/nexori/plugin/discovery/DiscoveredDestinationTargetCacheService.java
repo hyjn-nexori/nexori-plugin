@@ -60,6 +60,22 @@ public final class DiscoveredDestinationTargetCacheService {
         return discovery;
     }
 
+    @Nonnull
+    public synchronized List<DiscoveredDestinationTargetSet> replaceAll(
+        @Nonnull List<DiscoveredDestinationTargetSet> discoveries
+    ) throws IOException {
+        discoveriesByAddress.clear();
+        for (DiscoveredDestinationTargetSet discovery : discoveries) {
+            if (discovery == null || discovery.connectionAddress() == null || discovery.connectionAddress().isBlank()) {
+                continue;
+            }
+            DiscoveredDestinationTargetSet normalized = discovery.normalized();
+            discoveriesByAddress.put(normalized.connectionAddress(), normalized);
+        }
+        persist();
+        return list();
+    }
+
     private void persist() throws IOException {
         store.save(new ArrayList<>(discoveriesByAddress.values()));
     }

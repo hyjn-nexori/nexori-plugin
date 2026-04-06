@@ -31,7 +31,7 @@ import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
-import io.github.hyjn.nexori.plugin.ui.NexoriMenuHyUiPage;
+import io.github.hyjn.nexori.plugin.ui.NexoriPortalQuickEditPage;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 import io.github.hyjn.nexori.plugin.target.ResolvedDestinationTarget;
@@ -104,7 +104,7 @@ public final class NexoriPortalInteractionService {
         @Nonnull PortalInstanceDefinition portal,
         @Nonnull String statusText
     ) {
-        NexoriMenuHyUiPage.openPortalSetup(ref, store, playerRef, player, plugin, portal, statusText);
+        NexoriPortalQuickEditPage.open(ref, store, playerRef, player, plugin, portal, statusText);
     }
 
     private InteractiveCustomUIPage<?> tryCreateAdminPortalPage(
@@ -151,16 +151,24 @@ public final class NexoriPortalInteractionService {
             return null;
         }
 
-        if (!shouldHandleTrigger(playerRef.getUuid())) {
-            return null;
-        }
-
         BlockPosition targetBlock = context.getTargetBlock();
         Vector3i blockPosition = targetBlock == null
             ? new Vector3i(0, 0, 0)
             : new Vector3i(targetBlock.x, targetBlock.y, targetBlock.z);
 
         Optional<PortalInstanceDefinition> portal = resolvePortal(player.getWorld().getName(), blockPosition);
+        if (portal.isEmpty()) {
+            return null;
+        }
+
+        if (shouldSuppressRecentArrivalTravel(playerRef.getUuid(), portal.get())) {
+            return null;
+        }
+
+        if (!shouldHandleTrigger(playerRef.getUuid())) {
+            return null;
+        }
+
         triggerPortalTravel(ref, player, playerRef, portal);
         return null;
     }
@@ -177,6 +185,14 @@ public final class NexoriPortalInteractionService {
 
     private boolean shouldHandleTrigger(@Nonnull UUID playerUuid) {
         return shouldHandleCollision(playerUuid);
+    }
+
+    private boolean shouldSuppressRecentArrivalTravel(@Nonnull UUID playerUuid, @Nonnull PortalInstanceDefinition portal) {
+        String autoDestinationTargetId = portal.autoDestinationTargetId();
+        if (autoDestinationTargetId == null || autoDestinationTargetId.isBlank()) {
+            return false;
+        }
+        return secureTravelService.shouldSuppressPortalTravel(playerUuid, autoDestinationTargetId);
     }
 
     @Nonnull

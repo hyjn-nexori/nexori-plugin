@@ -9,6 +9,7 @@ import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
+import io.github.hyjn.nexori.plugin.binding.PortalBindingSyncService;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriArenaListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriArenaUpsertCommand;
@@ -48,6 +49,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.collect.DiagnosticsCollectService;
 import io.github.hyjn.nexori.plugin.diagnostics.reporting.DiagnosticsOwnerReportService;
 import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoveryService;
+import io.github.hyjn.nexori.plugin.discovery.DestinationTargetDiscoverySyncService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetCacheStore;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
@@ -122,6 +124,7 @@ public class NexoriPlugin extends JavaPlugin {
     private DestinationTargetService destinationTargetService;
     private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private TriggerBindingService triggerBindingService;
+    private PortalBindingSyncService portalBindingSyncService;
     private PortalInstanceService portalInstanceService;
     private SecureReferralService secureReferralService;
     private InventoryTransferService inventoryTransferService;
@@ -130,6 +133,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ServerRuleGroupService serverRuleGroupService;
     private SecureTravelService secureTravelService;
     private DestinationTargetDiscoveryService destinationTargetDiscoveryService;
+    private DestinationTargetDiscoverySyncService destinationTargetDiscoverySyncService;
     private NexoriPortalInteractionService portalInteractionService;
     private PortalSetupDraftService portalSetupDraftService;
     private TargetSetupDraftService targetSetupDraftService;
@@ -285,9 +289,27 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 this.trustBundleStore,
                 this.destinationTargetService,
+                this.portalInstanceService,
                 this.discoveredDestinationTargetCacheService,
                 this.secureReferralService,
                 this.diagnosticsService
+            );
+            this.destinationTargetDiscoverySyncService = new DestinationTargetDiscoverySyncService(
+                this.getLogger(),
+                this.trustBundleStore,
+                this.localConnectionAddressService,
+                this.localIdentity,
+                this.destinationTargetService,
+                this.portalInstanceService,
+                this.discoveredDestinationTargetCacheService,
+                this.secureReferralService
+            );
+            this.portalBindingSyncService = new PortalBindingSyncService(
+                this.getLogger(),
+                this.trustBundleStore,
+                this.localConnectionAddressService,
+                this.triggerBindingService,
+                this.secureReferralService
             );
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
@@ -319,11 +341,15 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.secureTravelService);
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.requestHandler());
             this.secureReferralService.registerHandler(this.destinationTargetDiscoveryService.responseHandler());
+            this.secureReferralService.registerHandler(this.destinationTargetDiscoverySyncService.applyRequestHandler());
+            this.secureReferralService.registerHandler(this.destinationTargetDiscoverySyncService.responseHandler());
             this.secureReferralService.registerHandler(this.inventoryTransferService.queryHandler());
             this.secureReferralService.registerHandler(this.inventoryTransferService.replyHandler());
             this.secureReferralService.registerHandler(this.serverPolicySyncService.fetchRequestHandler());
             this.secureReferralService.registerHandler(this.serverPolicySyncService.applyRequestHandler());
             this.secureReferralService.registerHandler(this.serverPolicySyncService.responseHandler());
+            this.secureReferralService.registerHandler(this.portalBindingSyncService.applyRequestHandler());
+            this.secureReferralService.registerHandler(this.portalBindingSyncService.responseHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestRequestHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestResponseHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.chunkRequestHandler());
@@ -402,7 +428,9 @@ public class NexoriPlugin extends JavaPlugin {
             });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoverySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.portalBindingSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
@@ -466,12 +494,20 @@ public class NexoriPlugin extends JavaPlugin {
         return destinationTargetDiscoveryService;
     }
 
+    public DestinationTargetDiscoverySyncService getDestinationTargetDiscoverySyncService() {
+        return destinationTargetDiscoverySyncService;
+    }
+
     public DiscoveredDestinationTargetCacheService getDiscoveredDestinationTargetCacheService() {
         return discoveredDestinationTargetCacheService;
     }
 
     public TriggerBindingService getTriggerBindingService() {
         return triggerBindingService;
+    }
+
+    public PortalBindingSyncService getPortalBindingSyncService() {
+        return portalBindingSyncService;
     }
 
     public PortalInstanceService getPortalInstanceService() {

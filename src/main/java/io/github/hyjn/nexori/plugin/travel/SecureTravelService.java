@@ -46,6 +46,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,6 +57,7 @@ public final class SecureTravelService implements SecureReferralHandler {
 
     public static final String PAYLOAD_TYPE = "travel.direct";
     private static final Gson GSON = new Gson();
+    private static final Duration PORTAL_TRIGGER_SUPPRESSION_AFTER_ARRIVAL = Duration.ofSeconds(5L);
 
     private final HytaleLogger logger;
     private final ServerIdentity localIdentity;
@@ -66,6 +68,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final DiagnosticsService diagnosticsService;
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
+    private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
 
     public SecureTravelService(
         @Nonnull HytaleLogger logger,
@@ -339,6 +342,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         }
 
         recentArrivals.put(playerRef.getUuid(), arrival);
+        rememberRecentPortalArrival(playerRef.getUuid(), arrival);
         if (!tryQueueInstanceArrival(event, playerRef, arrival)) {
             applyArrivalTeleport(event, playerRef, arrival);
         }
@@ -359,6 +363,25 @@ public final class SecureTravelService implements SecureReferralHandler {
     @Nonnull
     public Optional<PendingArrival> removePendingArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(pendingArrivals.remove(playerUuid));
+    }
+
+    public boolean shouldSuppressPortalTravel(@Nonnull UUID playerUuid, @Nonnull String destinationTargetId) {
+        PortalArrivalSuppression suppression = recentPortalArrivals.get(playerUuid);
+        if (suppression == null) {
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        if (suppression.expiresAtEpochMillis() <= now) {
+            recentPortalArrivals.remove(playerUuid, suppression);
+            return false;
+        }
+
+        String normalizedTargetId = destinationTargetId.trim().toLowerCase(Locale.ROOT);
+        if (normalizedTargetId.isBlank()) {
+            return false;
+        }
+        return suppression.destinationTargetId().equals(normalizedTargetId);
     }
 
     private boolean tryQueueInstanceArrival(
@@ -636,5 +659,37 @@ public final class SecureTravelService implements SecureReferralHandler {
         } catch (java.security.NoSuchAlgorithmException exception) {
             return "";
         }
+    }
+
+    private void rememberRecentPortalArrival(@Nonnull UUID playerUuid, @Nonnull PendingArrival arrival) {
+        DestinationTargetKind targetKind;
+        try {
+            targetKind = DestinationTargetKind.parse(arrival.destinationTargetKind());
+        } catch (IllegalArgumentException exception) {
+            return;
+        }
+
+        if (targetKind != DestinationTargetKind.PORTAL) {
+            return;
+        }
+
+        String destinationTargetId = normalizeOptional(arrival.destinationTargetId()).toLowerCase(Locale.ROOT);
+        if (destinationTargetId.isBlank()) {
+            return;
+        }
+
+        recentPortalArrivals.put(
+            playerUuid,
+            new PortalArrivalSuppression(
+                destinationTargetId,
+                System.currentTimeMillis() + PORTAL_TRIGGER_SUPPRESSION_AFTER_ARRIVAL.toMillis()
+            )
+        );
+    }
+
+    private record PortalArrivalSuppression(
+        String destinationTargetId,
+        long expiresAtEpochMillis
+    ) {
     }
 }
