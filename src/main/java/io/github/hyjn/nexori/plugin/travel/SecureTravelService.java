@@ -57,7 +57,7 @@ public final class SecureTravelService implements SecureReferralHandler {
 
     public static final String PAYLOAD_TYPE = "travel.direct";
     private static final Gson GSON = new Gson();
-    private static final Duration PORTAL_TRIGGER_SUPPRESSION_AFTER_ARRIVAL = Duration.ofSeconds(5L);
+    private static final Duration PORTAL_TRIGGER_SUPPRESSION_AFTER_ARRIVAL = Duration.ofSeconds(1L);
 
     private final HytaleLogger logger;
     private final ServerIdentity localIdentity;

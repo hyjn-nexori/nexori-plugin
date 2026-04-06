@@ -40,6 +40,7 @@ import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 import io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State;
+import io.github.hyjn.nexori.plugin.ui.menu.state.PortalWorkspaceTab;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -252,8 +253,13 @@ public final class NexoriMenuV2Page {
             panel.addChild(spacerY(8));
             panel.addChild(label(viewSubtitle(state.selectedView()), BODY, CONTENT_W - 32));
         }
+        if (state.selectedView() == NexoriMenuV2View.PORTALS) {
+            panel.addChild(spacerY(12));
+            panel.addChild(portalTabs(ref, store, playerRef, player, plugin, state));
+        }
         panel.addChild(spacerY(12));
-        panel.addChild(buildContentScroll(ref, store, playerRef, player, plugin, state, peers, setup));
+        int viewportHeight = CONTENT_H - (state.selectedView() == NexoriMenuV2View.PORTALS ? 158 : 104);
+        panel.addChild(buildContentScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight));
         return panel;
     }
 
@@ -266,15 +272,71 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state,
         @Nonnull List<ConfiguredPeer> peers,
-        @Nonnull HomeSetupState setup
+        @Nonnull HomeSetupState setup,
+        int viewportHeight
     ) {
-        int viewportHeight = CONTENT_H - 104;
-        String scrollId = "nexori-v2-scroll-" + state.selectedView().name().toLowerCase();
+        String scrollId = "nexori-v2-scroll-" + state.selectedView().name().toLowerCase()
+            + (state.selectedView() == NexoriMenuV2View.PORTALS ? "-" + state.selectedPortalTab().name().toLowerCase() : "");
         return switch (state.selectedView()) {
             case HOME -> buildHomeScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case ABOUT -> buildAboutScroll(viewportHeight, scrollId);
-            case PORTALS, TARGETS -> buildTravelBindScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
+            case PORTALS, TARGETS -> buildPortalWorkspaceScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case RULES, QUEUES, OPERATIONS -> buildPlaceholderScroll(state.selectedView(), viewportHeight, scrollId);
+        };
+    }
+
+    @Nonnull
+    private static GroupBuilder portalTabs(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state
+    ) {
+        int tabWidth = 160;
+        int gap = 8;
+        PortalWorkspaceTab[] tabs = PortalWorkspaceTab.values();
+        int totalWidth = tabs.length * tabWidth + Math.max(0, tabs.length - 1) * gap;
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(CONTENT_W - 32).setHeight(42));
+        row.addChild(spacerX(Math.max(0, ((CONTENT_W - 32) - totalWidth) / 2)));
+        for (int index = 0; index < tabs.length; index++) {
+            PortalWorkspaceTab tab = tabs[index];
+            ButtonBuilder button = (state.selectedPortalTab() == tab ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+                .withText(tab.label())
+                .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedPortalTab(tab).withStatusText("")
+                ));
+            row.addChild(button);
+            if (index + 1 < tabs.length) {
+                row.addChild(spacerX(gap));
+            }
+        }
+        return row;
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder buildPortalWorkspaceScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull HomeSetupState setup,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        return switch (state.selectedPortalTab()) {
+            case BIND -> buildTravelBindScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
+            case SETTINGS -> buildPortalSettingsScroll(viewportHeight, scrollId);
         };
     }
 
@@ -580,10 +642,13 @@ public final class NexoriMenuV2Page {
         boolean hasSelectedOut = !state.selectedTravelOutDisplayName().isBlank();
         int summaryGap = 12;
         int summaryRowWidth = width - 32;
-        int inWidth = (summaryRowWidth - summaryGap) / 2;
-        int outWidth = summaryRowWidth - summaryGap - inWidth;
+        int profileWidth = 240;
+        int inWidth = (summaryRowWidth - (summaryGap * 2) - profileWidth) / 2;
+        int outWidth = summaryRowWidth - (summaryGap * 2) - profileWidth - inWidth;
         GroupBuilder summaryRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(72));
         summaryRow.addChild(selectionSummaryCard("A", hasSelectedIn ? state.selectedTravelInDisplayName() : "Select portal A below.", inWidth, hasSelectedIn));
+        summaryRow.addChild(spacerX(summaryGap));
+        summaryRow.addChild(travelProfileToggleCard(ref, store, playerRef, player, plugin, state, profileWidth));
         summaryRow.addChild(spacerX(summaryGap));
         summaryRow.addChild(selectionSummaryCard("B", hasSelectedOut ? state.selectedTravelOutDisplayName() : "Select portal or target B below.", outWidth, hasSelectedOut));
         stack.addChild(summaryRow);
@@ -717,6 +782,55 @@ public final class NexoriMenuV2Page {
         card.addChild(centeredLabel(labelText, TITLE, innerWidth, innerWidth, 14));
         card.addChild(spacerY(4));
         card.addChild(centeredLabel(value, TITLE, innerWidth, innerWidth, 11));
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder travelProfileToggleCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int width
+    ) {
+        TravelProfileType profile = currentTravelProfile(state);
+        String buttonText = profile == TravelProfileType.APPLY_INVENTORY
+            ? "TRAVEL WITH INVENTORY"
+            : "NORMAL TRAVEL";
+        String nextStatus = profile == TravelProfileType.APPLY_INVENTORY
+            ? "Selected normal travel for new portal binds."
+            : "Selected travel with inventory for new portal binds.";
+
+        int cardHeight = 72;
+        int buttonHeight = 42;
+        int horizontalInset = 12;
+        int verticalOffset = Math.max(0, (cardHeight - buttonHeight) / 2);
+
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(cardHeight))
+            .withBackground(SERVER_CARD_BG);
+        card.addChild(spacerY(verticalOffset));
+        GroupBuilder row = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(buttonHeight));
+        row.addChild(spacerX(horizontalInset));
+        row.addChild(
+            ButtonBuilder.textButton()
+                .withText(buttonText)
+                .withAnchor(new HyUIAnchor().setWidth(width - (horizontalInset * 2)).setHeight(buttonHeight))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedTravelProfileId(toggleTravelProfile(profile).id()).withStatusText(nextStatus)
+                ))
+        );
+        card.addChild(row);
         return card;
     }
 
@@ -1116,7 +1230,7 @@ public final class NexoriMenuV2Page {
             operation.sourcePortalId(),
             operation.destinationConnectionAddress(),
             operation.destinationTargetId(),
-            TravelProfileType.KEEP_INVENTORY.id(),
+            operation.travelProfileId(),
             "{}",
             chainedPortalBindingResumeAction(
                 plugin,
@@ -1158,7 +1272,7 @@ public final class NexoriMenuV2Page {
                     nextOperation.sourcePortalId(),
                     nextOperation.destinationConnectionAddress(),
                     nextOperation.destinationTargetId(),
-                    TravelProfileType.KEEP_INVENTORY.id(),
+                    nextOperation.travelProfileId(),
                     "{}",
                     chainedPortalBindingResumeAction(
                         plugin,
@@ -1230,13 +1344,13 @@ public final class NexoriMenuV2Page {
             );
             return;
         }
-        plugin.getTriggerBindingService().bindPortalCollisionTravel(
-            operation.sourcePortalId(),
-            operation.destinationConnectionAddress(),
-            operation.destinationTargetId(),
-            TravelProfileType.KEEP_INVENTORY.id(),
-            "{}"
-        );
+            plugin.getTriggerBindingService().bindPortalCollisionTravel(
+                operation.sourcePortalId(),
+                operation.destinationConnectionAddress(),
+                operation.destinationTargetId(),
+                operation.travelProfileId(),
+                "{}"
+            );
     }
 
     @Nonnull
@@ -1247,6 +1361,18 @@ public final class NexoriMenuV2Page {
         return "Saved " + localAppliedCount + " local portal binding" + (localAppliedCount == 1 ? "" : "s") + ", but ";
     }
 
+    @Nonnull
+    private static TravelProfileType currentTravelProfile(@Nonnull NexoriMenuV2State state) {
+        return TravelProfileType.parse(state.selectedTravelProfileId());
+    }
+
+    @Nonnull
+    private static TravelProfileType toggleTravelProfile(@Nonnull TravelProfileType profile) {
+        return profile == TravelProfileType.APPLY_INVENTORY
+            ? TravelProfileType.KEEP_INVENTORY
+            : TravelProfileType.APPLY_INVENTORY;
+    }
+
     private static TravelBindOperation forwardBindingOperation(@Nonnull NexoriMenuV2State state) {
         if (state.selectedTravelInPortalId().isBlank() || state.selectedTravelOutTargetId().isBlank()) {
             return null;
@@ -1255,7 +1381,8 @@ public final class NexoriMenuV2Page {
             state.selectedTravelInConnectionAddress(),
             state.selectedTravelInPortalId(),
             state.selectedTravelOutConnectionAddress(),
-            state.selectedTravelOutTargetId()
+            state.selectedTravelOutTargetId(),
+            currentTravelProfile(state).id()
         );
     }
 
@@ -1267,7 +1394,8 @@ public final class NexoriMenuV2Page {
             state.selectedTravelOutConnectionAddress(),
             state.selectedTravelOutPortalId(),
             state.selectedTravelInConnectionAddress(),
-            state.selectedTravelInTargetId()
+            state.selectedTravelInTargetId(),
+            currentTravelProfile(state).id()
         );
     }
 
@@ -1785,6 +1913,20 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
+    private static ReorderableListBuilder buildPortalSettingsScroll(int viewportHeight, @Nonnull String scrollId) {
+        int width = CONTENT_W - 32;
+        int innerWidth = width - 16;
+        int cardHeight = Math.max(220, viewportHeight - 32);
+        int contentHeight = 16 + cardHeight + 20;
+        ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(16));
+
+        GroupBuilder card = card(innerWidth, cardHeight, PANEL_BG);
+        scroll.addChild(card);
+        return scroll;
+    }
+
+    @Nonnull
     private static ReorderableListBuilder buildPlaceholderScroll(@Nonnull NexoriMenuV2View view, int viewportHeight, @Nonnull String scrollId) {
         int width = CONTENT_W - 32;
         int innerWidth = width - 16;
@@ -2020,7 +2162,8 @@ public final class NexoriMenuV2Page {
         String sourceConnectionAddress,
         String sourcePortalId,
         String destinationConnectionAddress,
-        String destinationTargetId
+        String destinationTargetId,
+        String travelProfileId
     ) {
     }
 }

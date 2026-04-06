@@ -6,6 +6,8 @@ import javax.annotation.Nonnull;
 
 public record NexoriMenuV2State(
     NexoriMenuV2View selectedView,
+    PortalWorkspaceTab selectedPortalTab,
+    String selectedTravelProfileId,
     String statusText,
     String pendingServerDisplayName,
     String pendingServerAddress,
@@ -24,6 +26,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State normalized() {
         return new NexoriMenuV2State(
             selectedView == null ? NexoriMenuV2View.HOME : selectedView,
+            selectedPortalTab == null ? PortalWorkspaceTab.BIND : selectedPortalTab,
+            selectedTravelProfileId == null || selectedTravelProfileId.isBlank() ? "keep_inventory" : selectedTravelProfileId.trim().toLowerCase(),
             statusText == null ? "" : statusText.trim(),
             pendingServerDisplayName == null ? "" : pendingServerDisplayName.trim(),
             pendingServerAddress == null ? "" : pendingServerAddress.trim(),
@@ -41,13 +45,57 @@ public record NexoriMenuV2State(
 
     @Nonnull
     public static NexoriMenuV2State initial() {
-        return new NexoriMenuV2State(NexoriMenuV2View.HOME, "", "", "", "", "", "", "", "", "", "", "", "").normalized();
+        return new NexoriMenuV2State(NexoriMenuV2View.HOME, PortalWorkspaceTab.BIND, "keep_inventory", "", "", "", "", "", "", "", "", "", "", "", "").normalized();
     }
 
     @Nonnull
     public NexoriMenuV2State withSelectedView(@Nonnull NexoriMenuV2View view) {
         return new NexoriMenuV2State(
             view,
+            selectedPortalTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName
+        ).normalized();
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withSelectedPortalTab(@Nonnull PortalWorkspaceTab tab) {
+        return new NexoriMenuV2State(
+            selectedView,
+            tab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName
+        ).normalized();
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withSelectedTravelProfileId(@Nonnull String travelProfileId) {
+        return new NexoriMenuV2State(
+            selectedView,
+            selectedPortalTab,
+            travelProfileId,
             statusText,
             pendingServerDisplayName,
             pendingServerAddress,
@@ -67,6 +115,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State withStatusText(@Nonnull String text) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             text,
             pendingServerDisplayName,
             pendingServerAddress,
@@ -86,6 +136,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State withPendingServerDisplayName(@Nonnull String text) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             text,
             pendingServerAddress,
@@ -105,6 +157,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State withPendingServerAddress(@Nonnull String text) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             pendingServerDisplayName,
             text,
@@ -124,6 +178,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State withEditingServerAddress(@Nonnull String address) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             pendingServerDisplayName,
             pendingServerAddress,
@@ -143,6 +199,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State clearedPendingServerDraft() {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             "",
             "",
@@ -167,6 +225,8 @@ public record NexoriMenuV2State(
     ) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             pendingServerDisplayName,
             pendingServerAddress,
@@ -191,6 +251,8 @@ public record NexoriMenuV2State(
     ) {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             pendingServerDisplayName,
             pendingServerAddress,
@@ -210,6 +272,8 @@ public record NexoriMenuV2State(
     public NexoriMenuV2State clearedTravelSelection() {
         return new NexoriMenuV2State(
             selectedView,
+            selectedPortalTab,
+            selectedTravelProfileId,
             statusText,
             pendingServerDisplayName,
             pendingServerAddress,
