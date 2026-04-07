@@ -73,14 +73,8 @@ public final class QueueService {
         }
         TravelProfileType.parse(definition.launchTravelProfileId());
         for (String arenaId : definition.arenaIds()) {
-            ArenaDefinition arena = arenaService.find(arenaId)
+            arenaService.find(arenaId)
                 .orElseThrow(() -> new IllegalArgumentException("Queue references missing arena '" + arenaId + "'."));
-            if (arena.maxSupportedPlayers() < definition.maxPlayers()) {
-                throw new IllegalArgumentException(
-                    "Queue max players (" + definition.maxPlayers() + ") exceed arena '" + arena.arenaId()
-                        + "' capacity (" + arena.maxSupportedPlayers() + ")."
-                );
-            }
         }
     }
 

@@ -5,7 +5,7 @@ public enum NexoriMenuV2View {
     PORTALS("Portals"),
     TARGETS("Targets"),
     RULES("Rules"),
-    QUEUES("Queues"),
+    QUEUES("Minigames"),
     OPERATIONS("Operations"),
     ABOUT("HOW TO USE");
 
