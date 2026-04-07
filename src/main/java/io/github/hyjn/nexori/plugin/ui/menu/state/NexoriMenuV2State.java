@@ -8,6 +8,7 @@ public record NexoriMenuV2State(
     NexoriMenuV2View selectedView,
     PortalWorkspaceTab selectedPortalTab,
     MinigameWorkspaceTab selectedMinigameTab,
+    RulesWorkspaceTab selectedRulesTab,
     String selectedTravelProfileId,
     String statusText,
     String pendingServerDisplayName,
@@ -39,7 +40,9 @@ public record NexoriMenuV2State(
     String pendingQueueDestinationId,
     String pendingQueueMinPlayers,
     String pendingQueueMaxPlayers,
-    String pendingQueueCountdownSeconds
+    String pendingQueueCountdownSeconds,
+    String selectedRuleGroupId,
+    String pendingRuleGroupName
 ) {
 
     @Nonnull
@@ -48,6 +51,7 @@ public record NexoriMenuV2State(
             selectedView == null ? NexoriMenuV2View.HOME : selectedView,
             selectedPortalTab == null ? PortalWorkspaceTab.BIND : selectedPortalTab,
             selectedMinigameTab == null ? MinigameWorkspaceTab.LOBBY : selectedMinigameTab,
+            selectedRulesTab == null ? RulesWorkspaceTab.GROUPS : selectedRulesTab,
             selectedTravelProfileId == null || selectedTravelProfileId.isBlank() ? "keep_inventory" : selectedTravelProfileId.trim().toLowerCase(),
             statusText == null ? "" : statusText.trim(),
             pendingServerDisplayName == null ? "" : pendingServerDisplayName.trim(),
@@ -79,7 +83,9 @@ public record NexoriMenuV2State(
             pendingQueueDestinationId == null ? "" : pendingQueueDestinationId.trim().toLowerCase(),
             pendingQueueMinPlayers == null || pendingQueueMinPlayers.isBlank() ? "2" : pendingQueueMinPlayers.trim(),
             pendingQueueMaxPlayers == null || pendingQueueMaxPlayers.isBlank() ? "8" : pendingQueueMaxPlayers.trim(),
-            pendingQueueCountdownSeconds == null || pendingQueueCountdownSeconds.isBlank() ? "15" : pendingQueueCountdownSeconds.trim()
+            pendingQueueCountdownSeconds == null || pendingQueueCountdownSeconds.isBlank() ? "15" : pendingQueueCountdownSeconds.trim(),
+            selectedRuleGroupId == null ? "" : selectedRuleGroupId.trim().toLowerCase(),
+            pendingRuleGroupName == null ? "" : pendingRuleGroupName.trim()
         );
     }
 
@@ -89,6 +95,7 @@ public record NexoriMenuV2State(
             NexoriMenuV2View.HOME,
             PortalWorkspaceTab.BIND,
             MinigameWorkspaceTab.LOBBY,
+            RulesWorkspaceTab.GROUPS,
             "keep_inventory",
             "",
             "",
@@ -120,7 +127,9 @@ public record NexoriMenuV2State(
             "",
             "2",
             "8",
-            "15"
+            "15",
+            "",
+            ""
         ).normalized();
     }
 
@@ -137,6 +146,26 @@ public record NexoriMenuV2State(
     @Nonnull
     public NexoriMenuV2State withSelectedMinigameTab(@Nonnull MinigameWorkspaceTab tab) {
         return copy(selectedView, selectedPortalTab, tab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, pendingLobbyWorldName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withSelectedRulesTab(@Nonnull RulesWorkspaceTab tab) {
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, pendingLobbyWorldName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds, tab, selectedRuleGroupId, pendingRuleGroupName);
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withSelectedRuleGroupId(@Nonnull String groupId) {
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, pendingLobbyWorldName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds, selectedRulesTab, groupId, pendingRuleGroupName);
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withPendingRuleGroupName(@Nonnull String displayName) {
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, pendingLobbyWorldName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds, selectedRulesTab, selectedRuleGroupId, displayName);
+    }
+
+    @Nonnull
+    public NexoriMenuV2State clearedRuleGroupDraft() {
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, pendingLobbyWorldName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds, selectedRulesTab, "", "");
     }
 
     @Nonnull
@@ -277,7 +306,7 @@ public record NexoriMenuV2State(
         String pendingQueueMaxPlayers,
         String pendingQueueCountdownSeconds
     ) {
-        return new NexoriMenuV2State(
+        return copy(
             selectedView,
             selectedPortalTab,
             selectedMinigameTab,
@@ -312,7 +341,93 @@ public record NexoriMenuV2State(
             pendingQueueDestinationId,
             pendingQueueMinPlayers,
             pendingQueueMaxPlayers,
-            pendingQueueCountdownSeconds
+            pendingQueueCountdownSeconds,
+            selectedRulesTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName
+        );
+    }
+
+    @Nonnull
+    private NexoriMenuV2State copy(
+        NexoriMenuV2View selectedView,
+        PortalWorkspaceTab selectedPortalTab,
+        MinigameWorkspaceTab selectedMinigameTab,
+        String selectedTravelProfileId,
+        String statusText,
+        String pendingServerDisplayName,
+        String pendingServerAddress,
+        String editingServerAddress,
+        String selectedTravelInConnectionAddress,
+        String selectedTravelInPortalId,
+        String selectedTravelInTargetId,
+        String selectedTravelInDisplayName,
+        String selectedTravelOutConnectionAddress,
+        String selectedTravelOutPortalId,
+        String selectedTravelOutTargetId,
+        String selectedTravelOutDisplayName,
+        String selectedQueuePortalConnectionAddress,
+        String selectedQueuePortalId,
+        String selectedQueuePortalDisplayName,
+        String selectedQueueBindingQueueId,
+        String selectedQueueBindingQueueDisplayName,
+        String pendingLobbyWorldName,
+        String editingDestinationId,
+        String pendingDestinationDisplayName,
+        String pendingDestinationConnectionAddress,
+        String pendingDestinationTargetId,
+        String pendingDestinationInstanceTemplateId,
+        String pendingDestinationTriggerId,
+        String pendingDestinationMaxPlayers,
+        String editingQueueId,
+        String pendingQueueDisplayName,
+        String pendingQueueDestinationId,
+        String pendingQueueMinPlayers,
+        String pendingQueueMaxPlayers,
+        String pendingQueueCountdownSeconds,
+        RulesWorkspaceTab selectedRulesTab,
+        String selectedRuleGroupId,
+        String pendingRuleGroupName
+    ) {
+        return new NexoriMenuV2State(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedRulesTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            pendingLobbyWorldName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedRuleGroupId,
+            pendingRuleGroupName
         ).normalized();
     }
 }
