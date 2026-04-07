@@ -216,8 +216,8 @@ public final class TriggerBindingService {
     private TriggerBindingDefinition normalizeAndValidate(@Nonnull TriggerBindingDefinition definition) {
         TriggerBindingDefinition normalized = definition.normalized();
         if (normalized.action() == TriggerBindingAction.JOIN_QUEUE || normalized.action() == TriggerBindingAction.LEAVE_QUEUE) {
-            if (normalized.queueId().isBlank()) {
-                throw new IllegalArgumentException("Queue trigger bindings require a queue id.");
+            if (normalized.action() == TriggerBindingAction.JOIN_QUEUE && normalized.queueId().isBlank()) {
+                throw new IllegalArgumentException("Join-queue trigger bindings require a queue id.");
             }
             return normalized;
         }

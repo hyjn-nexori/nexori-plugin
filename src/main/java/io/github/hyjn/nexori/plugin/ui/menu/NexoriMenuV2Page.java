@@ -32,6 +32,9 @@ import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
+import io.github.hyjn.nexori.plugin.binding.TriggerBindingKind;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
@@ -314,17 +317,20 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state
     ) {
-        int tabWidth = 160;
+        int tabWidth = 180;
         int gap = 8;
         PortalWorkspaceTab[] tabs = PortalWorkspaceTab.values();
         int totalWidth = tabs.length * tabWidth + Math.max(0, tabs.length - 1) * gap;
+        boolean hasLobby = currentManagedLobby(plugin) != null;
         GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(CONTENT_W - 32).setHeight(42));
         row.addChild(spacerX(Math.max(0, ((CONTENT_W - 32) - totalWidth) / 2)));
         for (int index = 0; index < tabs.length; index++) {
             PortalWorkspaceTab tab = tabs[index];
-            ButtonBuilder button = (state.selectedPortalTab() == tab ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+            boolean locked = tab == PortalWorkspaceTab.SETTINGS && !hasLobby;
+            ButtonBuilder button = ButtonBuilder.secondaryTextButton()
                 .withText(tab.label())
                 .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
+                .withDisabled(state.selectedPortalTab() == tab || locked)
                 .onClick((ignored, ctx) -> open(
                     ref,
                     store,
@@ -358,9 +364,10 @@ public final class NexoriMenuV2Page {
         row.addChild(spacerX(Math.max(0, ((CONTENT_W - 32) - totalWidth) / 2)));
         for (int index = 0; index < tabs.length; index++) {
             MinigameWorkspaceTab tab = tabs[index];
-            ButtonBuilder button = (state.selectedMinigameTab() == tab ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
+            ButtonBuilder button = ButtonBuilder.secondaryTextButton()
                 .withText(tab.label())
                 .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
+                .withDisabled(state.selectedMinigameTab() == tab)
                 .onClick((ignored, ctx) -> open(
                     ref,
                     store,
@@ -392,7 +399,7 @@ public final class NexoriMenuV2Page {
     ) {
         return switch (state.selectedPortalTab()) {
             case BIND -> buildTravelBindScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
-            case SETTINGS -> buildPortalSettingsScroll(viewportHeight, scrollId);
+            case SETTINGS -> buildPortalQueueBindingsScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
         };
     }
 
@@ -672,25 +679,20 @@ public final class NexoriMenuV2Page {
         int innerWidth = width - 16;
         String localSelectorAddress = localSelectorAddress(setup.localConnectionAddress());
         List<TravelServerGroup> groups = buildTravelServerGroups(plugin, peers, setup.localConnectionAddress(), localSelectorAddress);
+        List<TriggerBindingDefinition> savedBindings = plugin.getTriggerBindingService().list().stream()
+            .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
+            .filter(binding -> binding.action() == TriggerBindingAction.TRAVEL)
+            .toList();
 
-        int bindCardHeight = 188;
-        int groupsHeight = 0;
-        for (TravelServerGroup group : groups) {
-            groupsHeight += serverEndpointsGroupHeight(group);
-        }
-        if (groups.size() > 1) {
-            groupsHeight += (groups.size() - 1) * TRAVEL_SERVER_GROUP_GAP;
-        }
-        if (groupsHeight <= 0) {
-            groupsHeight = 128;
-        }
-
-        int contentHeight = 16 + bindCardHeight + 12 + groupsHeight + 20;
+        int bindCardHeight = Math.max(620, viewportHeight - 32);
+        int savedBindingsViewportHeight = 300;
+        int savedBindingsHeight = 64 + 12 + savedBindingsViewportHeight + 24;
+        int contentHeight = 16 + bindCardHeight + 12 + savedBindingsHeight + 20;
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
-        scroll.addChild(travelBindCard(ref, store, playerRef, player, plugin, state, peers, groups, setup.localConnectionAddress(), localSelectorAddress, innerWidth, bindCardHeight));
+        scroll.addChild(travelBindCard(ref, store, playerRef, player, plugin, state, peers, groups, setup.localConnectionAddress(), localSelectorAddress, innerWidth, bindCardHeight, scrollId));
         scroll.addChild(spacerY(12));
-        scroll.addChild(serverEndpointsContainer(ref, store, playerRef, player, plugin, state, groups, innerWidth, groupsHeight));
+        scroll.addChild(portalBindingListContainer(ref, store, playerRef, player, plugin, state, savedBindings, localSelectorAddress, innerWidth, savedBindingsHeight, savedBindingsViewportHeight, scrollId + "-saved-portal-binds"));
         return scroll;
     }
 
@@ -707,7 +709,8 @@ public final class NexoriMenuV2Page {
         @Nonnull String rawLocalConnectionAddress,
         @Nonnull String localSelectorAddress,
         int width,
-        int height
+        int height,
+        @Nonnull String scrollId
     ) {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Travel Bind", TITLE, width - 32));
@@ -718,22 +721,12 @@ public final class NexoriMenuV2Page {
         boolean hasSelectedOut = !state.selectedTravelOutDisplayName().isBlank();
         int summaryGap = 12;
         int summaryRowWidth = width - 32;
-        int profileWidth = 240;
-        int inWidth = (summaryRowWidth - (summaryGap * 2) - profileWidth) / 2;
-        int outWidth = summaryRowWidth - (summaryGap * 2) - profileWidth - inWidth;
-        GroupBuilder summaryRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(72));
-        summaryRow.addChild(selectionSummaryCard("A", hasSelectedIn ? state.selectedTravelInDisplayName() : "Select portal A below.", inWidth, hasSelectedIn));
-        summaryRow.addChild(spacerX(summaryGap));
-        summaryRow.addChild(travelProfileToggleCard(ref, store, playerRef, player, plugin, state, profileWidth));
-        summaryRow.addChild(spacerX(summaryGap));
-        summaryRow.addChild(selectionSummaryCard("B", hasSelectedOut ? state.selectedTravelOutDisplayName() : "Select portal or target B below.", outWidth, hasSelectedOut));
-        stack.addChild(summaryRow);
-        stack.addChild(spacerY(12));
+        int summaryWidth = (summaryRowWidth - summaryGap) / 2;
 
         GroupBuilder actionsCenter = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(34));
         int syncButtonWidth = 280;
-        int bindGroupWidth = 140 + 8 + 140 + 8 + 150 + 8 + 92;
-        int clearWidth = 92;
+        int profileButtonWidth = 220;
+        int bindGroupWidth = profileButtonWidth + 8 + 140 + 8 + 140 + 8 + 150 + 8 + 92;
         int actionsWidth = syncButtonWidth + 8 + bindGroupWidth;
         actionsCenter.addChild(spacerX(Math.max(0, (summaryRowWidth - actionsWidth) / 2)));
         GroupBuilder actions = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(actionsWidth).setHeight(34));
@@ -757,6 +750,8 @@ public final class NexoriMenuV2Page {
                     localSelectorAddress
                 ))
         );
+        actions.addChild(spacerX(8));
+        actions.addChild(travelProfileToggleButton(ref, store, playerRef, player, plugin, state, profileButtonWidth));
         actions.addChild(spacerX(8));
         actions.addChild(
             ButtonBuilder.textButton()
@@ -837,11 +832,27 @@ public final class NexoriMenuV2Page {
         actions.addChild(
             ButtonBuilder.smallSecondaryTextButton()
                 .withText("CLEAR")
-                .withAnchor(new HyUIAnchor().setWidth(clearWidth).setHeight(34))
+                .withAnchor(new HyUIAnchor().setWidth(92).setHeight(34))
                 .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.clearedTravelSelection().withStatusText("Cleared A / B selection.")))
         );
         actionsCenter.addChild(actions);
         stack.addChild(actionsCenter);
+        stack.addChild(spacerY(12));
+
+        GroupBuilder summaryRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(72));
+        summaryRow.addChild(selectionSummaryCard("A", hasSelectedIn ? state.selectedTravelInDisplayName() : "Select portal A below.", summaryWidth, hasSelectedIn));
+        summaryRow.addChild(spacerX(summaryGap));
+        summaryRow.addChild(selectionSummaryCard("B", hasSelectedOut ? state.selectedTravelOutDisplayName() : "Select portal or target B below.", summaryWidth, hasSelectedOut));
+        stack.addChild(summaryRow);
+        stack.addChild(spacerY(12));
+
+        int consumedHeight = 34 + 12 + 72 + 12;
+        int listHeight = Math.max(260, height - 32 - consumedHeight);
+        GroupBuilder listsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(listHeight));
+        listsRow.addChild(travelBindListScroll(ref, store, playerRef, player, plugin, state, groups, summaryWidth, listHeight, scrollId + "-bind-a", TravelBindColumnMode.A));
+        listsRow.addChild(spacerX(summaryGap));
+        listsRow.addChild(travelBindListScroll(ref, store, playerRef, player, plugin, state, groups, summaryWidth, listHeight, scrollId + "-bind-b", TravelBindColumnMode.B));
+        stack.addChild(listsRow);
 
         card.addChild(stack);
         return card;
@@ -862,7 +873,7 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder travelProfileToggleCard(
+    private static ButtonBuilder travelProfileToggleButton(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
@@ -878,36 +889,450 @@ public final class NexoriMenuV2Page {
         String nextStatus = profile == TravelProfileType.APPLY_INVENTORY
             ? "Selected normal travel for new portal binds."
             : "Selected travel with inventory for new portal binds.";
+        return ButtonBuilder.smallSecondaryTextButton()
+            .withText(buttonText)
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(34))
+            .onClick((ignored, ctx) -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withSelectedTravelProfileId(toggleTravelProfile(profile).id()).withStatusText(nextStatus)
+            ));
+    }
 
-        int cardHeight = 72;
-        int buttonHeight = 42;
-        int horizontalInset = 12;
-        int verticalOffset = Math.max(0, (cardHeight - buttonHeight) / 2);
+    @Nonnull
+    private static ReorderableListBuilder travelBindListScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TravelServerGroup> groups,
+        int width,
+        int height,
+        @Nonnull String scrollId,
+        @Nonnull TravelBindColumnMode mode
+    ) {
+        int rowGap = 8;
+        int groupGap = 16;
+        int dividerHeight = 52;
+        int emptyRowHeight = 56;
+        int contentHeight = 8;
+        for (int i = 0; i < groups.size(); i++) {
+            TravelServerGroup group = groups.get(i);
+            contentHeight += dividerHeight;
+            int itemCount = group.portals().size() + group.coordinateTargets().size();
+            if (itemCount == 0) {
+                contentHeight += rowGap + emptyRowHeight;
+            } else {
+                contentHeight += rowGap + (itemCount * HOME_SERVER_CARD_H) + Math.max(0, itemCount - 1) * rowGap;
+            }
+            if (i + 1 < groups.size()) {
+                contentHeight += groupGap;
+            }
+        }
+        contentHeight += 8;
+
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+
+        if (groups.isEmpty()) {
+            scroll.addChild(label("No trusted servers or synced endpoints are available yet.", MUTED, width - 16));
+            return scroll;
+        }
+
+        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            TravelServerGroup group = groups.get(groupIndex);
+            scroll.addChild(travelBindServerDividerRow(group, width - 16, dividerHeight));
+            List<GroupBuilder> rows = new ArrayList<>();
+            for (TravelPortalEndpoint portal : group.portals()) {
+                rows.add(travelBindPortalRow(ref, store, playerRef, player, plugin, state, portal, width - 16, HOME_SERVER_CARD_H, mode));
+            }
+            for (TravelTargetEndpoint target : group.coordinateTargets()) {
+                rows.add(travelBindTargetRow(ref, store, playerRef, player, plugin, state, target, width - 16, HOME_SERVER_CARD_H, mode));
+            }
+
+            if (rows.isEmpty()) {
+                scroll.addChild(spacerY(rowGap));
+                scroll.addChild(travelBindEmptyGroupRow(width - 16, emptyRowHeight));
+            } else {
+                scroll.addChild(spacerY(rowGap));
+                for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+                    scroll.addChild(rows.get(rowIndex));
+                    if (rowIndex + 1 < rows.size()) {
+                        scroll.addChild(spacerY(rowGap));
+                    }
+                }
+            }
+
+            if (groupIndex + 1 < groups.size()) {
+                scroll.addChild(spacerY(groupGap));
+            }
+        }
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder travelBindServerDividerRow(@Nonnull TravelServerGroup group, int width, int height) {
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(12, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 34;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 24).setHeight(rowHeight));
+        identity.addChild(label(group.displayName(), SUBTITLE, width - 24));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(group.connectionAddress().isBlank() ? "local" : group.connectionAddress(), MUTED, width - 24));
+        card.addChild(identity);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder travelBindEmptyGroupRow(int width, int height) {
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(12, 0))
+            .withBackground(PANEL_BG);
+        int rowHeight = 22;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        card.addChild(label("No endpoints discovered for this server yet.", MUTED, width - 24));
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder travelBindPortalRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TravelPortalEndpoint portal,
+        int width,
+        int height,
+        @Nonnull TravelBindColumnMode mode
+    ) {
+        boolean selected = mode == TravelBindColumnMode.A
+            ? state.selectedTravelInPortalId().equals(portal.portalId()) && state.selectedTravelInConnectionAddress().equals(portal.connectionAddress())
+            : state.selectedTravelOutTargetId().equals(portal.targetId()) && state.selectedTravelOutConnectionAddress().equals(portal.connectionAddress());
+        boolean blocked = mode == TravelBindColumnMode.A
+            ? state.selectedTravelOutConnectionAddress().equals(portal.connectionAddress()) && state.selectedTravelOutTargetId().equals(portal.targetId())
+            : state.selectedTravelInConnectionAddress().equals(portal.connectionAddress()) && state.selectedTravelInTargetId().equals(portal.targetId());
+
+        return travelBindSelectorRowCard(
+            portal.displayName(),
+            "Portal",
+            selected ? "SELECTED" : blocked ? "IN USE" : "SELECT",
+            selected,
+            blocked,
+            width,
+            height,
+            () -> {
+                NexoriMenuV2State next = mode == TravelBindColumnMode.A
+                    ? state.withSelectedTravelIn(portal.connectionAddress(), portal.portalId(), portal.targetId(), portal.displayName()).withStatusText("Selected A: " + portal.displayName() + ".")
+                    : state.withSelectedTravelOut(portal.connectionAddress(), portal.portalId(), portal.targetId(), portal.displayName()).withStatusText("Selected B: " + portal.displayName() + ".");
+                open(ref, store, playerRef, player, plugin, next);
+            }
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder travelBindTargetRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TravelTargetEndpoint target,
+        int width,
+        int height,
+        @Nonnull TravelBindColumnMode mode
+    ) {
+        if (mode == TravelBindColumnMode.A) {
+            return travelBindSelectorRowCard(
+                target.displayName(),
+                "Coordinate Target",
+                "B ONLY",
+                false,
+                true,
+                width,
+                height,
+                () -> { }
+            );
+        }
+
+        boolean selected = state.selectedTravelOutTargetId().equals(target.targetId()) && state.selectedTravelOutConnectionAddress().equals(target.connectionAddress());
+        boolean blocked = state.selectedTravelInConnectionAddress().equals(target.connectionAddress()) && state.selectedTravelInTargetId().equals(target.targetId());
+        return travelBindSelectorRowCard(
+            target.displayName(),
+            "Coordinate Target",
+            selected ? "SELECTED" : blocked ? "IN USE" : "SELECT",
+            selected,
+            blocked,
+            width,
+            height,
+            () -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withSelectedTravelOut(target.connectionAddress(), "", target.targetId(), target.displayName()).withStatusText("Selected B: " + target.displayName() + ".")
+            )
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder travelBindSelectorRowCard(
+        @Nonnull String titleText,
+        @Nonnull String detailText,
+        @Nonnull String buttonText,
+        boolean selected,
+        boolean disabled,
+        int width,
+        int height,
+        @Nonnull Runnable onSelect
+    ) {
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(12, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 24).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 150).setHeight(rowHeight));
+        identity.addChild(label(titleText, SUBTITLE, width - 150));
+        if (!detailText.isBlank()) {
+            identity.addChild(spacerY(2));
+            identity.addChild(label(detailText, MUTED, width - 150));
+        }
+        row.addChild(identity);
+        row.addChild(spacerX(10));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText(buttonText)
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .withDisabled(disabled || selected)
+                .onClick((ignored, ctx) -> onSelect.run())
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalBindingListContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TriggerBindingDefinition> bindings,
+        @Nonnull String localSelectorAddress,
+        int width,
+        int height,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int outerGap = 12;
+        int bodyContentHeight = bindings.isEmpty()
+            ? viewportHeight
+            : 8 + bindings.size() * HOME_SERVER_CARD_H + Math.max(0, bindings.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Saved Portal Binds", width - 32));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, viewportHeight, Math.max(viewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (bindings.isEmpty()) {
+            body.addChild(label("No travel binds saved yet.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < bindings.size(); index++) {
+                body.addChild(portalBindingListRow(ref, store, playerRef, player, plugin, state, bindings.get(index), localSelectorAddress, width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < bindings.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalBindingListRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TriggerBindingDefinition binding,
+        @Nonnull String localSelectorAddress,
+        int width,
+        int height
+    ) {
+        PortalInstanceDefinition sourcePortal = plugin.getPortalInstanceService().findById(binding.sourceId()).orElse(null);
+        String sourceDisplayName = sourcePortal == null ? binding.sourceId() : sourcePortal.displayName();
+        String destinationDisplayName = resolveBindingDestinationDisplayName(plugin, binding);
+        String destinationAddress = binding.destinationConnectionAddress().equals(localSelectorAddress) ? "local" : binding.destinationConnectionAddress();
+        String detail = destinationAddress + " -> " + destinationDisplayName + "  " + TravelProfileType.parse(binding.travelProfileId()).displayName();
 
         GroupBuilder card = GroupBuilder.group()
             .withLayoutMode("Top")
-            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(cardHeight))
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
             .withBackground(SERVER_CARD_BG);
-        card.addChild(spacerY(verticalOffset));
-        GroupBuilder row = GroupBuilder.group()
-            .withLayoutMode("Left")
-            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(buttonHeight));
-        row.addChild(spacerX(horizontalInset));
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 250).setHeight(rowHeight));
+        identity.addChild(label(sourceDisplayName, SUBTITLE, width - 250));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(detail, MUTED, width - 250));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
         row.addChild(
-            ButtonBuilder.textButton()
-                .withText(buttonText)
-                .withAnchor(new HyUIAnchor().setWidth(width - (horizontalInset * 2)).setHeight(buttonHeight))
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("EDIT")
+                .withAnchor(new HyUIAnchor().setWidth(90).setHeight(30))
                 .onClick((ignored, ctx) -> open(
                     ref,
                     store,
                     playerRef,
                     player,
                     plugin,
-                    state.withSelectedTravelProfileId(toggleTravelProfile(profile).id()).withStatusText(nextStatus)
+                    editTravelBindingState(plugin, state, binding, localSelectorAddress)
+                        .withSelectedView(NexoriMenuV2View.PORTALS)
+                        .withSelectedPortalTab(PortalWorkspaceTab.BIND)
+                        .withStatusText("Editing portal bind from " + sourceDisplayName + ".")
                 ))
+        );
+        row.addChild(spacerX(8));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("REMOVE")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .onClick((ignored, ctx) -> {
+                    try {
+                        boolean removed = plugin.getTriggerBindingService().remove(binding.id());
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedView(NexoriMenuV2View.PORTALS)
+                                .withSelectedPortalTab(PortalWorkspaceTab.BIND)
+                                .withStatusText(removed ? "Removed portal bind from " + sourceDisplayName + "." : "That portal bind was already removed.")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedView(NexoriMenuV2View.PORTALS)
+                                .withSelectedPortalTab(PortalWorkspaceTab.BIND)
+                                .withStatusText("Could not remove portal bind: " + exception.getMessage())
+                        );
+                    }
+                })
         );
         card.addChild(row);
         return card;
+    }
+
+    @Nonnull
+    private static NexoriMenuV2State editTravelBindingState(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TriggerBindingDefinition binding,
+        @Nonnull String localSelectorAddress
+    ) {
+        NexoriMenuV2State next = state.clearedTravelSelection().withSelectedTravelProfileId(binding.travelProfileId());
+
+        PortalInstanceDefinition sourcePortal = plugin.getPortalInstanceService().findById(binding.sourceId()).orElse(null);
+        if (sourcePortal != null) {
+            next = next.withSelectedTravelIn(
+                localSelectorAddress,
+                sourcePortal.portalId(),
+                sourcePortal.autoDestinationTargetId(),
+                sourcePortal.displayName()
+            );
+        }
+
+        String destinationPortalId = "";
+        String destinationDisplayName = binding.destinationTargetId();
+        if (binding.destinationConnectionAddress().equals(localSelectorAddress)) {
+            DestinationTargetDefinition target = plugin.getDestinationTargetService().find(binding.destinationTargetId()).orElse(null);
+            if (target != null) {
+                destinationDisplayName = target.displayName();
+            }
+            PortalInstanceDefinition portal = plugin.getPortalInstanceService().findByAutoDestinationTargetId(binding.destinationTargetId()).orElse(null);
+            if (portal != null) {
+                destinationPortalId = portal.portalId();
+                destinationDisplayName = portal.displayName();
+            }
+        } else {
+            DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(binding.destinationConnectionAddress()).orElse(null);
+            if (discovery != null) {
+                for (DiscoveredDestinationTargetSummary target : discovery.targets()) {
+                    if (!target.id().equalsIgnoreCase(binding.destinationTargetId())) {
+                        continue;
+                    }
+                    destinationDisplayName = target.displayName();
+                    destinationPortalId = target.portalId() == null ? "" : target.portalId();
+                    break;
+                }
+            }
+        }
+
+        return next.withSelectedTravelOut(
+            binding.destinationConnectionAddress(),
+            destinationPortalId,
+            binding.destinationTargetId(),
+            destinationDisplayName
+        );
+    }
+
+    @Nonnull
+    private static String resolveBindingDestinationDisplayName(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull TriggerBindingDefinition binding
+    ) {
+        DestinationTargetDefinition localTarget = plugin.getDestinationTargetService().find(binding.destinationTargetId()).orElse(null);
+        if (localTarget != null && binding.destinationConnectionAddress().isBlank()) {
+            return localTarget.displayName();
+        }
+        if (localTarget != null && plugin.getPortalInstanceService().findByAutoDestinationTargetId(binding.destinationTargetId()).isPresent()) {
+            return plugin.getPortalInstanceService().findByAutoDestinationTargetId(binding.destinationTargetId()).orElseThrow().displayName();
+        }
+
+        if (localTarget != null && (binding.destinationConnectionAddress().isBlank() || plugin.getDiscoveredDestinationTargetCacheService().find(binding.destinationConnectionAddress()).isEmpty())) {
+            return localTarget.displayName();
+        }
+
+        DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(binding.destinationConnectionAddress()).orElse(null);
+        if (discovery != null) {
+            for (DiscoveredDestinationTargetSummary target : discovery.targets()) {
+                if (target.id().equalsIgnoreCase(binding.destinationTargetId())) {
+                    return target.displayName();
+                }
+            }
+        }
+        return binding.destinationTargetId();
     }
 
     private static void executeTravelBindingPlan(
@@ -2116,17 +2541,433 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static ReorderableListBuilder buildPortalSettingsScroll(int viewportHeight, @Nonnull String scrollId) {
+    private static ReorderableListBuilder buildPortalQueueBindingsScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull HomeSetupState setup,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
         int width = CONTENT_W - 32;
         int innerWidth = width - 16;
-        int cardHeight = Math.max(220, viewportHeight - 32);
-        int contentHeight = 16 + cardHeight + 20;
+        LobbyDefinition currentLobby = currentManagedLobby(plugin);
+        if (currentLobby == null) {
+            int lockedHeight = Math.max(220, viewportHeight - 32);
+            int contentHeight = 16 + lockedHeight + 20;
+            ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+            scroll.addChild(spacerY(16));
+            GroupBuilder card = card(innerWidth, lockedHeight, PANEL_BG);
+            card.addChild(label("Queue Portals", TITLE, innerWidth - 32));
+            card.addChild(spacerY(8));
+            card.addChild(label("This tab only unlocks on the server marked as the lobby. Set the lobby first in Minigames > Lobby.", MUTED, innerWidth - 32));
+            scroll.addChild(card);
+            return scroll;
+        }
+
+        String localSelectorAddress = localSelectorAddress(setup.localConnectionAddress());
+        List<TravelServerGroup> localGroups = buildTravelServerGroups(plugin, peers, setup.localConnectionAddress(), localSelectorAddress).stream()
+            .filter(TravelServerGroup::local)
+            .toList();
+        List<QueueDefinition> queues = plugin.getQueueService().list();
+        List<ArenaDefinition> destinations = plugin.getArenaService().list();
+        List<TriggerBindingDefinition> savedBindings = plugin.getTriggerBindingService().list().stream()
+            .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
+            .filter(binding -> binding.action() == TriggerBindingAction.JOIN_QUEUE || binding.action() == TriggerBindingAction.LEAVE_QUEUE)
+            .toList();
+
+        int setupHeight = 520;
+        int savedViewportHeight = 300;
+        int savedHeight = 64 + 12 + savedViewportHeight + 24;
+        int contentHeight = 16 + setupHeight + 12 + savedHeight + 20;
+
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
-
-        GroupBuilder card = card(innerWidth, cardHeight, PANEL_BG);
-        scroll.addChild(card);
+        scroll.addChild(portalQueueBindingSetupCard(ref, store, playerRef, player, plugin, state, localGroups, queues, destinations, innerWidth, setupHeight, scrollId + "-queue-portals"));
+        scroll.addChild(spacerY(12));
+        scroll.addChild(portalQueueActionListContainer(ref, store, playerRef, player, plugin, state, savedBindings, queues, innerWidth, savedHeight, savedViewportHeight, scrollId + "-saved-queue-portals"));
         return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalQueueBindingSetupCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TravelServerGroup> localGroups,
+        @Nonnull List<QueueDefinition> queues,
+        @Nonnull List<ArenaDefinition> destinations,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        GroupBuilder card = card(width, height, PANEL_BG);
+        card.addChild(label("Queue Portals", TITLE, width - 32));
+        card.addChild(spacerY(12));
+
+        boolean hasPortal = !state.selectedQueuePortalId().isBlank();
+        boolean hasQueue = !state.selectedQueueBindingQueueId().isBlank();
+        int actionsWidth = 170 + 8 + 200;
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(34));
+        actionRow.addChild(spacerX(Math.max(0, ((width - 32) - actionsWidth) / 2)));
+        actionRow.addChild(
+            ButtonBuilder.textButton()
+                .withText("ATTACH QUEUE")
+                .withAnchor(new HyUIAnchor().setWidth(170).setHeight(34))
+                .withDisabled(!hasPortal || !hasQueue)
+                .onClick((ignored, ctx) -> {
+                    try {
+                        plugin.getTriggerBindingService().bindPortalCollisionQueue(
+                            state.selectedQueuePortalId(),
+                            state.selectedQueueBindingQueueId(),
+                            TriggerBindingAction.JOIN_QUEUE
+                        );
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.clearedPortalQueueSelection()
+                                .withSelectedPortalTab(PortalWorkspaceTab.SETTINGS)
+                                .withStatusText("Attached queue " + state.selectedQueueBindingQueueDisplayName() + " to " + state.selectedQueuePortalDisplayName() + ".")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not attach queue to portal: " + exception.getMessage()));
+                    }
+                })
+        );
+        actionRow.addChild(spacerX(8));
+        actionRow.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("MAKE LEAVE QUEUE")
+                .withAnchor(new HyUIAnchor().setWidth(200).setHeight(34))
+                .withDisabled(!hasPortal || hasQueue)
+                .onClick((ignored, ctx) -> {
+                    try {
+                        plugin.getTriggerBindingService().bindPortalCollisionQueue(
+                            state.selectedQueuePortalId(),
+                            "",
+                            TriggerBindingAction.LEAVE_QUEUE
+                        );
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.clearedPortalQueueSelection()
+                                .withSelectedPortalTab(PortalWorkspaceTab.SETTINGS)
+                                .withStatusText("Portal " + state.selectedQueuePortalDisplayName() + " now leaves the current queue.")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not mark portal as leave-queue: " + exception.getMessage()));
+                    }
+                })
+        );
+        card.addChild(actionRow);
+        card.addChild(spacerY(12));
+
+        int summaryGap = 12;
+        int summaryRowWidth = width - 32;
+        int summaryWidth = (summaryRowWidth - summaryGap) / 2;
+        GroupBuilder summaryRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(72));
+        summaryRow.addChild(selectionSummaryCard("PORTAL", hasPortal ? state.selectedQueuePortalDisplayName() : "Select a portal below.", summaryWidth, hasPortal));
+        summaryRow.addChild(spacerX(summaryGap));
+        summaryRow.addChild(selectionSummaryCard("QUEUE", hasQueue ? state.selectedQueueBindingQueueDisplayName() : "Select a queue below.", summaryWidth, hasQueue));
+        card.addChild(summaryRow);
+        card.addChild(spacerY(12));
+
+        int listHeight = Math.max(320, height - 32 - 34 - 12 - 72 - 12);
+        GroupBuilder listsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(listHeight));
+        listsRow.addChild(portalQueuePortalListScroll(ref, store, playerRef, player, plugin, state, localGroups, summaryWidth, listHeight, scrollId + "-portals"));
+        listsRow.addChild(spacerX(summaryGap));
+        listsRow.addChild(portalQueueListScroll(ref, store, playerRef, player, plugin, state, queues, destinations, summaryWidth, listHeight, scrollId + "-queues"));
+        card.addChild(listsRow);
+        return card;
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder portalQueuePortalListScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TravelServerGroup> groups,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int rowGap = 8;
+        int groupGap = 16;
+        int dividerHeight = 52;
+        int emptyRowHeight = 56;
+        int contentHeight = 8;
+        for (int i = 0; i < groups.size(); i++) {
+            TravelServerGroup group = groups.get(i);
+            contentHeight += dividerHeight;
+            int itemCount = group.portals().size();
+            if (itemCount == 0) {
+                contentHeight += rowGap + emptyRowHeight;
+            } else {
+                contentHeight += rowGap + (itemCount * HOME_SERVER_CARD_H) + Math.max(0, itemCount - 1) * rowGap;
+            }
+            if (i + 1 < groups.size()) {
+                contentHeight += groupGap;
+            }
+        }
+        contentHeight += 8;
+
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            TravelServerGroup group = groups.get(groupIndex);
+            scroll.addChild(travelBindServerDividerRow(group, width - 16, dividerHeight));
+            if (group.portals().isEmpty()) {
+                scroll.addChild(spacerY(rowGap));
+                scroll.addChild(travelBindEmptyGroupRow(width - 16, emptyRowHeight));
+            } else {
+                scroll.addChild(spacerY(rowGap));
+                for (int rowIndex = 0; rowIndex < group.portals().size(); rowIndex++) {
+                    TravelPortalEndpoint portal = group.portals().get(rowIndex);
+                    scroll.addChild(portalQueuePortalRow(ref, store, playerRef, player, plugin, state, portal, width - 16, HOME_SERVER_CARD_H));
+                    if (rowIndex + 1 < group.portals().size()) {
+                        scroll.addChild(spacerY(rowGap));
+                    }
+                }
+            }
+            if (groupIndex + 1 < groups.size()) {
+                scroll.addChild(spacerY(groupGap));
+            }
+        }
+        scroll.addChild(spacerY(8));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalQueuePortalRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TravelPortalEndpoint portal,
+        int width,
+        int height
+    ) {
+        boolean selected = state.selectedQueuePortalId().equals(portal.portalId()) && state.selectedQueuePortalConnectionAddress().equals(portal.connectionAddress());
+        return travelBindSelectorRowCard(
+            portal.displayName(),
+            "Portal",
+            selected ? "CLEAR" : "SELECT",
+            false,
+            false,
+            width,
+            height,
+            () -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                selected
+                    ? state.clearedPortalQueueSelection().withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText("Cleared queue-portal selection.")
+                    : state.withSelectedQueuePortal(portal.connectionAddress(), portal.portalId(), portal.displayName()).withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText("Selected portal " + portal.displayName() + ".")
+            )
+        );
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder portalQueueListScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<QueueDefinition> queues,
+        @Nonnull List<ArenaDefinition> destinations,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int rowGap = 8;
+        int contentHeight = queues.isEmpty()
+            ? height
+            : 8 + queues.size() * HOME_SERVER_CARD_H + Math.max(0, queues.size() - 1) * rowGap + 8;
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        if (queues.isEmpty()) {
+            scroll.addChild(label("Create at least one queue first.", MUTED, width - 16));
+        } else {
+            for (int index = 0; index < queues.size(); index++) {
+                scroll.addChild(portalQueueQueueRow(ref, store, playerRef, player, plugin, state, queues.get(index), destinations, width - 16, HOME_SERVER_CARD_H));
+                if (index + 1 < queues.size()) {
+                    scroll.addChild(spacerY(rowGap));
+                }
+            }
+        }
+        scroll.addChild(spacerY(8));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalQueueQueueRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull QueueDefinition queue,
+        @Nonnull List<ArenaDefinition> destinations,
+        int width,
+        int height
+    ) {
+        boolean selected = state.selectedQueueBindingQueueId().equals(queue.queueId());
+        ArenaDefinition destination = findDestination(destinations, queue.arenaIds().isEmpty() ? "" : queue.arenaIds().getFirst());
+        String detail = (destination == null ? "<missing game>" : destination.displayName()) + "  " + queue.minPlayers() + "-" + queue.maxPlayers() + "  " + queue.countdownSeconds() + "s";
+        return travelBindSelectorRowCard(
+            queue.displayName(),
+            detail,
+            selected ? "CLEAR" : "SELECT",
+            false,
+            false,
+            width,
+            height,
+            () -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                selected
+                    ? state.clearedPortalQueueQueueSelection().withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText("Cleared queue selection.")
+                    : state.withSelectedQueueBindingQueue(queue.queueId(), queue.displayName()).withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText("Selected queue " + queue.displayName() + ".")
+            )
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder portalQueueActionListContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TriggerBindingDefinition> bindings,
+        @Nonnull List<QueueDefinition> queues,
+        int width,
+        int height,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int outerGap = 12;
+        int bodyContentHeight = bindings.isEmpty()
+            ? viewportHeight
+            : 8 + bindings.size() * HOME_SERVER_CARD_H + Math.max(0, bindings.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Saved Queue Portals", width - 32));
+        container.addChild(spacerY(12));
+        ReorderableListBuilder body = scrollList(width - 32, viewportHeight, Math.max(viewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (bindings.isEmpty()) {
+            body.addChild(label("No queue-portal actions saved yet.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < bindings.size(); index++) {
+                body.addChild(portalQueueActionRow(ref, store, playerRef, player, plugin, state, bindings.get(index), queues, width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < bindings.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalQueueActionRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TriggerBindingDefinition binding,
+        @Nonnull List<QueueDefinition> queues,
+        int width,
+        int height
+    ) {
+        PortalInstanceDefinition portal = plugin.getPortalInstanceService().findById(binding.sourceId()).orElse(null);
+        String portalDisplayName = portal == null ? binding.sourceId() : portal.displayName();
+        QueueDefinition queue = queues.stream().filter(candidate -> candidate.queueId().equals(binding.queueId())).findFirst().orElse(null);
+        String detail = binding.action() == TriggerBindingAction.JOIN_QUEUE
+            ? "Join queue  " + (queue == null ? binding.queueId() : queue.displayName())
+            : binding.queueId().isBlank()
+                ? "Leave current queue"
+                : "Leave queue  " + (queue == null ? binding.queueId() : queue.displayName());
+
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 250).setHeight(rowHeight));
+        identity.addChild(label(portalDisplayName, SUBTITLE, width - 250));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(detail, MUTED, width - 250));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("EDIT")
+                .withAnchor(new HyUIAnchor().setWidth(90).setHeight(30))
+                .onClick((ignored, ctx) -> {
+                    NexoriMenuV2State next = state
+                        .withSelectedPortalTab(PortalWorkspaceTab.SETTINGS)
+                        .withSelectedView(NexoriMenuV2View.PORTALS)
+                        .withSelectedQueuePortal(localSelectorAddress(""), binding.sourceId(), portalDisplayName);
+                    if (binding.action() == TriggerBindingAction.JOIN_QUEUE) {
+                        next = next.withSelectedQueueBindingQueue(binding.queueId(), queue == null ? binding.queueId() : queue.displayName());
+                    } else {
+                        next = next.clearedPortalQueueQueueSelection();
+                    }
+                    open(ref, store, playerRef, player, plugin, next.withStatusText("Editing queue portal " + portalDisplayName + "."));
+                })
+        );
+        row.addChild(spacerX(8));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("REMOVE")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .onClick((ignored, ctx) -> {
+                    try {
+                        boolean removed = plugin.getTriggerBindingService().remove(binding.id());
+                        open(ref, store, playerRef, player, plugin, state.withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText(removed ? "Removed queue portal " + portalDisplayName + "." : portalDisplayName + " was already removed."));
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withSelectedPortalTab(PortalWorkspaceTab.SETTINGS).withStatusText("Could not remove queue portal action: " + exception.getMessage()));
+                    }
+                })
+        );
+        card.addChild(row);
+        return card;
     }
 
     @Nonnull
@@ -3733,5 +4574,10 @@ public final class NexoriMenuV2Page {
         String destinationTargetId,
         String travelProfileId
     ) {
+    }
+
+    private enum TravelBindColumnMode {
+        A,
+        B
     }
 }

@@ -314,7 +314,7 @@ public final class NexoriPortalInteractionService {
             player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
             return false;
         }
-        if (!currentQueueId.equals(binding.queueId())) {
+        if (!binding.queueId().isBlank() && !currentQueueId.equals(binding.queueId())) {
             player.sendMessage(Message.raw(
                 "This portal leaves Nexori queue " + binding.queueId() + ", but you are currently in " + currentQueueId + "."
             ));

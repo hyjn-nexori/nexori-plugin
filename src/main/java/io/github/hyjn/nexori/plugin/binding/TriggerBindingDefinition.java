@@ -28,7 +28,9 @@ public record TriggerBindingDefinition(
                 normalizedKind,
                 normalizedSourceId,
                 normalizedAction,
-                normalizeRequired(queueId, "Queue trigger bindings require a queue id."),
+                normalizedAction == TriggerBindingAction.JOIN_QUEUE
+                    ? normalizeRequired(queueId, "Join-queue trigger bindings require a queue id.")
+                    : normalizeOptional(queueId, ""),
                 "",
                 "",
                 "",

@@ -3,8 +3,8 @@ package io.github.hyjn.nexori.plugin.ui.menu.state;
 import javax.annotation.Nonnull;
 
 public enum PortalWorkspaceTab {
-    BIND("BIND"),
-    SETTINGS("SETTINGS");
+    BIND("TRAVEL"),
+    SETTINGS("QUEUE PORTALS");
 
     private final String label;
 
