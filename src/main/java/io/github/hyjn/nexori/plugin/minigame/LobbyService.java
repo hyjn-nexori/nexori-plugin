@@ -71,6 +71,31 @@ public final class LobbyService {
         return removed != null;
     }
 
+    public synchronized void replaceAll(@Nonnull List<LobbyDefinition> definitions) throws IOException {
+        Map<String, LobbyDefinition> next = new LinkedHashMap<>();
+        for (LobbyDefinition definition : definitions) {
+            LobbyDefinition normalized = definition.normalized();
+            validate(normalized);
+            for (LobbyDefinition existing : next.values()) {
+                if (!existing.lobbyId().equals(normalized.lobbyId())
+                    && existing.worldName().equals(normalized.worldName())) {
+                    throw new IllegalArgumentException(
+                        "World '" + normalized.worldName() + "' is already registered to lobby '" + existing.lobbyId() + "'."
+                    );
+                }
+            }
+            next.put(normalized.lobbyId(), normalized);
+        }
+        lobbiesById.clear();
+        lobbiesById.putAll(next);
+        persist();
+    }
+
+    public synchronized void clearAll() throws IOException {
+        lobbiesById.clear();
+        persist();
+    }
+
     private void validate(@Nonnull LobbyDefinition definition) {
         var entryTarget = destinationTargetService.find(definition.entryTargetId())
             .orElseThrow(() -> new IllegalArgumentException(
@@ -81,12 +106,12 @@ public final class LobbyService {
                 "The lobby return target '" + definition.returnTargetId() + "' does not exist on this server."
             ));
 
-        if (!entryTarget.worldName().equals(definition.worldName())) {
+        if (!entryTarget.worldName().equalsIgnoreCase(definition.worldName())) {
             throw new IllegalArgumentException(
                 "Lobby world '" + definition.worldName() + "' must match entry target world '" + entryTarget.worldName() + "'."
             );
         }
-        if (!returnTarget.worldName().equals(definition.worldName())) {
+        if (!returnTarget.worldName().equalsIgnoreCase(definition.worldName())) {
             throw new IllegalArgumentException(
                 "Lobby world '" + definition.worldName() + "' must match return target world '" + returnTarget.worldName() + "'."
             );

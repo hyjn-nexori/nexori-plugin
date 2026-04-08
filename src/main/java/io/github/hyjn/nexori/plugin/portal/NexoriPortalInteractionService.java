@@ -422,6 +422,12 @@ public final class NexoriPortalInteractionService {
                 ));
                 return false;
             }
+            case NOT_LOBBY_SERVER -> {
+                player.sendMessage(Message.raw(
+                    "This server is not the active Nexori lobby right now, so queue join is unavailable."
+                ));
+                return false;
+            }
         }
         return false;
     }

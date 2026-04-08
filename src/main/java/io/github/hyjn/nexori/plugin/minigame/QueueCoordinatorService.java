@@ -30,6 +30,7 @@ public final class QueueCoordinatorService {
     private final QueueService queueService;
     private final ArenaService arenaService;
     private final LobbyService lobbyService;
+    private final NetworkLobbyService networkLobbyService;
     private final MatchSessionService matchSessionService;
     private final LocalConnectionAddressService localConnectionAddressService;
     private final SecureTravelService secureTravelService;
@@ -42,6 +43,7 @@ public final class QueueCoordinatorService {
         @Nonnull QueueService queueService,
         @Nonnull ArenaService arenaService,
         @Nonnull LobbyService lobbyService,
+        @Nonnull NetworkLobbyService networkLobbyService,
         @Nonnull MatchSessionService matchSessionService,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull SecureTravelService secureTravelService,
@@ -50,6 +52,7 @@ public final class QueueCoordinatorService {
         this.queueService = queueService;
         this.arenaService = arenaService;
         this.lobbyService = lobbyService;
+        this.networkLobbyService = networkLobbyService;
         this.matchSessionService = matchSessionService;
         this.localConnectionAddressService = localConnectionAddressService;
         this.secureTravelService = secureTravelService;
@@ -64,6 +67,9 @@ public final class QueueCoordinatorService {
         @Nonnull String sourceLobbyId,
         @Nonnull String sourcePortalId
     ) {
+        if (!networkLobbyService.isCurrentServerLobby()) {
+            return JoinResult.notLobbyServer();
+        }
         String normalizedQueueId = QueueDefinition.normalizeId(rawQueueId);
         Optional<QueueDefinition> queue = queueService.find(normalizedQueueId);
         if (queue.isEmpty()) {
@@ -156,6 +162,14 @@ public final class QueueCoordinatorService {
             return;
         }
         lastWorldTickAdvanceAtEpochMs = nowEpochMs;
+        if (!networkLobbyService.isCurrentServerLobby()) {
+            try {
+                matchSessionService.pruneExpired(nowEpochMs);
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to prune Nexori handoff records on world tick.");
+            }
+            return;
+        }
         advanceCountdowns(nowEpochMs);
         launchReadyBatches(nowEpochMs);
         try {
@@ -632,7 +646,8 @@ public final class QueueCoordinatorService {
         JOINED,
         ALREADY_QUEUED,
         QUEUE_MISSING,
-        QUEUE_DISABLED
+        QUEUE_DISABLED,
+        NOT_LOBBY_SERVER
     }
 
     public record JoinResult(
@@ -660,6 +675,11 @@ public final class QueueCoordinatorService {
         @Nonnull
         public static JoinResult queueDisabled(@Nonnull String queueId) {
             return new JoinResult(JoinOutcome.QUEUE_DISABLED, QueueDefinition.normalizeId(queueId), "", null);
+        }
+
+        @Nonnull
+        public static JoinResult notLobbyServer() {
+            return new JoinResult(JoinOutcome.NOT_LOBBY_SERVER, "", "", null);
         }
     }
 

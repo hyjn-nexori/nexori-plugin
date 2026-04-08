@@ -41,6 +41,7 @@ import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
+import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicySummary;
@@ -131,8 +132,8 @@ public final class NexoriMenuV2Page {
         .withHoveredHandle(new HyUIPatchStyle().setColor("#5d87bb"))
         .withDraggedHandle(new HyUIPatchStyle().setColor("#76a3dd"));
 
-    private static final HyUIStyle TITLE = new HyUIStyle().setFontSize(20).setRenderBold(true).setTextColor("#f1f6ff");
-    private static final HyUIStyle SUBTITLE = new HyUIStyle().setFontSize(14).setRenderBold(true).setTextColor("#bcd2eb");
+    private static final HyUIStyle TITLE = new HyUIStyle().setFontSize(20).setRenderBold(true).setTextColor("#f1f6ff").setWrap(true);
+    private static final HyUIStyle SUBTITLE = new HyUIStyle().setFontSize(14).setRenderBold(true).setTextColor("#bcd2eb").setWrap(true);
     private static final HyUIStyle BODY = new HyUIStyle().setFontSize(14).setTextColor("#d6e5f7").setWrap(true);
     private static final HyUIStyle MUTED = new HyUIStyle().setFontSize(13).setTextColor("#8fa6c4").setWrap(true);
     private static final HyUIStyle GOOD = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#7de3a6").setWrap(true);
@@ -163,6 +164,9 @@ public final class NexoriMenuV2Page {
         HomeSetupState setup = buildHomeSetupState(plugin, peers);
         NexoriMenuV2State state = rawState.normalized();
         if (setup.viewsLocked() && state.selectedView() != NexoriMenuV2View.HOME) {
+            state = state.withSelectedView(NexoriMenuV2View.HOME);
+        }
+        if (state.selectedView() == NexoriMenuV2View.OPERATIONS) {
             state = state.withSelectedView(NexoriMenuV2View.HOME);
         }
 
@@ -229,8 +233,7 @@ public final class NexoriMenuV2Page {
             NexoriMenuV2View.HOME,
             NexoriMenuV2View.PORTALS,
             NexoriMenuV2View.RULES,
-            NexoriMenuV2View.QUEUES,
-            NexoriMenuV2View.OPERATIONS
+            NexoriMenuV2View.QUEUES
         );
         for (NexoriMenuV2View view : views) {
             boolean selected = state.selectedView() == view;
@@ -246,7 +249,7 @@ public final class NexoriMenuV2Page {
             sidebar.addChild(spacerY(8));
         }
 
-        sidebar.addChild(spacerY(Math.max(24, CONTENT_H - 470)));
+        sidebar.addChild(spacerY(Math.max(24, CONTENT_H - 382)));
         boolean aboutSelected = state.selectedView() == NexoriMenuV2View.ABOUT;
         sidebar.addChild(
             (aboutSelected ? ButtonBuilder.textButton() : ButtonBuilder.secondaryTextButton())
@@ -2065,6 +2068,20 @@ public final class NexoriMenuV2Page {
             }
         }
         return List.copyOf(peersByAddress.values());
+    }
+
+    @Nonnull
+    private static LocalServerSummary currentLocalServerSummary(@Nonnull NexoriPlugin plugin) {
+        String localConnectionAddress = plugin.getLocalConnectionAddressService().getConnectionAddressOrBlank();
+        for (ConfiguredPeer peer : plugin.getConfiguredPeerService().list()) {
+            if (!localConnectionAddress.isBlank() && localConnectionAddress.equalsIgnoreCase(peer.connectionAddress())) {
+                return new LocalServerSummary(peer.displayName(), peer.connectionAddress());
+            }
+        }
+        if (!localConnectionAddress.isBlank()) {
+            return new LocalServerSummary("Current Server", localConnectionAddress);
+        }
+        return new LocalServerSummary("Current Server", "Connection address not configured");
     }
 
     @Nonnull
@@ -4640,16 +4657,14 @@ public final class NexoriMenuV2Page {
         LobbyWorldOption selectedWorld = findLobbyWorldOption(worlds, selectedWorldName);
 
         int setupHeight = 176;
-        int worldsHeight = worlds.isEmpty()
-            ? 118
-            : worlds.size() * HOME_SERVER_CARD_H + Math.max(0, worlds.size() - 1) * 8 + 32;
+        int worldsHeight = 400;
         int contentHeight = 16 + setupHeight + 12 + worldsHeight + 20;
 
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
         scroll.addChild(lobbySetupCard(ref, store, playerRef, player, plugin, state, currentLobby, selectedWorld, innerWidth, setupHeight));
         scroll.addChild(spacerY(12));
-        scroll.addChild(lobbyWorldsContainer(ref, store, playerRef, player, plugin, state, currentLobby, worlds, innerWidth, worldsHeight));
+        scroll.addChild(lobbyWorldsContainer(ref, store, playerRef, player, plugin, state, currentLobby, worlds, innerWidth, worldsHeight, scrollId + "-lobby-worlds"));
         return scroll;
     }
 
@@ -4666,6 +4681,7 @@ public final class NexoriMenuV2Page {
         int width,
         int height
     ) {
+        NetworkLobbyDefinition currentNetworkLobby = plugin.getNetworkLobbyService().current().orElse(null);
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Lobby", TITLE, width - 32));
         card.addChild(spacerY(8));
@@ -4693,19 +4709,87 @@ public final class NexoriMenuV2Page {
                         open(ref, store, playerRef, player, plugin, state.withStatusText("Pick a local world first."));
                         return;
                     }
-                    String lobbyId = currentLobby == null ? "main" : currentLobby.lobbyId();
                     try {
-                        LobbyDefinition saved = plugin.getLobbyService().upsert(new LobbyDefinition(
-                            lobbyId,
+                        String localConnectionAddress = plugin.getLocalConnectionAddressService().getConnectionAddressOrBlank();
+                        if (localConnectionAddress.isBlank()) {
+                            open(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                lobbyResumeState(state, selectedWorld.worldName(), "Configure this server's connection address before setting the lobby.")
+                            );
+                            return;
+                        }
+
+                        LobbyDefinition saved = new LobbyDefinition(
+                            "main",
                             "Lobby",
                             selectedWorld.worldName(),
                             selectedWorld.targetId(),
                             selectedWorld.targetId(),
                             true
-                        ));
-                        open(ref, store, playerRef, player, plugin, state.withPendingLobbyWorldName(saved.worldName()).withStatusText("Saved lobby on world " + saved.worldName() + "."));
+                        );
+                        NetworkLobbyDefinition networkLobby = new NetworkLobbyDefinition(
+                            localConnectionAddress,
+                            selectedWorld.worldName(),
+                            selectedWorld.targetId(),
+                            selectedWorld.targetId(),
+                            System.currentTimeMillis()
+                        );
+                        plugin.getLobbyService().replaceAll(List.of(saved));
+                        plugin.getNetworkLobbyService().save(networkLobby);
+
+                        List<ConfiguredPeer> remotePeers = trustedNetworkPeers(plugin);
+                        String successMessage = remotePeers.isEmpty()
+                            ? "This server is now the active Nexori lobby."
+                            : "Marked this server as the active Nexori lobby across " + (remotePeers.size() + 1) + " server(s).";
+                        if (remotePeers.isEmpty()) {
+                            open(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                lobbyResumeState(state, saved.worldName(), successMessage)
+                            );
+                            return;
+                        }
+
+                        applyLobbyRoleAtIndex(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state,
+                            remotePeers,
+                            networkLobby,
+                            player.getWorld().getName(),
+                            captureCurrentTransform(store, ref),
+                            0,
+                            successMessage,
+                            saved.worldName()
+                        );
                     } catch (IOException | IllegalArgumentException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not save lobby: " + exception.getMessage()));
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            lobbyResumeState(state, selectedWorld.worldName(), "Could not save lobby: " + exception.getMessage())
+                        );
+                    } catch (GeneralSecurityException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            lobbyResumeState(state, selectedWorld.worldName(), "Saved the lobby locally, but could not propagate it: " + exception.getMessage())
+                        );
                     }
                 })
         );
@@ -4713,18 +4797,66 @@ public final class NexoriMenuV2Page {
         actionRow.addChild(
             ButtonBuilder.secondaryTextButton()
                 .withText("CLEAR")
-                .withDisabled(currentLobby == null)
+                .withDisabled(currentLobby == null && currentNetworkLobby == null)
                 .withAnchor(new HyUIAnchor().setWidth(98).setHeight(42))
                 .onClick((ignored, ctx) -> {
-                    if (currentLobby == null) {
+                    if (currentLobby == null && currentNetworkLobby == null) {
                         open(ref, store, playerRef, player, plugin, state.withStatusText("No lobby is configured on this server."));
                         return;
                     }
                     try {
-                        boolean removed = plugin.getLobbyService().remove(currentLobby.lobbyId());
-                        open(ref, store, playerRef, player, plugin, state.withPendingLobbyWorldName("").withStatusText(removed ? "Cleared the lobby on this server." : "The lobby was already removed."));
+                        plugin.getNetworkLobbyService().clear();
+                        plugin.getLobbyService().clearAll();
+
+                        List<ConfiguredPeer> remotePeers = trustedNetworkPeers(plugin);
+                        String successMessage = remotePeers.isEmpty()
+                            ? "Cleared the active Nexori lobby."
+                            : "Cleared the active Nexori lobby across " + (remotePeers.size() + 1) + " server(s).";
+                        if (remotePeers.isEmpty()) {
+                            open(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                lobbyResumeState(state, "", successMessage)
+                            );
+                            return;
+                        }
+
+                        applyLobbyRoleAtIndex(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state,
+                            remotePeers,
+                            null,
+                            player.getWorld().getName(),
+                            captureCurrentTransform(store, ref),
+                            0,
+                            successMessage,
+                            ""
+                        );
                     } catch (IOException | IllegalArgumentException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not clear the lobby: " + exception.getMessage()));
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            lobbyResumeState(state, "", "Could not clear the lobby: " + exception.getMessage())
+                        );
+                    } catch (GeneralSecurityException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            lobbyResumeState(state, "", "Cleared the lobby locally, but could not propagate it: " + exception.getMessage())
+                        );
                     }
                 })
         );
@@ -4732,6 +4864,145 @@ public final class NexoriMenuV2Page {
         row.addChild(actions);
         card.addChild(row);
         return card;
+    }
+
+    @Nonnull
+    private static NexoriMenuV2State lobbyResumeState(
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull String pendingWorldName,
+        @Nonnull String status
+    ) {
+        return state
+            .withSelectedView(NexoriMenuV2View.QUEUES)
+            .withSelectedMinigameTab(MinigameWorkspaceTab.LOBBY)
+            .withPendingLobbyWorldName(pendingWorldName)
+            .withStatusText(status);
+    }
+
+    private static void applyLobbyRoleAtIndex(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> remotePeers,
+        NetworkLobbyDefinition definition,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        int index,
+        @Nonnull String successMessage,
+        @Nonnull String pendingWorldName
+    ) throws IOException, GeneralSecurityException {
+        if (index >= remotePeers.size()) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                lobbyResumeState(state, pendingWorldName, successMessage)
+            );
+            return;
+        }
+
+        ConfiguredPeer destination = remotePeers.get(index);
+        plugin.getLobbyRoleSyncService().apply(
+            playerRef,
+            destination,
+            originWorldName,
+            originTransform.clone(),
+            definition,
+            chainedLobbyApplyResumeAction(
+                plugin,
+                state,
+                remotePeers,
+                definition,
+                originWorldName,
+                originTransform,
+                index + 1,
+                successMessage,
+                pendingWorldName
+            )
+        );
+    }
+
+    @Nonnull
+    private static UiResumeAction chainedLobbyApplyResumeAction(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> remotePeers,
+        NetworkLobbyDefinition definition,
+        @Nonnull String originWorldName,
+        @Nonnull Transform originTransform,
+        int nextIndex,
+        @Nonnull String successMessage,
+        @Nonnull String pendingWorldName
+    ) {
+        return new UiResumeAction() {
+            @Override
+            public boolean continueDuringSetup(@Nonnull PlayerSetupConnectEvent event) throws IOException, GeneralSecurityException {
+                if (nextIndex >= remotePeers.size()) {
+                    return false;
+                }
+                ConfiguredPeer nextDestination = remotePeers.get(nextIndex);
+                plugin.getLobbyRoleSyncService().apply(
+                    event,
+                    nextDestination,
+                    originWorldName,
+                    originTransform.clone(),
+                    definition,
+                    chainedLobbyApplyResumeAction(
+                        plugin,
+                        state,
+                        remotePeers,
+                        definition,
+                        originWorldName,
+                        originTransform,
+                        nextIndex + 1,
+                        successMessage,
+                        pendingWorldName
+                    )
+                );
+                return true;
+            }
+
+            @Override
+            public void reopen(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player
+            ) {
+                open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    lobbyResumeState(state, pendingWorldName, successMessage)
+                );
+            }
+
+            @Override
+            public void reopenWithStatus(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player,
+                @Nonnull String status,
+                boolean success
+            ) {
+                open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    lobbyResumeState(state, pendingWorldName, success ? successMessage : status)
+                );
+            }
+        };
     }
 
     @Nonnull
@@ -4745,84 +5016,66 @@ public final class NexoriMenuV2Page {
         LobbyDefinition currentLobby,
         @Nonnull List<LobbyWorldOption> worlds,
         int width,
-        int height
+        int height,
+        @Nonnull String scrollId
     ) {
-        GroupBuilder container = card(width, height, PANEL_BG);
-        if (worlds.isEmpty()) {
-            container.addChild(label("No local worlds are ready yet", SUBTITLE, width - 32));
-            container.addChild(spacerY(8));
-            container.addChild(label("A lobby world needs at least one non-portal target on this server. Natural spawn targets are the best option.", MUTED, width - 32));
-            return container;
-        }
+        int tableWidth = Math.max(560, width / 2);
+        int outerGap = 12;
+        int bodyViewportHeight = 300;
+        int bodyContentHeight = worlds.isEmpty()
+            ? bodyViewportHeight
+            : 8 + worlds.size() * 64 + Math.max(0, worlds.size() - 1) * 8 + 8;
 
-        container.addChild(spacerY(8));
-        for (int index = 0; index < worlds.size(); index++) {
-            LobbyWorldOption option = worlds.get(index);
-            container.addChild(
-                lobbyWorldRow(
-                    ref,
-                    store,
-                    playerRef,
-                    player,
-                    plugin,
-                    state,
-                    option,
-                    currentLobby != null && currentLobby.worldName().equals(option.worldName()),
-                    width - 32,
-                    HOME_SERVER_CARD_H
-                )
-            );
-            if (index + 1 < worlds.size()) {
-                container.addChild(spacerY(8));
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+
+        GroupBuilder headerWrap = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(64));
+        headerWrap.addChild(spacerX(Math.max(0, ((width - 32) - tableWidth) / 2)));
+        headerWrap.addChild(singleColumnHeaderCard("Worlds In Current Server", tableWidth));
+        container.addChild(headerWrap);
+        container.addChild(spacerY(12));
+
+        GroupBuilder bodyWrap = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(bodyViewportHeight));
+        bodyWrap.addChild(spacerX(Math.max(0, ((width - 32) - tableWidth) / 2)));
+
+        ReorderableListBuilder body = scrollList(tableWidth, bodyViewportHeight, Math.max(bodyViewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (worlds.isEmpty()) {
+            body.addChild(label("No local worlds are ready yet.", MUTED, tableWidth - 16));
+        } else {
+            for (int index = 0; index < worlds.size(); index++) {
+                LobbyWorldOption option = worlds.get(index);
+                body.addChild(
+                    selectorRowCard(
+                        option.worldName(),
+                        option.targetDisplayName(),
+                        currentLobby != null && currentLobby.worldName().equals(option.worldName()),
+                        tableWidth - 16,
+                        64,
+                        () -> open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withPendingLobbyWorldName(option.worldName()).withStatusText("Selected lobby world " + option.worldName() + ".")
+                        )
+                    )
+                );
+                if (index + 1 < worlds.size()) {
+                    body.addChild(spacerY(8));
+                }
             }
         }
+        body.addChild(spacerY(8));
+        bodyWrap.addChild(body);
+        container.addChild(bodyWrap);
+        container.addChild(spacerY(outerGap));
         return container;
-    }
-
-    @Nonnull
-    private static GroupBuilder lobbyWorldRow(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef,
-        @Nonnull Player player,
-        @Nonnull NexoriPlugin plugin,
-        @Nonnull NexoriMenuV2State state,
-        @Nonnull LobbyWorldOption option,
-        boolean current,
-        int width,
-        int height
-    ) {
-        GroupBuilder card = GroupBuilder.group()
-            .withLayoutMode("Top")
-            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
-            .withPadding(HyUIPadding.symmetric(14, 0))
-            .withBackground(SERVER_CARD_BG);
-        int rowHeight = 30;
-        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
-
-        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
-        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 170).setHeight(rowHeight));
-        identity.addChild(label(option.worldName(), TITLE, 220));
-        identity.addChild(spacerX(4));
-        identity.addChild(label(option.targetDisplayName(), MUTED, Math.max(100, width - 394)));
-        row.addChild(identity);
-        row.addChild(spacerX(12));
-        row.addChild(
-            ButtonBuilder.smallSecondaryTextButton()
-                .withText(current ? "CURRENT" : "SELECT")
-                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
-                .withDisabled(current)
-                .onClick((ignored, ctx) -> open(
-                    ref,
-                    store,
-                    playerRef,
-                    player,
-                    plugin,
-                    state.withPendingLobbyWorldName(option.worldName()).withStatusText("Selected lobby world " + option.worldName() + ".")
-                ))
-        );
-        card.addChild(row);
-        return card;
     }
 
     @Nonnull
@@ -6231,6 +6484,12 @@ public final class NexoriMenuV2Page {
         private boolean showBootstrapAction() {
             return !running() && dirty;
         }
+    }
+
+    private record LocalServerSummary(
+        @Nonnull String displayName,
+        @Nonnull String connectionAddress
+    ) {
     }
 
     private record TravelBindOperation(
