@@ -1,0 +1,85 @@
+{
+  "Version": 4,
+  "UUID": {
+    "$binary": "8BZjnidnRAe9CSrLdVyPyA==",
+    "$type": "04"
+  },
+  "DisplayName": "Default Void",
+  "Seed": 1775626081768,
+  "SpawnProvider": {
+    "Id": "Global",
+    "SpawnPoint": {
+      "X": 21.980152130126953,
+      "Y": 87.0,
+      "Z": 34.72283935546875,
+      "Pitch": 2.8074965476989746,
+      "Yaw": -45.32096481323242,
+      "Roll": 0.0
+    }
+  },
+  "WorldGen": {
+    "Type": "HytaleGenerator",
+    "WorldStructure": "Default_Void"
+  },
+  "WorldMap": {
+    "Type": "WorldGen"
+  },
+  "ChunkStorage": {
+    "Type": "Hytale"
+  },
+  "ChunkConfig": {},
+  "IsTicking": true,
+  "IsBlockTicking": true,
+  "IsPvpEnabled": false,
+  "IsFallDamageEnabled": true,
+  "IsGameTimePaused": true,
+  "GameTime": "0001-01-01T07:00:00Z",
+  "ClientEffects": {
+    "SunHeightPercent": 100.0,
+    "SunAngleDegrees": 0.0,
+    "BloomIntensity": 0.30000001192092896,
+    "BloomPower": 8.0,
+    "SunIntensity": 0.25,
+    "SunshaftIntensity": 0.30000001192092896,
+    "SunshaftScaleFactor": 4.0
+  },
+  "RequiredPlugins": {},
+  "GameMode": "Creative",
+  "IsSpawningNPC": false,
+  "IsSpawnMarkersEnabled": true,
+  "IsAllNPCFrozen": false,
+  "GameplayConfig": "Default",
+  "IsCompassUpdating": true,
+  "IsSavingPlayers": true,
+  "IsSavingChunks": true,
+  "SaveNewChunks": true,
+  "IsUnloadingChunks": true,
+  "IsObjectiveMarkersEnabled": true,
+  "DeleteOnUniverseStart": false,
+  "DeleteOnRemove": false,
+  "DisabledFluidTickers": [],
+  "ResourceStorage": {
+    "Type": "Hytale"
+  },
+  "Plugin": {
+    "Instance": {
+      "RemovalConditions": [],
+      "ReturnPoint": {
+        "World": {
+          "$binary": "qkQ1DY+hRDi+0Pm2+p1qEw==",
+          "$type": "04"
+        },
+        "ReturnPoint": {
+          "X": 5072.5751953125,
+          "Y": 168.5,
+          "Z": 4983.55322265625,
+          "Pitch": -0.28000006079673767,
+          "Yaw": 1.58479642868042,
+          "Roll": 0.0
+        },
+        "ReturnOnReconnect": false
+      },
+      "PreventReconnection": false
+    }
+  }
+}

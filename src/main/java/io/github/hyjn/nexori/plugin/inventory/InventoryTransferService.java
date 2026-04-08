@@ -386,18 +386,7 @@ public final class InventoryTransferService {
             return;
         }
 
-        InventoryTransferState pendingApply = pendingRuntimeApplies.remove(playerUuid);
-        if (pendingApply != null) {
-            inventorySnapshotService.applyToPlayer(player, pendingApply);
-            logger.atInfo().log("Applied deferred Nexori inventory transfer state for " + playerUuid + ".");
-            return;
-        }
-
-        if (pendingRuntimeClears.remove(playerUuid)) {
-            InventoryTransferState current = inventorySnapshotService.capture(player);
-            inventorySnapshotService.applyToPlayer(player, InventoryTransferState.emptyLike(current));
-            logger.atInfo().log("Applied deferred Nexori inventory clear for " + playerUuid + ".");
-        }
+        flushPendingRuntimeInventory(playerUuid, player);
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -407,6 +396,11 @@ public final class InventoryTransferService {
         );
         if (playerRef == null) {
             return;
+        }
+
+        Player player = event.getPlayer();
+        if (player != null) {
+            flushPendingRuntimeInventory(playerRef.getUuid(), player);
         }
 
         PendingRecoveryReturn pendingReturn = pendingRecoveryReturns.remove(playerRef.getUuid());
@@ -676,6 +670,32 @@ public final class InventoryTransferService {
                 .playerNameClaimed(playerRef.getUsername())
                 .transferId(backup.transferId())
         );
+    }
+
+    private void flushPendingRuntimeInventory(@Nonnull UUID playerUuid, @Nonnull Player player) {
+        InventoryTransferState pendingApply = pendingRuntimeApplies.get(playerUuid);
+        if (pendingApply != null) {
+            if (!inventorySnapshotService.canApplyToPlayer(player, pendingApply)) {
+                return;
+            }
+            pendingRuntimeApplies.remove(playerUuid);
+            inventorySnapshotService.applyToPlayer(player, pendingApply);
+            logger.atInfo().log("Applied deferred Nexori inventory transfer state for " + playerUuid + ".");
+            return;
+        }
+
+        if (!pendingRuntimeClears.contains(playerUuid)) {
+            return;
+        }
+
+        InventoryTransferState current = inventorySnapshotService.capture(player);
+        InventoryTransferState emptied = InventoryTransferState.emptyLike(current);
+        if (!inventorySnapshotService.canApplyToPlayer(player, emptied)) {
+            return;
+        }
+        pendingRuntimeClears.remove(playerUuid);
+        inventorySnapshotService.applyToPlayer(player, emptied);
+        logger.atInfo().log("Applied deferred Nexori inventory clear for " + playerUuid + ".");
     }
 
     private static int occupiedVisibleSlots(@Nonnull InventoryTransferState state) {

@@ -23,7 +23,7 @@ public final class InventorySnapshotService {
             snapshotContainer(inventory.getArmor()),
             snapshotContainer(inventory.getHotbar()),
             snapshotContainer(inventory.getUtility()),
-            snapshotContainer(inventory.getBackpack()),
+            snapshotOptionalContainer(inventory.getBackpack()),
             snapshotContainer(inventory.getTools()),
             inventory.getActiveHotbarSlot(),
             inventory.getActiveToolsSlot(),
@@ -34,15 +34,40 @@ public final class InventorySnapshotService {
     @SuppressWarnings("removal")
     public void applyToPlayer(@Nonnull Player player, @Nonnull InventoryTransferState state) {
         Inventory inventory = requireInventory(player);
+        ItemContainer storage = requireContainer(inventory.getStorage(), "storage");
+        ItemContainer armor = requireContainer(inventory.getArmor(), "armor");
+        ItemContainer hotbar = requireContainer(inventory.getHotbar(), "hotbar");
+        ItemContainer utility = requireContainer(inventory.getUtility(), "utility");
+        ItemContainer tools = requireContainer(inventory.getTools(), "tools");
+        ItemContainer backpack = inventory.getBackpack();
 
-        applyBackpackState(inventory, state.backpack());
-        applyContainer(inventory.getStorage(), state.storage());
-        applyContainer(inventory.getArmor(), state.armor());
-        applyContainer(inventory.getHotbar(), state.hotBar());
-        applyContainer(inventory.getUtility(), state.utility());
-        applyContainer(inventory.getTools(), state.tool());
-        applyContainer(inventory.getBackpack(), state.backpack());
+        if (backpack == null && !state.backpack().isEmpty()) {
+            throw new IllegalStateException("Player backpack is not available yet.");
+        }
+
+        if (backpack != null) {
+            applyBackpackState(backpack, state.backpack());
+        }
+        applyContainer(storage, state.storage());
+        applyContainer(armor, state.armor());
+        applyContainer(hotbar, state.hotBar());
+        applyContainer(utility, state.utility());
+        applyContainer(tools, state.tool());
+        if (backpack != null) {
+            applyContainer(backpack, state.backpack());
+        }
         player.markNeedsSave();
+    }
+
+    @SuppressWarnings("removal")
+    public boolean canApplyToPlayer(@Nonnull Player player, @Nonnull InventoryTransferState state) {
+        Inventory inventory = requireInventory(player);
+        return inventory.getStorage() != null
+            && inventory.getArmor() != null
+            && inventory.getHotbar() != null
+            && inventory.getUtility() != null
+            && inventory.getTools() != null
+            && (inventory.getBackpack() != null || state.backpack().isEmpty());
     }
 
     @SuppressWarnings("removal")
@@ -70,6 +95,14 @@ public final class InventorySnapshotService {
         return new ContainerTransferState(id, container.getCapacity(), items);
     }
 
+    @Nonnull
+    private static ContainerTransferState snapshotOptionalContainer(ItemContainer container) {
+        if (container == null) {
+            return new ContainerTransferState("Empty", 0, Map.of());
+        }
+        return snapshotContainer(container);
+    }
+
     @SuppressWarnings("removal")
     @Nonnull
     private static ItemTransferState snapshotItem(@Nonnull ItemStack stack) {
@@ -90,10 +123,18 @@ public final class InventorySnapshotService {
     }
 
     @SuppressWarnings("removal")
-    private static void applyBackpackState(@Nonnull Inventory inventory, @Nonnull ContainerTransferState state) {
+    private static void applyBackpackState(@Nonnull ItemContainer backpack, @Nonnull ContainerTransferState state) {
         if ("Empty".equals(state.id())) {
-            inventory.getBackpack().clear();
+            backpack.clear();
         }
+    }
+
+    @Nonnull
+    private static ItemContainer requireContainer(ItemContainer container, @Nonnull String name) {
+        if (container == null) {
+            throw new IllegalStateException("Player inventory " + name + " container is not available yet.");
+        }
+        return container;
     }
 
     @SuppressWarnings("removal")

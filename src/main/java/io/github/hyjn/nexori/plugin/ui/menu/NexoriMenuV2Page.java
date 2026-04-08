@@ -106,7 +106,7 @@ public final class NexoriMenuV2Page {
     private static final String QUEUE_COUNTDOWN_INPUT_ID = "nexori-v2-queue-countdown";
     private static final String RULE_GROUP_NAME_INPUT_ID = "nexori-v2-rule-group-name";
     private static final String DEFAULT_REMOTE_TARGET_ID = "default.natural_spawn";
-    private static final String DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID = "apply_inventory";
+    private static final String DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID = "keep_inventory";
     private static final int DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS = 9999;
     private static final String NEW_RULE_GROUP_ID = "__new__";
     private static final String LOCAL_SERVER_KEY = ServerRuleGroupDefinition.LOCAL_SERVER_KEY;
@@ -2347,7 +2347,7 @@ public final class NexoriMenuV2Page {
         List<TravelServerGroup> groups = buildTravelServerGroups(plugin, peers, setup.localConnectionAddress(), localSelectorAddress);
         List<TriggerBindingDefinition> savedBindings = plugin.getTriggerBindingService().list().stream()
             .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
-            .filter(binding -> binding.action() == TriggerBindingAction.TRAVEL)
+            .filter(binding -> binding.action() == TriggerBindingAction.TRAVEL || binding.action() == TriggerBindingAction.LOCAL_TARGET)
             .toList();
 
         int bindCardHeight = Math.max(620, viewportHeight - 32);
@@ -2851,8 +2851,13 @@ public final class NexoriMenuV2Page {
         PortalInstanceDefinition sourcePortal = plugin.getPortalInstanceService().findById(binding.sourceId()).orElse(null);
         String sourceDisplayName = sourcePortal == null ? binding.sourceId() : sourcePortal.displayName();
         String destinationDisplayName = resolveBindingDestinationDisplayName(plugin, binding);
-        String destinationAddress = binding.destinationConnectionAddress().equals(localSelectorAddress) ? "local" : binding.destinationConnectionAddress();
-        String detail = destinationAddress + " -> " + destinationDisplayName + "  " + TravelProfileType.parse(binding.travelProfileId()).displayName();
+        String detail = binding.action() == TriggerBindingAction.LOCAL_TARGET
+            ? "Local Target -> " + destinationDisplayName
+            : ((binding.destinationConnectionAddress().equals(localSelectorAddress) ? "local" : binding.destinationConnectionAddress())
+                + " -> "
+                + destinationDisplayName
+                + "  "
+                + TravelProfileType.parse(binding.travelProfileId()).displayName());
 
         GroupBuilder card = GroupBuilder.group()
             .withLayoutMode("Top")
@@ -4100,6 +4105,7 @@ public final class NexoriMenuV2Page {
     private static List<String> buildInstanceTemplateIds() {
         return InstancesPlugin.get().getInstanceAssets().stream()
             .filter(id -> id != null && !id.isBlank() && !ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(id))
+            .distinct()
             .sorted(Comparator.naturalOrder())
             .toList();
     }

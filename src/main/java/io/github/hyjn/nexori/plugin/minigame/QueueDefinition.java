@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
+
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,10 +24,7 @@ public record QueueDefinition(
         String normalizedQueueId = normalizeRequired(queueId, "Queue id cannot be blank.");
         String normalizedDisplayName = normalizeDisplayName(displayName, normalizedQueueId);
         List<String> normalizedArenaIds = normalizeIds(arenaIds);
-        String normalizedTravelProfileId = normalizeRequired(
-            launchTravelProfileId,
-            "Queue launch travel profile id cannot be blank."
-        );
+        String normalizedTravelProfileId = TravelProfileType.KEEP_INVENTORY.id();
         return new QueueDefinition(
             normalizedQueueId,
             normalizedDisplayName,
