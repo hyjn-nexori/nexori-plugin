@@ -147,6 +147,30 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    public synchronized Optional<QueueHudState> findQueueHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
+        String queueId = queueIdByPlayerUuid.get(playerUuid);
+        if (queueId == null || queueId.isBlank()) {
+            return Optional.empty();
+        }
+
+        QueueDefinition queue = queueService.find(queueId).orElse(null);
+        if (queue == null) {
+            return Optional.empty();
+        }
+
+        QueueRuntimeState state = state(queue.queueId(), nowEpochMs);
+        return Optional.of(new QueueHudState(
+            queue.queueId(),
+            queue.displayName(),
+            queue.minPlayers(),
+            queue.maxPlayers(),
+            state.queuedPlayerCount(),
+            state.phase(),
+            state.countdownEndsAtEpochMs()
+        ));
+    }
+
+    @Nonnull
     public synchronized List<QueueRuntimeState> listQueueStates() {
         long now = System.currentTimeMillis();
         for (QueueDefinition queue : queueService.list()) {
@@ -703,5 +727,16 @@ public final class QueueCoordinatorService {
         public static LeaveResult notQueued() {
             return new LeaveResult(LeaveOutcome.NOT_QUEUED, "", null);
         }
+    }
+
+    public record QueueHudState(
+        String queueId,
+        String displayName,
+        int minPlayers,
+        int maxPlayers,
+        int queuedPlayers,
+        QueuePhase phase,
+        long countdownEndsAtEpochMs
+    ) {
     }
 }

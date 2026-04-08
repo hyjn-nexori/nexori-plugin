@@ -223,6 +223,46 @@ public final class ArenaMatchService {
     }
 
     @Nonnull
+    public synchronized Optional<ReturnHudState> findReturnHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
+        String matchId = matchIdByPlayerUuid.get(playerUuid);
+        if (matchId == null || matchId.isBlank()) {
+            return Optional.empty();
+        }
+
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPendingReturn(playerUuid)) {
+            return Optional.empty();
+        }
+
+        Long returnAtEpochMs = match.pendingReturnAtEpochMsByPlayerUuid().get(playerUuid);
+        if (returnAtEpochMs == null || returnAtEpochMs <= 0L) {
+            return Optional.empty();
+        }
+
+        String arenaDisplayName = arenaService.find(match.arenaId())
+            .map(ArenaDefinition::displayName)
+            .orElse(match.arenaId());
+
+        String outcomeLabel;
+        if (playerUuid.toString().equalsIgnoreCase(match.winnerPlayerUuid())) {
+            outcomeLabel = "Victory";
+        } else if (match.isPlayerEliminated(playerUuid)) {
+            outcomeLabel = "Eliminated";
+        } else {
+            outcomeLabel = "Match Complete";
+        }
+
+        return Optional.of(new ReturnHudState(
+            match.matchId(),
+            match.queueId(),
+            arenaDisplayName,
+            outcomeLabel,
+            returnAtEpochMs,
+            Math.max(0L, returnAtEpochMs - nowEpochMs)
+        ));
+    }
+
+    @Nonnull
     public synchronized Optional<UUID> findActivePlayerUuid(@Nonnull String rawMatchId, @Nonnull String rawPlayerToken) {
         ArenaActiveMatch match = find(rawMatchId).orElse(null);
         if (match == null || rawPlayerToken == null || rawPlayerToken.isBlank()) {
@@ -666,5 +706,15 @@ public final class ArenaMatchService {
         public static ResolvePlayerResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, @Nonnull UUID playerUuid) {
             return new ResolvePlayerResult(ResolvePlayerOutcome.PLAYER_MISSING, activeMatch.matchId(), playerUuid, null, activeMatch);
         }
+    }
+
+    public record ReturnHudState(
+        String matchId,
+        String queueId,
+        String arenaDisplayName,
+        String outcomeLabel,
+        long returnAtEpochMs,
+        long remainingReturnDelayMs
+    ) {
     }
 }

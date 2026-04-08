@@ -60,6 +60,8 @@ import io.github.hyjn.nexori.plugin.inventory.InventoryTransferPolicyStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferReceiptStore;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.PlayerSaveRepository;
+import io.github.hyjn.nexori.plugin.hud.NexoriStatusHudService;
+import io.github.hyjn.nexori.plugin.hud.NexoriStatusHudTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
@@ -154,6 +156,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaMatchService arenaMatchService;
     private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
     private NexoriMinigameApi minigameApi;
+    private NexoriStatusHudService nexoriStatusHudService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -336,6 +339,11 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaService,
                 this.arenaMatchResolutionTriggerRegistry
             );
+            this.nexoriStatusHudService = new NexoriStatusHudService(
+                this.queueCoordinatorService,
+                this.arenaMatchService,
+                this.getLogger()
+            );
             this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.arenaMatchResolutionTriggerRegistry);
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -426,6 +434,11 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.queueCoordinatorService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.arenaMatchService::handlePlayerDisconnect);
+            this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
+                if (event.getPlayerRef() != null) {
+                    this.nexoriStatusHudService.remove(event.getPlayerRef());
+                }
+            });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
                 io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State resumeState = null;
@@ -447,6 +460,15 @@ public class NexoriPlugin extends JavaPlugin {
                 NexoriMenuV2Page.open(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef, event.getPlayer(), this, resumeState);
             });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
+                com.hypixel.hytale.server.core.universe.PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
+                    event.getPlayerRef(),
+                    com.hypixel.hytale.server.core.universe.Universe.get().getPlayerRefComponentType()
+                );
+                if (playerRef != null) {
+                    this.nexoriStatusHudService.refresh(playerRef);
+                }
+            });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoverySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
@@ -457,6 +479,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
             this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
+            this.getEntityStoreRegistry().registerSystem(new NexoriStatusHudTickSystem(this.nexoriStatusHudService));
 
             this.getLogger().atInfo().log(
                 "Nexori ready. serverId=" + this.localIdentity.serverId()
@@ -605,6 +628,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ArenaMatchResolutionTriggerRegistry getArenaMatchResolutionTriggerRegistry() {
         return arenaMatchResolutionTriggerRegistry;
+    }
+
+    public NexoriStatusHudService getNexoriStatusHudService() {
+        return nexoriStatusHudService;
     }
 
     /**
