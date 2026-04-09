@@ -114,18 +114,37 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull String contextJson,
         @Nonnull String operationId
     ) throws IOException, GeneralSecurityException {
-        if (destinationTargetId.isBlank()) {
-            recordTravel(
-                operationId,
-                DiagnosticsAction.TRAVEL_DISPATCH,
-                DiagnosticsOutcome.FAILED,
-                DiagnosticsReasonClass.VALIDATION,
-                DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
-                "Secure Nexori travel now requires a destination target id.",
-                event -> event.playerUuid(playerRef.getUuid().toString()).playerNameClaimed(playerRef.getUsername())
-            );
-            throw new IllegalArgumentException("Secure Nexori travel now requires a destinationTargetId that exists on the destination server.");
-        }
+        dispatchTravel(playerRef, destination, destinationTargetId, arrivalPointId, travelProfileId, contextJson, operationId);
+    }
+
+    public void travelToServer(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String travelProfileId,
+        @Nonnull String contextJson
+    ) throws IOException, GeneralSecurityException {
+        travelToServer(playerRef, destination, travelProfileId, contextJson, diagnosticsService.newOperationId("travel"));
+    }
+
+    public void travelToServer(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String travelProfileId,
+        @Nonnull String contextJson,
+        @Nonnull String operationId
+    ) throws IOException, GeneralSecurityException {
+        dispatchTravel(playerRef, destination, "", "", travelProfileId, contextJson, operationId);
+    }
+
+    private void dispatchTravel(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull String destinationTargetId,
+        @Nonnull String arrivalPointId,
+        @Nonnull String travelProfileId,
+        @Nonnull String contextJson,
+        @Nonnull String operationId
+    ) throws IOException, GeneralSecurityException {
 
         if (!isTrustedDestination(destination)) {
             recordTravel(
@@ -212,6 +231,58 @@ public final class SecureTravelService implements SecureReferralHandler {
         String operationId = payload.travelOperationId() == null || payload.travelOperationId().isBlank()
             ? diagnosticsService.newOperationId("travel")
             : payload.travelOperationId();
+        if (payload.destinationTargetId() == null || payload.destinationTargetId().isBlank()) {
+            try {
+                TravelProfileType profileType = TravelProfileType.parse(payload.travelProfileId());
+                inventoryTransferService.prepareInboundArrival(
+                    event.getUuid(),
+                    profileType,
+                    payload.inventoryTransferId(),
+                    payload.inventoryState(),
+                    payload.sourceServerId(),
+                    payload.sourceConnectionAddress()
+                );
+                recordTravel(
+                    operationId,
+                    DiagnosticsAction.TRAVEL_ACCEPT,
+                    DiagnosticsOutcome.ACCEPTED,
+                    DiagnosticsReasonClass.NORMAL,
+                    DiagnosticsReasonCode.TRAVEL_ACCEPTED,
+                    "Accepted secure Nexori server travel on the destination server.",
+                    eventDetails -> eventDetails
+                        .playerUuid(event.getUuid().toString())
+                        .playerNameClaimed(event.getUsername())
+                        .payloadType(PAYLOAD_TYPE)
+                        .remoteServerId(payload.sourceServerId())
+                        .remoteConnectionAddress(payload.sourceConnectionAddress())
+                        .travelProfileId(profileType.id())
+                        .transferId(payload.inventoryTransferId())
+                );
+                logger.atInfo().log("Accepted secure Nexori server travel for " + event.getUsername()
+                    + " from server "
+                    + payload.sourceServerId());
+            } catch (IllegalArgumentException | IOException exception) {
+                recordTravel(
+                    operationId,
+                    DiagnosticsAction.TRAVEL_ACCEPT,
+                    DiagnosticsOutcome.FAILED,
+                    DiagnosticsReasonClass.IO,
+                    DiagnosticsReasonCode.INVENTORY_PROFILE_APPLY_FAILED,
+                    "This Nexori travel could not apply its inventory profile: " + exception.getMessage(),
+                    eventDetails -> eventDetails
+                        .playerUuid(event.getUuid().toString())
+                        .playerNameClaimed(event.getUsername())
+                        .payloadType(PAYLOAD_TYPE)
+                        .remoteServerId(payload.sourceServerId())
+                        .remoteConnectionAddress(payload.sourceConnectionAddress())
+                        .travelProfileId(payload.travelProfileId())
+                        .transferId(payload.inventoryTransferId())
+                );
+                event.setCancelled(true);
+                event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
+            }
+            return;
+        }
         ResolvedDestinationTarget resolvedTarget = destinationTargetService.resolve(payload.destinationTargetId(), payload.arrivalPointId()).orElse(null);
         if (resolvedTarget == null) {
             recordTravel(

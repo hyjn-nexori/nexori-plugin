@@ -107,7 +107,6 @@ public final class NexoriMenuV2Page {
     private static final String QUEUE_MAX_PLAYERS_INPUT_ID = "nexori-v2-queue-max-players";
     private static final String QUEUE_COUNTDOWN_INPUT_ID = "nexori-v2-queue-countdown";
     private static final String RULE_GROUP_NAME_INPUT_ID = "nexori-v2-rule-group-name";
-    private static final String DEFAULT_REMOTE_TARGET_ID = "default.natural_spawn";
     private static final String DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID = "keep_inventory";
     private static final int DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS = 9999;
     private static final String NEW_RULE_GROUP_ID = "__new__";
@@ -2479,17 +2478,14 @@ public final class NexoriMenuV2Page {
         int width = CONTENT_W - 32;
         int innerWidth = width - 16;
         int setupCardHeight = 156;
-        int emptyCardHeight = 126;
-        int serverCardsHeight = peers.isEmpty()
-            ? emptyCardHeight
-            : peers.size() * HOME_SERVER_CARD_H + Math.max(0, peers.size() - 1) * 8 + 32;
-        int contentHeight = 16 + setupCardHeight + 16 + serverCardsHeight + 20;
+        int serversTablesHeight = Math.max(340, viewportHeight - setupCardHeight - 32);
+        int contentHeight = 16 + setupCardHeight + 16 + serversTablesHeight + 20;
 
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
         scroll.addChild(homeSetupCard(ref, store, playerRef, player, plugin, state, setup, innerWidth, setupCardHeight));
         scroll.addChild(spacerY(16));
-        scroll.addChild(serverCardsContainer(ref, store, playerRef, player, plugin, state, setup, peers, innerWidth, serverCardsHeight));
+        scroll.addChild(homeServersTablesCard(ref, store, playerRef, player, plugin, state, peers, setup, innerWidth, serversTablesHeight, scrollId + "-servers"));
         return scroll;
     }
 
@@ -2581,99 +2577,124 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder serverCardsContainer(
+    private static GroupBuilder homeServersTablesCard(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
         @Nonnull Player player,
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> localPeers,
         @Nonnull HomeSetupState setup,
-        @Nonnull List<ConfiguredPeer> peers,
         int width,
-        int height
+        int height,
+        @Nonnull String scrollId
     ) {
         GroupBuilder container = card(width, height, PANEL_BG);
-        container.addChild(spacerY(8));
-        if (peers.isEmpty()) {
-            container.addChild(emptyServersCard(width - 32, 94));
-            return container;
-        }
+        int availableWidth = width - 32;
+        int columnGap = 12;
+        int columnWidth = (availableWidth - columnGap) / 2;
+        int outerGap = 12;
+        int viewportHeight = Math.max(220, height - 72 - 12 - (outerGap * 2));
 
-        for (int i = 0; i < peers.size(); i++) {
-            container.addChild(homeServerCard(ref, store, playerRef, player, plugin, state, setup, peers.get(i), width - 32, HOME_SERVER_CARD_H));
-            if (i + 1 < peers.size()) {
-                container.addChild(spacerY(8));
-            }
-        }
+        List<HomeServerEntry> bundleServers = buildBundleHomeServers(plugin, localPeers, setup);
+
+        container.addChild(spacerY(outerGap));
+        GroupBuilder headerRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(availableWidth).setHeight(72));
+        headerRow.addChild(selectionSummaryCard("LOCAL PEERS", "Source for Initial Setup.", columnWidth, !localPeers.isEmpty()));
+        headerRow.addChild(spacerX(columnGap));
+        headerRow.addChild(selectionSummaryCard("TRUST BUNDLE", "Travel across the active network.", columnWidth, !bundleServers.isEmpty()));
+        container.addChild(headerRow);
+        container.addChild(spacerY(12));
+
+        GroupBuilder columnsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(availableWidth).setHeight(viewportHeight));
+        columnsRow.addChild(localPeersColumnScroll(ref, store, playerRef, player, plugin, state, localPeers, columnWidth, viewportHeight, scrollId + "-local"));
+        columnsRow.addChild(spacerX(columnGap));
+        columnsRow.addChild(bundleServersColumnScroll(ref, store, playerRef, player, plugin, state, setup, bundleServers, columnWidth, viewportHeight, scrollId + "-bundle"));
+        container.addChild(columnsRow);
+        container.addChild(spacerY(outerGap));
         return container;
     }
 
     @Nonnull
-    private static GroupBuilder homeServerCard(
+    private static ReorderableListBuilder localPeersColumnScroll(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
         @Nonnull Player player,
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state,
-        @Nonnull HomeSetupState setup,
+        @Nonnull List<ConfiguredPeer> peers,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int rowHeight = 64;
+        int contentHeight = peers.isEmpty()
+            ? height
+            : 8 + peers.size() * rowHeight + Math.max(0, peers.size() - 1) * 8 + 8;
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        if (peers.isEmpty()) {
+            scroll.addChild(label("No local peers saved yet.", MUTED, width - 16));
+            return scroll;
+        }
+        for (int index = 0; index < peers.size(); index++) {
+            ConfiguredPeer peer = peers.get(index);
+            scroll.addChild(localPeerRowCard(ref, store, playerRef, player, plugin, state, peer, width - 16, rowHeight));
+            if (index + 1 < peers.size()) {
+                scroll.addChild(spacerY(8));
+            }
+        }
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder localPeerRowCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
         @Nonnull ConfiguredPeer peer,
         int width,
         int height
     ) {
-        boolean local = !setup.localConnectionAddress().isBlank() && setup.localConnectionAddress().equalsIgnoreCase(peer.connectionAddress());
-        boolean trusted = setup.trustedAddresses().contains(peer.connectionAddress().toLowerCase());
-        boolean canTravel = !local && trusted && !setup.running();
-
         GroupBuilder card = GroupBuilder.group()
             .withLayoutMode("Top")
             .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
-            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withPadding(HyUIPadding.symmetric(12, 0))
             .withBackground(SERVER_CARD_BG);
-        int rowHeight = 30;
+        int rowHeight = 40;
         int verticalOffset = Math.max(0, (height - rowHeight) / 2);
         card.addChild(spacerY(verticalOffset));
 
         GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
-
-        int actionsWidth = SERVER_ACTION_CURRENT_W + 8 + SERVER_ACTION_EDIT_W + 8 + SERVER_ACTION_REMOVE_W;
-        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - actionsWidth - 12 - SERVER_ACTION_EXTRA_LEFT_SHIFT).setHeight(rowHeight));
-        identity.addChild(label(peer.displayName(), TITLE, 220));
-        identity.addChild(spacerX(3));
-        identity.addChild(label(peer.connectionAddress(), MUTED, Math.max(80, width - actionsWidth - 247 - SERVER_ACTION_EXTRA_LEFT_SHIFT)));
+        int actionsWidth = SERVER_ACTION_EDIT_W + 8 + SERVER_ACTION_REMOVE_W;
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - actionsWidth - 40).setHeight(rowHeight));
+        identity.addChild(label(peer.displayName(), SUBTITLE, width - actionsWidth - 40));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(peer.connectionAddress(), MUTED, width - actionsWidth - 40));
         row.addChild(identity);
         row.addChild(spacerX(12));
         row.addChild(
             ButtonBuilder.smallSecondaryTextButton()
-                .withText(local ? "CURRENT" : (trusted ? "TRAVEL" : "PENDING"))
-                .withAnchor(new HyUIAnchor().setWidth(SERVER_ACTION_CURRENT_W).setHeight(30))
-                .withDisabled(!canTravel)
-                .onClick((ignored, ctx) -> {
-                    try {
-                        plugin.getSecureTravelService().travel(playerRef, peer, DEFAULT_REMOTE_TARGET_ID, "", TravelProfileType.KEEP_INVENTORY.id(), "");
-                        dismissPage(player, ref, store);
-                    } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not start travel to " + peer.displayName() + ": " + exception.getMessage()));
-                    }
-                })
-        );
-        row.addChild(spacerX(8));
-        row.addChild(
-            ButtonBuilder.smallSecondaryTextButton()
                 .withText("EDIT")
                 .withAnchor(new HyUIAnchor().setWidth(SERVER_ACTION_EDIT_W).setHeight(30))
-                .onClick((ignored, ctx) -> open(
-                    ref,
-                    store,
-                    playerRef,
-                    player,
-                    plugin,
-                    state.withPendingServerDisplayName(peer.displayName())
-                        .withPendingServerAddress(peer.connectionAddress())
-                        .withEditingServerAddress(peer.connectionAddress())
-                        .withStatusText("Editing " + peer.displayName() + ".")
-                ))
+                .onClick((ignored, ctx) -> {
+                    open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state.withPendingServerDisplayName(peer.displayName())
+                            .withPendingServerAddress(peer.connectionAddress())
+                            .withEditingServerAddress(peer.connectionAddress())
+                            .withStatusText("Editing " + peer.displayName() + ".")
+                    );
+                })
         );
         row.addChild(spacerX(8));
         row.addChild(
@@ -2694,11 +2715,81 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder emptyServersCard(int width, int height) {
-        GroupBuilder card = card(width, height, PANEL_BG);
-        card.addChild(label("No servers saved yet", SUBTITLE, width - 32));
-        card.addChild(spacerY(8));
-        card.addChild(label("Add the servers that should belong to this Nexori network here first. Once the first trust bundle exists, the rest of the workspace unlocks.", MUTED, width - 32));
+    private static ReorderableListBuilder bundleServersColumnScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull HomeSetupState setup,
+        @Nonnull List<HomeServerEntry> servers,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int rowHeight = 64;
+        int contentHeight = servers.isEmpty()
+            ? height
+            : 8 + servers.size() * rowHeight + Math.max(0, servers.size() - 1) * 8 + 8;
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        if (servers.isEmpty()) {
+            scroll.addChild(label("No trusted servers visible yet.", MUTED, width - 16));
+            return scroll;
+        }
+        for (int index = 0; index < servers.size(); index++) {
+            scroll.addChild(bundlePeerRowCard(ref, store, playerRef, player, plugin, state, setup, servers.get(index), width - 16, rowHeight));
+            if (index + 1 < servers.size()) {
+                scroll.addChild(spacerY(8));
+            }
+        }
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder bundlePeerRowCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull HomeSetupState setup,
+        @Nonnull HomeServerEntry peer,
+        int width,
+        int height
+    ) {
+        boolean canTravel = !peer.local() && !setup.running();
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(12, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 24).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 150).setHeight(rowHeight));
+        identity.addChild(label(peer.displayName(), SUBTITLE, width - 150));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(peer.connectionAddress(), MUTED, width - 150));
+        row.addChild(identity);
+        row.addChild(spacerX(10));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText(peer.local() ? "CURRENT" : "TRAVEL")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .withDisabled(!canTravel)
+                .onClick((ignored, ctx) -> {
+                    try {
+                        plugin.getSecureTravelService().travelToServer(playerRef, ConfiguredPeer.parse(peer.connectionAddress()), TravelProfileType.KEEP_INVENTORY.id(), "");
+                        dismissPage(player, ref, store);
+                    } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not start travel to " + peer.displayName() + ": " + exception.getMessage()));
+                    }
+                })
+        );
+        card.addChild(row);
         return card;
     }
 
@@ -6756,7 +6847,7 @@ public final class NexoriMenuV2Page {
             }
         }
 
-        boolean dirty = !hasBundle || !configured.equals(new TreeSet<>(trusted));
+        boolean dirty = !hasBundle || (!configured.isEmpty() && !configured.equals(new TreeSet<>(trusted)));
         boolean localMissing = !localConnectionAddress.isBlank() && configured.stream().noneMatch(address -> address.equalsIgnoreCase(localConnectionAddress));
 
         if (running) {
@@ -6778,7 +6869,50 @@ public final class NexoriMenuV2Page {
             }
             return new HomeSetupState(false, !peers.isEmpty(), true, localConnectionAddress, trusted, "Bundle needs re-run", detail, "Run Initial Setup again after every add/remove.", BAD, BAD_BG);
         }
-        return new HomeSetupState(false, false, false, localConnectionAddress, trusted, "Trusted network ready", "The local server list matches the active trust bundle. Nexori is ready for secure travel.", "Bundle v" + bundle.bundleVersion() + " updated at " + TIME_FORMAT.format(Instant.ofEpochMilli(bundle.updatedAtEpochMillis())) + ".", GOOD, GOOD_BG);
+        String detail = peers.isEmpty()
+            ? "This server is using the active trust bundle to render the secure network list."
+            : "The local server list matches the active trust bundle. Nexori is ready for secure travel.";
+        return new HomeSetupState(false, false, false, localConnectionAddress, trusted, "Trusted network ready", detail, "Bundle v" + bundle.bundleVersion() + " updated at " + TIME_FORMAT.format(Instant.ofEpochMilli(bundle.updatedAtEpochMillis())) + ".", GOOD, GOOD_BG);
+    }
+
+    @Nonnull
+    private static List<HomeServerEntry> buildBundleHomeServers(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull HomeSetupState setup
+    ) {
+        Map<String, ConfiguredPeer> localPeersByAddress = new LinkedHashMap<>();
+        for (ConfiguredPeer peer : peers) {
+            localPeersByAddress.putIfAbsent(peer.connectionAddress().toLowerCase(), peer);
+        }
+
+        List<HomeServerEntry> entries = new ArrayList<>();
+        Set<String> seenAddresses = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+
+        if (!setup.trustedAddresses().isEmpty()) {
+            for (BundleMember member : plugin.getBootstrapCoordinator().getTrustBundle().members()) {
+                String rawConnectionAddress = member.connectionAddress();
+                if (rawConnectionAddress == null || rawConnectionAddress.isBlank()) {
+                    continue;
+                }
+                String connectionAddress = rawConnectionAddress.trim().toLowerCase();
+                if (!seenAddresses.add(connectionAddress)) {
+                    continue;
+                }
+                ConfiguredPeer localPeer = localPeersByAddress.get(connectionAddress);
+                boolean local = !setup.localConnectionAddress().isBlank() && setup.localConnectionAddress().equalsIgnoreCase(connectionAddress);
+                String displayName = localPeer != null
+                    ? localPeer.displayName()
+                    : (local ? "Current Server" : connectionAddress);
+                entries.add(new HomeServerEntry(
+                    displayName,
+                    connectionAddress,
+                    local
+                ));
+            }
+        }
+
+        return entries;
     }
 
     private record TravelServerGroup(
@@ -6891,6 +7025,13 @@ public final class NexoriMenuV2Page {
     private record RuleMatchIndicator(
         @Nonnull String label,
         @Nonnull HyUIPatchStyle background
+    ) {
+    }
+
+    private record HomeServerEntry(
+        @Nonnull String displayName,
+        @Nonnull String connectionAddress,
+        boolean local
     ) {
     }
 
