@@ -43,7 +43,6 @@ public final class ArenaMatchService {
     private final MatchSessionService matchSessionService;
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
-    private final ArenaMatchResolutionTriggerRegistry triggerRegistry;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
@@ -53,15 +52,13 @@ public final class ArenaMatchService {
         @Nonnull SecureTravelService secureTravelService,
         @Nonnull MatchSessionService matchSessionService,
         @Nonnull ArenaService arenaService,
-        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService,
-        @Nonnull ArenaMatchResolutionTriggerRegistry triggerRegistry
+        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService
     ) {
         this.logger = logger;
         this.secureTravelService = secureTravelService;
         this.matchSessionService = matchSessionService;
         this.arenaService = arenaService;
         this.instanceSpawnSlotService = instanceSpawnSlotService;
-        this.triggerRegistry = triggerRegistry;
     }
 
     public synchronized void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -534,14 +531,14 @@ public final class ArenaMatchService {
             return match;
         }
 
-        ArenaMatchResolutionTrigger trigger = triggerRegistry.find(match.matchResolutionTriggerId()).orElse(null);
-        if (trigger == null) {
-            return match.withLastError(
-                "Unknown arena match resolution trigger '" + match.matchResolutionTriggerId() + "'.",
-                nowEpochMs
-            );
+        if (LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(match.matchResolutionTriggerId())) {
+            return LastPlayerAliveArenaMatchResolutionTrigger.evaluate(this, match, nowEpochMs);
         }
-        return trigger.evaluate(this, match, nowEpochMs);
+
+        return match.withLastError(
+            "Unknown arena match resolution trigger '" + match.matchResolutionTriggerId() + "'.",
+            nowEpochMs
+        );
     }
 
     @Nonnull

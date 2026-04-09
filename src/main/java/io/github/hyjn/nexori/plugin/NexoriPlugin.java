@@ -65,7 +65,6 @@ import io.github.hyjn.nexori.plugin.hud.NexoriStatusHudTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
-import io.github.hyjn.nexori.plugin.minigame.ArenaMatchResolutionTriggerRegistry;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
@@ -160,7 +159,6 @@ public class NexoriPlugin extends JavaPlugin {
     private QueueCoordinatorService queueCoordinatorService;
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
-    private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
     private WorldLabelService worldLabelService;
@@ -217,7 +215,6 @@ public class NexoriPlugin extends JavaPlugin {
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
                 this.arenaService
             );
-            this.arenaMatchResolutionTriggerRegistry = new ArenaMatchResolutionTriggerRegistry();
             this.matchSessionService = new MatchSessionService(
                 new MatchSessionStore(this.getDataDirectory().resolve("state").resolve("match-sessions.json"))
             );
@@ -347,8 +344,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureTravelService,
                 this.matchSessionService,
                 this.arenaService,
-                this.instanceSpawnSlotService,
-                this.arenaMatchResolutionTriggerRegistry
+                this.instanceSpawnSlotService
             );
             this.nexoriStatusHudService = new NexoriStatusHudService(
                 this.queueCoordinatorService,
@@ -359,7 +355,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 new PortalWorldLabelSource(this.portalInstanceService)
             );
-            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.arenaMatchResolutionTriggerRegistry);
+            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService);
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
             this.portalInteractionService = new NexoriPortalInteractionService(
@@ -644,10 +640,6 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ArenaMatchService getArenaMatchService() {
         return arenaMatchService;
-    }
-
-    public ArenaMatchResolutionTriggerRegistry getArenaMatchResolutionTriggerRegistry() {
-        return arenaMatchResolutionTriggerRegistry;
     }
 
     public NexoriStatusHudService getNexoriStatusHudService() {

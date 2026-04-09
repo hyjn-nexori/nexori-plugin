@@ -2,7 +2,6 @@ package io.github.hyjn.nexori.plugin.api.minigame;
 
 import javax.annotation.Nonnull;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -28,15 +27,4 @@ public interface NexoriMinigameApi {
         int returnDelaySeconds,
         @Nonnull String reason
     );
-
-    /**
-     * Registers a public trigger id that can later be referenced from arena config.
-     */
-    void registerResolutionTrigger(@Nonnull NexoriArenaResolutionTrigger trigger);
-
-    /**
-     * Lists currently known public trigger ids, including Nexori built-ins.
-     */
-    @Nonnull
-    Set<String> listResolutionTriggerIds();
 }

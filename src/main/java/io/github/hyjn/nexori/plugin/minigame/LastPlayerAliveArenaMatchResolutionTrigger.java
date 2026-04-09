@@ -8,19 +8,15 @@ import javax.annotation.Nonnull;
 import java.util.List;
 import java.util.UUID;
 
-public final class LastPlayerAliveArenaMatchResolutionTrigger implements ArenaMatchResolutionTrigger {
+public final class LastPlayerAliveArenaMatchResolutionTrigger {
 
     public static final String ID = "last_player_alive";
 
-    @Nonnull
-    @Override
-    public String id() {
-        return ID;
+    private LastPlayerAliveArenaMatchResolutionTrigger() {
     }
 
     @Nonnull
-    @Override
-    public ArenaActiveMatch evaluate(@Nonnull ArenaMatchService arenaMatchService, @Nonnull ArenaActiveMatch match, long nowEpochMs) {
+    public static ArenaActiveMatch evaluate(@Nonnull ArenaMatchService arenaMatchService, @Nonnull ArenaActiveMatch match, long nowEpochMs) {
         if (match.hasWinner() || !match.allExpectedPlayersArrived()) {
             return match;
         }
@@ -38,7 +34,7 @@ public final class LastPlayerAliveArenaMatchResolutionTrigger implements ArenaMa
         return arenaMatchService.markPlayerWinInternal(
             match,
             winnerUuid,
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
+            ID,
             nowEpochMs
         );
     }
