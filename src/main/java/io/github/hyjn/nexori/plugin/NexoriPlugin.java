@@ -92,6 +92,7 @@ import io.github.hyjn.nexori.plugin.policy.ServerPolicySyncService;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalBreakSystem;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalInteractionService;
 import io.github.hyjn.nexori.plugin.portal.NexoriPortalPlaceSystem;
+import io.github.hyjn.nexori.plugin.portal.PortalWorldLabelSource;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceStore;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
@@ -105,6 +106,8 @@ import io.github.hyjn.nexori.plugin.ui.TargetSetupDraftService;
 import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Command;
 import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Page;
 import io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State;
+import io.github.hyjn.nexori.plugin.worldlabel.WorldLabelService;
+import io.github.hyjn.nexori.plugin.worldlabel.WorldLabelTickSystem;
 
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
@@ -160,6 +163,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaMatchResolutionTriggerRegistry arenaMatchResolutionTriggerRegistry;
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
+    private WorldLabelService worldLabelService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -351,6 +355,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaMatchService,
                 this.getLogger()
             );
+            this.worldLabelService = new WorldLabelService(
+                this.getLogger(),
+                new PortalWorldLabelSource(this.portalInstanceService)
+            );
             this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.arenaMatchResolutionTriggerRegistry);
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
@@ -487,6 +495,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
             this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
             this.getEntityStoreRegistry().registerSystem(new NexoriStatusHudTickSystem(this.nexoriStatusHudService));
+            this.getEntityStoreRegistry().registerSystem(new WorldLabelTickSystem(this.worldLabelService));
 
             this.getLogger().atInfo().log(
                 "Nexori ready. serverId=" + this.localIdentity.serverId()
