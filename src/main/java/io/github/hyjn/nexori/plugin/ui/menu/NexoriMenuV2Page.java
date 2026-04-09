@@ -39,6 +39,7 @@ import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
+import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
 import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
 import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyDefinition;
@@ -68,6 +69,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.UUID;
 
 public final class NexoriMenuV2Page {
 
@@ -468,7 +470,379 @@ public final class NexoriMenuV2Page {
             case LOBBY -> buildLobbyWorkspaceScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
             case DESTINATIONS -> buildDestinationWorkspaceScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case QUEUES -> buildQueueWorkspaceScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
+            case SPAWNS -> buildSpawnWorkspaceScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
         };
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder buildSpawnWorkspaceScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int width = CONTENT_W - 32;
+        int innerWidth = width - 16;
+        InstanceSpawnSlotDefinition editing = currentEditedSpawnSlot(plugin, state);
+        String selectedTemplateId = state.pendingDestinationInstanceTemplateId().isBlank()
+            ? (editing == null ? "" : editing.instanceTemplateId())
+            : state.pendingDestinationInstanceTemplateId();
+        List<String> instanceIds = buildInstanceTemplateIds();
+        List<InstanceSpawnSlotDefinition> slots = plugin.getInstanceSpawnSlotService().list();
+
+        int setupHeight = 156;
+        int selectorViewportHeight = 300;
+        int selectorHeight = 72 + 12 + selectorViewportHeight + 24;
+        int savedViewportHeight = 300;
+        int savedHeight = 64 + 12 + savedViewportHeight + 24;
+        int contentHeight = 16 + setupHeight + 12 + selectorHeight + 12 + savedHeight + 20;
+
+        ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(16));
+        scroll.addChild(spawnSlotSetupCard(ref, store, playerRef, player, plugin, state, editing, selectedTemplateId, innerWidth, setupHeight));
+        scroll.addChild(spacerY(12));
+        scroll.addChild(spawnSlotTemplateSelectionContainer(ref, store, playerRef, player, plugin, state, instanceIds, selectedTemplateId, innerWidth, selectorHeight, selectorViewportHeight, scrollId + "-spawn-instances"));
+        scroll.addChild(spacerY(12));
+        scroll.addChild(spawnSlotListContainer(ref, store, playerRef, player, plugin, state, slots, innerWidth, savedHeight, savedViewportHeight, scrollId + "-saved-spawn-slots"));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder spawnSlotSetupCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        InstanceSpawnSlotDefinition editing,
+        @Nonnull String selectedTemplateId,
+        int width,
+        int height
+    ) {
+        boolean canSave = !selectedTemplateId.isBlank();
+        GroupBuilder card = card(width, height, PANEL_BG);
+        card.addChild(label("Spawn Slots", TITLE, width - 32));
+        card.addChild(spacerY(8));
+        card.addChild(label("Select an instance template, stand on the exact island spawn you want, then save your current position. Nexori will distribute arriving players across these slots when the match instance is created.", MUTED, width - 32));
+        card.addChild(spacerY(12));
+
+        int summaryWidth = Math.max(360, width - 32 - 340 - 12);
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(72));
+        row.addChild(selectionSummaryCard(
+            "INSTANCE",
+            selectedTemplateId.isBlank() ? "Select an instance template below." : selectedTemplateId,
+            summaryWidth,
+            !selectedTemplateId.isBlank()
+        ));
+        row.addChild(spacerX(12));
+
+        GroupBuilder actions = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(340).setHeight(72));
+        actions.addChild(spacerY(15));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(340).setHeight(42));
+        actionRow.addChild(
+            ButtonBuilder.textButton()
+                .withText(editing == null ? "SAVE CURRENT POSITION" : "UPDATE SLOT")
+                .withDisabled(!canSave)
+                .withAnchor(new HyUIAnchor().setWidth(220).setHeight(42))
+                .onClick((ignored, ctx) -> {
+                    if (selectedTemplateId.isBlank()) {
+                        open(ref, store, playerRef, player, plugin, state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS).withStatusText("Select an instance template first."));
+                        return;
+                    }
+                    try {
+                        Transform transform = captureCurrentTransform(store, ref);
+                        String slotId = editing == null
+                            ? deriveId(selectedTemplateId + "-" + UUID.randomUUID(), "spawn_slot")
+                            : editing.slotId();
+                        InstanceSpawnSlotDefinition saved = plugin.getInstanceSpawnSlotService().upsert(new InstanceSpawnSlotDefinition(
+                            slotId,
+                            selectedTemplateId,
+                            transform.getPosition().x,
+                            transform.getPosition().y,
+                            transform.getPosition().z,
+                            transform.getRotation().x,
+                            transform.getRotation().y,
+                            transform.getRotation().z,
+                            editing == null ? System.currentTimeMillis() : editing.createdAtEpochMs()
+                        ));
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                                .withEditingDestinationId("")
+                                .withDestinationDraft(
+                                    state.pendingDestinationDisplayName(),
+                                    state.pendingDestinationConnectionAddress(),
+                                    state.pendingDestinationTargetId(),
+                                    saved.instanceTemplateId(),
+                                    state.pendingDestinationTriggerId(),
+                                    state.pendingDestinationMaxPlayers()
+                                )
+                                .withStatusText((editing == null ? "Saved" : "Updated") + " spawn slot for " + saved.instanceTemplateId() + ".")
+                        );
+                    } catch (IOException | IllegalArgumentException | IllegalStateException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                                .withStatusText("Could not save spawn slot: " + exception.getMessage())
+                        );
+                    }
+                })
+        );
+        actionRow.addChild(spacerX(12));
+        actionRow.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("CANCEL")
+                .withAnchor(new HyUIAnchor().setWidth(108).setHeight(42))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                        .withEditingDestinationId("")
+                        .withStatusText("Spawn slot edit cleared.")
+                ))
+        );
+        actions.addChild(actionRow);
+        row.addChild(actions);
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder spawnSlotTemplateSelectionContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<String> instanceIds,
+        @Nonnull String selectedTemplateId,
+        int width,
+        int height,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int outerGap = 12;
+        int bodyContentHeight = instanceIds.isEmpty()
+            ? viewportHeight
+            : 8 + instanceIds.size() * HOME_SERVER_CARD_H + Math.max(0, instanceIds.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(selectionSummaryCard(
+            "INSTANCE",
+            selectedTemplateId.isBlank() ? "Select an instance template below." : selectedTemplateId,
+            width - 32,
+            !selectedTemplateId.isBlank()
+        ));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, viewportHeight, Math.max(viewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (instanceIds.isEmpty()) {
+            body.addChild(label("No instance templates found.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < instanceIds.size(); index++) {
+                String instanceId = instanceIds.get(index);
+                body.addChild(
+                    selectorRowCard(
+                        instanceId,
+                        "",
+                        selectedTemplateId.equalsIgnoreCase(instanceId),
+                        width - 48,
+                        HOME_SERVER_CARD_H,
+                        () -> open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                                .withDestinationDraft(
+                                    state.pendingDestinationDisplayName(),
+                                    state.pendingDestinationConnectionAddress(),
+                                    state.pendingDestinationTargetId(),
+                                    instanceId,
+                                    state.pendingDestinationTriggerId(),
+                                    state.pendingDestinationMaxPlayers()
+                                )
+                                .withStatusText("Selected instance template " + instanceId + ".")
+                        )
+                    )
+                );
+                if (index + 1 < instanceIds.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder spawnSlotListContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<InstanceSpawnSlotDefinition> slots,
+        int width,
+        int height,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int outerGap = 12;
+        int bodyContentHeight = slots.isEmpty()
+            ? viewportHeight
+            : 8 + slots.size() * HOME_SERVER_CARD_H + Math.max(0, slots.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Saved Spawn Slots", width - 32));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, viewportHeight, Math.max(viewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (slots.isEmpty()) {
+            body.addChild(label("No spawn slots saved yet.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < slots.size(); index++) {
+                body.addChild(spawnSlotListRow(ref, store, playerRef, player, plugin, state, slots.get(index), width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < slots.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder spawnSlotListRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull InstanceSpawnSlotDefinition slot,
+        int width,
+        int height
+    ) {
+        List<InstanceSpawnSlotDefinition> templateSlots = plugin.getInstanceSpawnSlotService().listByInstanceTemplateId(slot.instanceTemplateId());
+        int ordinal = 1;
+        for (int index = 0; index < templateSlots.size(); index++) {
+            if (templateSlots.get(index).slotId().equalsIgnoreCase(slot.slotId())) {
+                ordinal = index + 1;
+                break;
+            }
+        }
+
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 250).setHeight(rowHeight));
+        identity.addChild(label(slot.instanceTemplateId(), SUBTITLE, width - 250));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(buildSpawnSlotDetail(slot, ordinal), MUTED, width - 250));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("EDIT")
+                .withAnchor(new HyUIAnchor().setWidth(90).setHeight(30))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                        .withEditingDestinationId(slot.slotId())
+                        .withDestinationDraft(
+                            state.pendingDestinationDisplayName(),
+                            state.pendingDestinationConnectionAddress(),
+                            state.pendingDestinationTargetId(),
+                            slot.instanceTemplateId(),
+                            state.pendingDestinationTriggerId(),
+                            state.pendingDestinationMaxPlayers()
+                        )
+                        .withStatusText("Move to the new position and save again for " + slot.instanceTemplateId() + ".")
+                ))
+        );
+        row.addChild(spacerX(8));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("REMOVE")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .onClick((ignored, ctx) -> {
+                    try {
+                        boolean removed = plugin.getInstanceSpawnSlotService().remove(slot.slotId());
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                                .withEditingDestinationId(state.editingDestinationId().equalsIgnoreCase(slot.slotId()) ? "" : state.editingDestinationId())
+                                .withStatusText(removed ? "Removed spawn slot from " + slot.instanceTemplateId() + "." : "Spawn slot was already removed.")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedMinigameTab(MinigameWorkspaceTab.SPAWNS)
+                                .withStatusText("Could not remove spawn slot: " + exception.getMessage())
+                        );
+                    }
+                })
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static String buildSpawnSlotDetail(@Nonnull InstanceSpawnSlotDefinition slot, int ordinal) {
+        return "Slot " + ordinal
+            + "  X " + formatCoordinate(slot.x())
+            + " Y " + formatCoordinate(slot.y())
+            + " Z " + formatCoordinate(slot.z())
+            + "  Pitch " + formatCoordinate(slot.pitch())
+            + " Yaw " + formatCoordinate(slot.yaw());
+    }
+
+    @Nonnull
+    private static String formatCoordinate(double value) {
+        return String.format(java.util.Locale.ROOT, "%.1f", value);
     }
 
     @Nonnull
@@ -4021,6 +4395,13 @@ public final class NexoriMenuV2Page {
             return null;
         }
         return plugin.getQueueService().find(state.editingQueueId()).orElse(null);
+    }
+
+    private static InstanceSpawnSlotDefinition currentEditedSpawnSlot(@Nonnull NexoriPlugin plugin, @Nonnull NexoriMenuV2State state) {
+        if (state.editingDestinationId().isBlank()) {
+            return null;
+        }
+        return plugin.getInstanceSpawnSlotService().find(state.editingDestinationId()).orElse(null);
     }
 
     @Nonnull

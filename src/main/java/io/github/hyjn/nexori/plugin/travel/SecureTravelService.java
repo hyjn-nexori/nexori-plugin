@@ -452,7 +452,12 @@ public final class SecureTravelService implements SecureReferralHandler {
             }
             ArenaInstanceRuntime.configureInstanceLifecycle(instanceWorld);
         });
-        InstancesPlugin.teleportPlayerToLoadingInstance(playerEntityRef, store, instanceFuture, null);
+        InstancesPlugin.teleportPlayerToLoadingInstance(
+            playerEntityRef,
+            store,
+            instanceFuture,
+            arrivalTransform.clone()
+        );
         return true;
     }
 

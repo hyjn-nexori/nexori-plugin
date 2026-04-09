@@ -338,7 +338,8 @@ public final class QueueCoordinatorService {
             }
             List<LaunchCandidate> launched = new ArrayList<>();
             String launchError = "";
-            for (LaunchCandidate candidate : launchCandidates) {
+            for (int launchIndex = 0; launchIndex < launchCandidates.size(); launchIndex++) {
+                LaunchCandidate candidate = launchCandidates.get(launchIndex);
                 try {
                     secureTravelService.travel(
                         candidate.playerRef(),
@@ -346,7 +347,7 @@ public final class QueueCoordinatorService {
                         arena.get().destinationTargetId(),
                         "",
                         queue.launchTravelProfileId(),
-                        preparedLaunch.contextJson()
+                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
                     );
                     launched.add(candidate);
                 } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
@@ -558,6 +559,16 @@ public final class QueueCoordinatorService {
             ""
         ).normalized();
         return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState);
+    }
+
+    @Nonnull
+    private String contextJsonWithLaunchIndex(@Nonnull String baseContextJson, int launchIndex) {
+        JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
+        if (root == null) {
+            root = new JsonObject();
+        }
+        root.addProperty("launchIndex", Math.max(launchIndex, 0));
+        return GSON.toJson(root);
     }
 
     @Nonnull

@@ -67,6 +67,8 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchResolutionTriggerRegistry;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
+import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
+import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
 import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyRoleSyncService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
@@ -150,6 +152,7 @@ public class NexoriPlugin extends JavaPlugin {
     private NetworkLobbyService networkLobbyService;
     private LobbyRoleSyncService lobbyRoleSyncService;
     private ArenaService arenaService;
+    private InstanceSpawnSlotService instanceSpawnSlotService;
     private QueueService queueService;
     private QueueCoordinatorService queueCoordinatorService;
     private MatchSessionService matchSessionService;
@@ -202,6 +205,9 @@ public class NexoriPlugin extends JavaPlugin {
             this.arenaService = new ArenaService(
                 new ArenaStore(this.getDataDirectory().resolve("config").resolve("arenas.json")),
                 this.localConnectionAddressService
+            );
+            this.instanceSpawnSlotService = new InstanceSpawnSlotService(
+                new InstanceSpawnSlotStore(this.getDataDirectory().resolve("config").resolve("instance-spawn-slots.json"))
             );
             this.queueService = new QueueService(
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
@@ -337,6 +343,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureTravelService,
                 this.matchSessionService,
                 this.arenaService,
+                this.instanceSpawnSlotService,
                 this.arenaMatchResolutionTriggerRegistry
             );
             this.nexoriStatusHudService = new NexoriStatusHudService(
@@ -608,6 +615,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public ArenaService getArenaService() {
         return arenaService;
+    }
+
+    public InstanceSpawnSlotService getInstanceSpawnSlotService() {
+        return instanceSpawnSlotService;
     }
 
     public QueueService getQueueService() {
