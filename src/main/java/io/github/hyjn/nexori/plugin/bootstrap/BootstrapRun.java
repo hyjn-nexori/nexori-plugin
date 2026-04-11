@@ -17,8 +17,15 @@ public record BootstrapRun(
     int currentPeerIndex,
     List<ConfiguredPeer> peers,
     List<BundleMember> verifiedPeers,
+    BootstrapMigrationPlan migrationPlan,
     @Nullable BootstrapChallenge currentChallenge
 ) {
+
+    public BootstrapRun {
+        peers = peers == null ? List.of() : List.copyOf(peers);
+        verifiedPeers = verifiedPeers == null ? List.of() : List.copyOf(verifiedPeers);
+        migrationPlan = migrationPlan == null ? BootstrapMigrationPlan.empty() : migrationPlan;
+    }
 
     public boolean isExpired() {
         return expiresAtEpochMillis <= System.currentTimeMillis();
@@ -43,6 +50,7 @@ public record BootstrapRun(
             nextPeerIndex,
             List.copyOf(peers),
             List.copyOf(verifiedPeers),
+            migrationPlan == null ? BootstrapMigrationPlan.empty() : migrationPlan,
             nextChallenge
         );
     }
@@ -63,6 +71,7 @@ public record BootstrapRun(
             currentPeerIndex,
             List.copyOf(peers),
             new ArrayList<>(byServerId.values()),
+            migrationPlan == null ? BootstrapMigrationPlan.empty() : migrationPlan,
             currentChallenge
         );
     }
@@ -82,7 +91,23 @@ public record BootstrapRun(
             nextPeerIndex,
             List.copyOf(nextPeers),
             List.copyOf(verifiedPeers),
+            migrationPlan == null ? BootstrapMigrationPlan.empty() : migrationPlan,
             nextChallenge
+        );
+    }
+
+    public BootstrapRun withMigrationPlan(@Nullable BootstrapMigrationPlan nextMigrationPlan) {
+        return new BootstrapRun(
+            sessionId,
+            startedByPlayerUuid,
+            originServerId,
+            expiresAtEpochMillis,
+            phase,
+            currentPeerIndex,
+            List.copyOf(peers),
+            List.copyOf(verifiedPeers),
+            nextMigrationPlan == null ? BootstrapMigrationPlan.empty() : nextMigrationPlan,
+            currentChallenge
         );
     }
 }

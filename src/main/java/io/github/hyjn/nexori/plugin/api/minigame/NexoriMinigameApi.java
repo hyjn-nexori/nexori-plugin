@@ -11,6 +11,12 @@ import java.util.UUID;
 public interface NexoriMinigameApi {
 
     /**
+     * Finds the currently active Nexori match id for one player UUID.
+     */
+    @Nonnull
+    Optional<String> findActiveMatchId(@Nonnull UUID playerUuid);
+
+    /**
      * Finds an active player in one match by UUID string or by current username.
      */
     @Nonnull
@@ -27,4 +33,17 @@ public interface NexoriMinigameApi {
         int returnDelaySeconds,
         @Nonnull String reason
     );
+
+    /**
+     * Returns the state of Nexori's initial player placement phase for one active match.
+     */
+    @Nonnull
+    Optional<NexoriMatchPlacementState> findMatchPlacementState(@Nonnull String matchId);
+
+    /**
+     * Returns the active match resolution trigger id for one active match.
+     * When this returns "none", the match expects manual resolution from the third-party mod.
+     */
+    @Nonnull
+    Optional<String> findMatchResolutionTriggerId(@Nonnull String matchId);
 }

@@ -16,6 +16,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerMigrationService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 
@@ -38,9 +39,11 @@ public final class BootstrapCoordinator {
     private final ServerIdentity localIdentity;
     private final BootstrapStateStore bootstrapStateStore;
     private final ConfiguredPeerService configuredPeerService;
+    private final ConfiguredPeerMigrationService configuredPeerMigrationService;
     private final LocalConnectionAddressService localConnectionAddressService;
     private final BootstrapRunStore bootstrapRunStore;
     private final TrustBundleStore trustBundleStore;
+    private final BootstrapPersistenceMigrationService persistenceMigrationService;
     private final BootstrapPayloadCodec payloadCodec;
     private final DiagnosticsService diagnosticsService;
     private final Map<UUID, String> pendingMessages = new ConcurrentHashMap<>();
@@ -53,9 +56,11 @@ public final class BootstrapCoordinator {
         @Nonnull ServerIdentity localIdentity,
         @Nonnull BootstrapStateStore bootstrapStateStore,
         @Nonnull ConfiguredPeerService configuredPeerService,
+        @Nonnull ConfiguredPeerMigrationService configuredPeerMigrationService,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull BootstrapRunStore bootstrapRunStore,
         @Nonnull TrustBundleStore trustBundleStore,
+        @Nonnull BootstrapPersistenceMigrationService persistenceMigrationService,
         @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
@@ -63,9 +68,11 @@ public final class BootstrapCoordinator {
         this.localIdentity = localIdentity;
         this.bootstrapStateStore = bootstrapStateStore;
         this.configuredPeerService = configuredPeerService;
+        this.configuredPeerMigrationService = configuredPeerMigrationService;
         this.localConnectionAddressService = localConnectionAddressService;
         this.bootstrapRunStore = bootstrapRunStore;
         this.trustBundleStore = trustBundleStore;
+        this.persistenceMigrationService = persistenceMigrationService;
         this.diagnosticsService = diagnosticsService;
         this.payloadCodec = new BootstrapPayloadCodec();
     }
@@ -116,6 +123,7 @@ public final class BootstrapCoordinator {
                 0,
                 List.copyOf(peers),
                 List.of(),
+                BootstrapMigrationPlan.empty(),
                 challenge
             );
             bootstrapRunStore.save(run);
@@ -451,6 +459,7 @@ public final class BootstrapCoordinator {
             run.verifiedPeers(),
             nextBundleVersion
         );
+        BootstrapMigrationPlan migrationPlan = configuredPeerMigrationService.buildPlan();
         recordBootstrap(
             operationId,
             DiagnosticsAction.BOOTSTRAP_BUNDLE_BUILD,
@@ -463,18 +472,21 @@ public final class BootstrapCoordinator {
                 .bundleVersion(bundle.bundleVersion())
                 .bundleHash(bundle.bundleHash())
                 .addPreview("memberCount", Integer.toString(bundle.members().size()))
+                .addPreview("migrationReplacementCount", Integer.toString(migrationPlan.replacements().size()))
         );
         persistLocalConnectionAddressFromBundle(bundle);
+        applyMigrationPlan(operationId, migrationPlan);
         List<ConfiguredPeer> installPeers = peersForInstallation(bundle);
 
         if (installPeers.isEmpty()) {
-            finishRun(run, bundle);
+            finishRun(run.withMigrationPlan(migrationPlan), bundle);
             return;
         }
 
         ConfiguredPeer nextPeer = installPeers.getFirst();
         BootstrapChallenge nextChallenge = createChallenge(run.sessionId(), nextPeer.connectionAddress(), run.expiresAtEpochMillis());
-        bootstrapRunStore.save(run.withPhase(BootstrapPhase.INSTALL_BUNDLE, 0, installPeers, nextChallenge));
+        BootstrapRun installRun = run.withMigrationPlan(migrationPlan).withPhase(BootstrapPhase.INSTALL_BUNDLE, 0, installPeers, nextChallenge);
+        bootstrapRunStore.save(installRun);
         event.referToServer(
             nextPeer.host(),
             nextPeer.port(),
@@ -482,6 +494,7 @@ public final class BootstrapCoordinator {
                 run.startedByPlayerUuid(),
                 nextChallenge,
                 bundle,
+                migrationPlan,
                 0,
                 installPeers.size()
             ))
@@ -519,6 +532,7 @@ public final class BootstrapCoordinator {
 
             TrustBundle installedBundle = trustBundleStore.installBundle(payload.trustBundle());
             persistLocalConnectionAddressFromBundle(installedBundle);
+            applyMigrationPlan(operationId, payload.migrationPlan());
             bootstrapStateStore.markBundleInstalled(installedBundle.bundleVersion(), installedBundle.bundleHash());
             event.referToServer(
                 referralSource.host,
@@ -584,6 +598,7 @@ public final class BootstrapCoordinator {
                     currentRun.startedByPlayerUuid(),
                     nextChallenge,
                     currentBundle,
+                    currentRun.migrationPlan(),
                     nextPeerIndex,
                     currentRun.peers().size()
                 ))
@@ -610,6 +625,11 @@ public final class BootstrapCoordinator {
     private void finishRun(@Nonnull BootstrapRun run, @Nonnull TrustBundle bundle) {
         bootstrapStateStore.markBundleInstalled(bundle.bundleVersion(), bundle.bundleHash());
         bootstrapRunStore.clear();
+        try {
+            configuredPeerMigrationService.clear();
+        } catch (IOException exception) {
+            logger.atWarning().withCause(exception).log("Failed to clear pending Nexori peer migration entries after bootstrap.");
+        }
         recordBootstrap(
             "bootstrap:" + run.sessionId(),
             DiagnosticsAction.BOOTSTRAP_RUN_FINISH,
@@ -629,7 +649,7 @@ public final class BootstrapCoordinator {
             + bundle.bundleVersion()
             + " across "
             + run.peers().size()
-            + " server(s).");
+            + " server(s). Restart the servers so every runtime object rebuilds with the updated names and addresses.");
         logger.atInfo().log("Completed Nexori bootstrap session " + run.sessionId() + " with bundle " + bundle.bundleHash() + ".");
     }
 
@@ -810,6 +830,31 @@ public final class BootstrapCoordinator {
         pendingMessages.remove(playerUuid);
         pendingMenuResumeRequests.remove(playerUuid);
         pendingMenuResumeStatuses.remove(playerUuid);
+    }
+
+    private void applyMigrationPlan(@Nonnull String operationId, BootstrapMigrationPlan migrationPlan) {
+        BootstrapMigrationPlan plan = migrationPlan == null ? BootstrapMigrationPlan.empty() : migrationPlan;
+        if (plan.isEmpty()) {
+            return;
+        }
+
+        try {
+            BootstrapPersistenceMigrationService.MigrationReport report = persistenceMigrationService.apply(plan);
+            recordBootstrap(
+                operationId,
+                DiagnosticsAction.BOOTSTRAP_BUNDLE_INSTALL_REQUEST,
+                DiagnosticsOutcome.SUCCEEDED,
+                DiagnosticsReasonClass.NORMAL,
+                DiagnosticsReasonCode.BUNDLE_INSTALLED,
+                "Applied Nexori persistence migration after trust bundle update.",
+                diag -> diag
+                    .addPreview("replacementCount", Integer.toString(plan.replacements().size()))
+                    .addPreview("scannedFiles", Integer.toString(report.scannedFiles()))
+                    .addPreview("changedFiles", Integer.toString(report.changedFiles()))
+            );
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to migrate Nexori persisted connection addresses after bootstrap.", exception);
+        }
     }
 
     private BootstrapReferralPayload decode(@Nonnull PlayerSetupConnectEvent event) {

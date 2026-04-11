@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
+import io.github.hyjn.nexori.plugin.bootstrap.BootstrapPersistenceMigrationService;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapRunStore;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapStateStore;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
@@ -73,6 +74,7 @@ import io.github.hyjn.nexori.plugin.minigame.LobbyRoleSyncService;
 import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
+import io.github.hyjn.nexori.plugin.minigame.NexoriAssignedSpawnProvider;
 import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyService;
 import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
@@ -81,6 +83,8 @@ import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.minigame.QueueStore;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerMigrationService;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerMigrationStore;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerStore;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.policy.ServerPolicyCacheService;
@@ -116,6 +120,7 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEven
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
+import com.hypixel.hytale.server.core.universe.world.spawn.ISpawnProvider;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -130,6 +135,7 @@ public class NexoriPlugin extends JavaPlugin {
     private BootstrapCoordinator bootstrapCoordinator;
     private TrustBundleStore trustBundleStore;
     private LocalConnectionAddressService localConnectionAddressService;
+    private ConfiguredPeerMigrationService configuredPeerMigrationService;
     private DestinationTargetService destinationTargetService;
     private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private TriggerBindingService triggerBindingService;
@@ -185,8 +191,12 @@ public class NexoriPlugin extends JavaPlugin {
 
             this.bootstrapStateStore = new BootstrapStateStore(this.getDataDirectory().resolve("state"));
             BootstrapState bootstrapState = this.bootstrapStateStore.loadOrCreate();
+            this.configuredPeerMigrationService = new ConfiguredPeerMigrationService(
+                new ConfiguredPeerMigrationStore(this.getDataDirectory().resolve("state").resolve("configured-peer-migrations.json"))
+            );
             this.configuredPeerService = new ConfiguredPeerService(
                 new ConfiguredPeerStore(this.getDataDirectory().resolve("config").resolve("configured-peers.json")),
+                this.configuredPeerMigrationService,
                 this.diagnosticsService
             );
             this.localConnectionAddressService = new LocalConnectionAddressService(
@@ -210,6 +220,11 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.instanceSpawnSlotService = new InstanceSpawnSlotService(
                 new InstanceSpawnSlotStore(this.getDataDirectory().resolve("config").resolve("instance-spawn-slots.json"))
+            );
+            this.getCodecRegistry(ISpawnProvider.CODEC).register(
+                "NexoriAssigned",
+                NexoriAssignedSpawnProvider.class,
+                NexoriAssignedSpawnProvider.CODEC
             );
             this.queueService = new QueueService(
                 new QueueStore(this.getDataDirectory().resolve("config").resolve("queues.json")),
@@ -242,9 +257,11 @@ public class NexoriPlugin extends JavaPlugin {
                 this.localIdentity,
                 this.bootstrapStateStore,
                 this.configuredPeerService,
+                this.configuredPeerMigrationService,
                 this.localConnectionAddressService,
                 bootstrapRunStore,
                 this.trustBundleStore,
+                new BootstrapPersistenceMigrationService(this.getLogger(), this.getDataDirectory()),
                 this.diagnosticsService
             );
             this.secureReferralService = new SecureReferralService(
@@ -293,7 +310,8 @@ public class NexoriPlugin extends JavaPlugin {
                 this.destinationTargetService,
                 this.secureReferralService,
                 this.inventoryTransferService,
-                this.diagnosticsService
+                this.diagnosticsService,
+                this.instanceSpawnSlotService
             );
             this.queueCoordinatorService = new QueueCoordinatorService(
                 this.queueService,

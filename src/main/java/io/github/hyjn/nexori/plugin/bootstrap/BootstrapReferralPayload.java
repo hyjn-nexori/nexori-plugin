@@ -13,6 +13,7 @@ public record BootstrapReferralPayload(
     String signatureBase64,
     String acknowledgedBundleHash,
     String errorMessage,
+    BootstrapMigrationPlan migrationPlan,
     int currentPeerIndex,
     int totalPeers
 ) {
@@ -35,6 +36,7 @@ public record BootstrapReferralPayload(
             "",
             "",
             "",
+            BootstrapMigrationPlan.empty(),
             currentPeerIndex,
             totalPeers
         );
@@ -59,6 +61,7 @@ public record BootstrapReferralPayload(
             signatureBase64,
             "",
             "",
+            BootstrapMigrationPlan.empty(),
             request.currentPeerIndex,
             request.totalPeers
         );
@@ -69,6 +72,7 @@ public record BootstrapReferralPayload(
         @Nonnull String startedByPlayerUuid,
         @Nonnull BootstrapChallenge challenge,
         @Nonnull TrustBundle trustBundle,
+        @Nonnull BootstrapMigrationPlan migrationPlan,
         int currentPeerIndex,
         int totalPeers
     ) {
@@ -83,6 +87,7 @@ public record BootstrapReferralPayload(
             "",
             "",
             "",
+            migrationPlan,
             currentPeerIndex,
             totalPeers
         );
@@ -105,6 +110,7 @@ public record BootstrapReferralPayload(
             "",
             acknowledgedBundleHash,
             "",
+            BootstrapMigrationPlan.empty(),
             request.currentPeerIndex,
             request.totalPeers
         );
@@ -126,6 +132,7 @@ public record BootstrapReferralPayload(
             "",
             "",
             errorMessage,
+            BootstrapMigrationPlan.empty(),
             request.currentPeerIndex,
             request.totalPeers
         );

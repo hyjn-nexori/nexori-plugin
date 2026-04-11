@@ -32,6 +32,8 @@ import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaInstanceRuntime;
+import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
+import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
@@ -46,6 +48,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -66,6 +69,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final SecureReferralService secureReferralService;
     private final InventoryTransferService inventoryTransferService;
     private final DiagnosticsService diagnosticsService;
+    private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
@@ -77,7 +81,8 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull DestinationTargetService destinationTargetService,
         @Nonnull SecureReferralService secureReferralService,
         @Nonnull InventoryTransferService inventoryTransferService,
-        @Nonnull DiagnosticsService diagnosticsService
+        @Nonnull DiagnosticsService diagnosticsService,
+        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService
     ) {
         this.logger = logger;
         this.localIdentity = localIdentity;
@@ -86,6 +91,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         this.secureReferralService = secureReferralService;
         this.inventoryTransferService = inventoryTransferService;
         this.diagnosticsService = diagnosticsService;
+        this.instanceSpawnSlotService = instanceSpawnSlotService;
     }
 
     @Nonnull
@@ -481,6 +487,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         if (matchId.isBlank()) {
             return false;
         }
+        int launchIndex = context.has("launchIndex")
+            ? Math.max(context.get("launchIndex").getAsInt(), 0)
+            : 0;
 
         Transform arrivalTransform = resolveArrivalTransform(arrival, playerRef.getUuid());
         World baseWorld = Universe.get().getWorld(arrival.worldName());
@@ -492,9 +501,10 @@ public final class SecureTravelService implements SecureReferralHandler {
         Store<EntityStore> store = playerEntityRef.getStore();
         String instanceWorldName = ArenaInstanceRuntime.buildInstanceWorldName(matchId);
         CompletableFuture<World> instanceFuture;
+        List<InstanceSpawnSlotDefinition> spawnSlots = instanceSpawnSlotService.listByInstanceTemplateId(instanceTemplateId);
         try {
             World existingWorld = Universe.get().getWorld(instanceWorldName);
-            instanceFuture = existingWorld != null && existingWorld.isAlive()
+            CompletableFuture<World> materializedInstanceFuture = existingWorld != null && existingWorld.isAlive()
                 ? CompletableFuture.completedFuture(existingWorld)
                 : InstancesPlugin.get().spawnInstance(
                     instanceTemplateId,
@@ -502,6 +512,14 @@ public final class SecureTravelService implements SecureReferralHandler {
                     baseWorld,
                     arrivalTransform.clone()
                 );
+            instanceFuture = materializedInstanceFuture.thenCompose(instanceWorld ->
+                ArenaInstanceRuntime.prepareInstanceForMatch(
+                    instanceWorld,
+                    spawnSlots,
+                    playerRef.getUuid(),
+                    launchIndex
+                )
+            );
         } catch (Exception exception) {
             logger.atWarning().withCause(exception).log(
                 "Failed to prepare Nexori instance arrival for match " + matchId + "."
@@ -521,7 +539,6 @@ public final class SecureTravelService implements SecureReferralHandler {
                 ));
                 return;
             }
-            ArenaInstanceRuntime.configureInstanceLifecycle(instanceWorld);
         });
         InstancesPlugin.teleportPlayerToLoadingInstance(
             playerEntityRef,

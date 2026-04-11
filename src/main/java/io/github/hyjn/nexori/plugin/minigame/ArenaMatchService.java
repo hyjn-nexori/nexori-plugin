@@ -11,6 +11,7 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -37,6 +38,10 @@ public final class ArenaMatchService {
     private static final Gson GSON = new Gson();
     private static final long ELIMINATED_RETURN_DELAY_MS = 10_000L;
     private static final long RETURN_RETRY_DELAY_MS = 1_000L;
+    private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
+    private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
+    private static final long INITIAL_PLACEMENT_TIMEOUT_MS = 7_500L;
+    private static final long INITIAL_PLACEMENT_POST_READY_GRACE_MS = 750L;
 
     private final HytaleLogger logger;
     private final SecureTravelService secureTravelService;
@@ -46,6 +51,7 @@ public final class ArenaMatchService {
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
+    private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
 
     public ArenaMatchService(
         @Nonnull HytaleLogger logger,
@@ -69,8 +75,6 @@ public final class ArenaMatchService {
         if (playerRef == null) {
             return;
         }
-
-        applyPendingInstanceSpawnTeleport(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef);
 
         PendingArrival arrival = secureTravelService.consumeRecentArrival(playerRef.getUuid()).orElse(null);
         if (arrival == null) {
@@ -177,7 +181,6 @@ public final class ArenaMatchService {
             return;
         }
 
-        applyPendingInstanceSpawnTeleport(ref, store, playerRef);
         String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
         if (matchId == null) {
             return;
@@ -189,7 +192,10 @@ public final class ArenaMatchService {
         }
 
         ArenaActiveMatch updated = match;
-        if (!updated.isPlayerEliminated(playerRef.getUuid())
+        boolean useBuiltInDeathElimination =
+            LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(updated.matchResolutionTriggerId());
+        if (useBuiltInDeathElimination
+            && !updated.isPlayerEliminated(playerRef.getUuid())
             && store.getComponent(ref, DeathComponent.getComponentType()) != null) {
             updated = updated.withEliminatedPlayer(
                 playerRef.getUuid(),
@@ -291,6 +297,56 @@ public final class ArenaMatchService {
             }
         }
         return Optional.empty();
+    }
+
+    @Nonnull
+    public synchronized Optional<String> findActiveMatchId(@Nonnull UUID playerUuid) {
+        String matchId = matchIdByPlayerUuid.get(playerUuid);
+        if (matchId == null || matchId.isBlank()) {
+            return Optional.empty();
+        }
+
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPlayer(playerUuid)) {
+            return Optional.empty();
+        }
+        return Optional.of(match.matchId());
+    }
+
+    @Nonnull
+    public synchronized Optional<MatchPlacementState> findMatchPlacementState(@Nonnull String rawMatchId) {
+        ArenaActiveMatch match = find(rawMatchId).orElse(null);
+        if (match == null) {
+            return Optional.empty();
+        }
+
+        int expectedPlayers = match.expectedPlayerCount();
+        int arrivedPlayers = match.arrivedPlayerUuids().size();
+        int placedPlayers = countPlacedPlayers(match);
+        boolean placementComplete = expectedPlayers > 0
+            && arrivedPlayers >= expectedPlayers
+            && placedPlayers >= expectedPlayers;
+
+        maybeLogPlacementState(
+            match,
+            expectedPlayers,
+            arrivedPlayers,
+            placedPlayers,
+            placementComplete
+        );
+
+        return Optional.of(new MatchPlacementState(
+            expectedPlayers,
+            arrivedPlayers,
+            placedPlayers,
+            placementComplete
+        ));
+    }
+
+    @Nonnull
+    public synchronized Optional<String> findMatchResolutionTriggerId(@Nonnull String rawMatchId) {
+        return find(rawMatchId)
+            .map(ArenaActiveMatch::matchResolutionTriggerId);
     }
 
     @Nonnull
@@ -399,17 +455,7 @@ public final class ArenaMatchService {
         @Nonnull LaunchContext launch,
         @Nonnull JsonObject context
     ) {
-        resolveLaunchSpawnSlotTransform(launch, context).ifPresentOrElse(
-            transform -> pendingInstanceSpawnTeleportsByPlayerUuid.put(
-                playerUuid,
-                new PendingInstanceSpawnTeleport(
-                    ArenaInstanceRuntime.buildInstanceWorldName(launch.matchId()),
-                    launch.instanceTemplateId(),
-                    transform
-                )
-            ),
-            () -> pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerUuid)
-        );
+        pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerUuid);
     }
 
     private void applyPendingInstanceSpawnTeleport(
@@ -423,7 +469,8 @@ public final class ArenaMatchService {
         }
 
         Player player = store.getComponent(ref, Player.getComponentType());
-        if (player == null || player.getWorld() == null) {
+        TransformComponent transformComponent = store.getComponent(ref, TransformComponent.getComponentType());
+        if (player == null || player.getWorld() == null || transformComponent == null) {
             return;
         }
 
@@ -432,17 +479,115 @@ public final class ArenaMatchService {
             return;
         }
 
-        pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerRef.getUuid());
-        Teleport teleport = Teleport.createForPlayer(world, pending.transform().clone());
-        world.execute(() -> {
-            store.addComponent(ref, Teleport.getComponentType(), teleport);
-            logger.atInfo().log(
-                "Applied Nexori instance spawn slot player=" + playerRef.getUsername()
+        long nowEpochMs = System.currentTimeMillis();
+        double distanceSquared = transformComponent.getPosition().distanceSquaredTo(pending.transform().getPosition());
+        boolean withinTolerance = distanceSquared <= INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED;
+        boolean teleportPending = store.getComponent(ref, Teleport.getComponentType()) != null;
+        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
+
+        if (pending.phase() == PlacementPhase.CONFIRMED || pending.phase() == PlacementPhase.FALLBACK) {
+            return;
+        }
+
+        if (pending.phase() == PlacementPhase.PENDING_ISSUE) {
+            PendingInstanceSpawnTeleport issued = pending
+                .withPhase(PlacementPhase.WAITING_FOR_POST_READY)
+                .withTeleportIssued(true, nowEpochMs)
+                .withStableTicks(0);
+            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), issued);
+            PendingInstanceSpawnTeleport issuedFinal = issued;
+            Teleport teleport = Teleport.createForPlayer(world, pending.transform().clone());
+            world.execute(() -> {
+                store.addComponent(ref, Teleport.getComponentType(), teleport);
+                logger.atInfo().log(
+                    "NEXORI_PLACEMENT_ISSUED player=" + playerRef.getUsername()
+                        + " matchId=" + normalizeOptional(matchId, "<unknown>")
+                        + " templateId=" + issuedFinal.instanceTemplateId()
+                        + " world=" + world.getName()
+                        + " target=" + issuedFinal.transform().getPosition()
+                        + " current=" + transformComponent.getPosition()
+                );
+            });
+            return;
+        }
+
+        if (pending.phase() == PlacementPhase.WAITING_FOR_POST_READY) {
+            if (pending.readyObservedAtEpochMs() <= 0L) {
+                return;
+            }
+            if (nowEpochMs - pending.readyObservedAtEpochMs() < INITIAL_PLACEMENT_POST_READY_GRACE_MS) {
+                return;
+            }
+            if (teleportPending) {
+                return;
+            }
+
+            pending = pending.withPhase(PlacementPhase.VALIDATING_SLOT).withStableTicks(0);
+            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), pending);
+        }
+
+        if (pending.phase() == PlacementPhase.VALIDATING_SLOT && !teleportPending && withinTolerance) {
+            PendingInstanceSpawnTeleport stabilized = pending.withStableTicks(pending.stableTicks() + 1);
+            if (stabilized.stableTicks() >= INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS) {
+                PendingInstanceSpawnTeleport confirmed = stabilized.withPhase(PlacementPhase.CONFIRMED);
+                pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), confirmed);
+                logPlacementConfirmed(playerRef, matchId, world, transformComponent, confirmed, distanceSquared);
+                return;
+            }
+            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), stabilized);
+            return;
+        }
+
+        PendingInstanceSpawnTeleport updatedPending = pending.stableTicks() == 0
+            ? pending
+            : pending.withStableTicks(0);
+        pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), updatedPending);
+
+        if (pending.issuedAtEpochMs() > 0L && nowEpochMs - pending.issuedAtEpochMs() >= INITIAL_PLACEMENT_TIMEOUT_MS) {
+            PendingInstanceSpawnTeleport fallback = pending.withPhase(PlacementPhase.FALLBACK);
+            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), fallback);
+            logger.atWarning().log(
+                "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
+                    + " matchId=" + normalizeOptional(matchId, "<unknown>")
                     + " templateId=" + pending.instanceTemplateId()
                     + " world=" + world.getName()
-                    + " position=" + pending.transform().getPosition()
+                    + " target=" + pending.transform().getPosition()
+                    + " current=" + transformComponent.getPosition()
+                    + " teleportPending=" + teleportPending
+                    + " distanceSquared=" + distanceSquared
             );
-        });
+        }
+    }
+
+    private void observePendingPlacementReady(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef
+    ) {
+        PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerRef.getUuid());
+        if (pending == null || pending.readyObservedAtEpochMs() > 0L) {
+            return;
+        }
+
+        Player player = store.getComponent(ref, Player.getComponentType());
+        if (player == null || player.getWorld() == null) {
+            return;
+        }
+        if (!player.getWorld().getName().equalsIgnoreCase(pending.expectedWorldName())) {
+            return;
+        }
+
+        long nowEpochMs = System.currentTimeMillis();
+        pendingInstanceSpawnTeleportsByPlayerUuid.put(
+            playerRef.getUuid(),
+            pending.withReadyObservedAtEpochMs(nowEpochMs)
+        );
+        logger.atInfo().log(
+            "NEXORI_PLACEMENT_READY_OBSERVED player=" + playerRef.getUsername()
+                + " matchId=" + normalizeOptional(matchIdByPlayerUuid.get(playerRef.getUuid()), "<unknown>")
+                + " world=" + player.getWorld().getName()
+                + " readyObservedAtEpochMs=" + nowEpochMs
+        );
     }
 
     @Nonnull
@@ -646,6 +791,19 @@ public final class ArenaMatchService {
         }
     }
 
+    private int countPlacedPlayers(@Nonnull ArenaActiveMatch match) {
+        int placedPlayers = 0;
+        for (UUID playerUuid : match.arrivedPlayerUuids()) {
+            PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerUuid);
+            if (pending == null
+                || pending.phase() == PlacementPhase.CONFIRMED
+                || pending.phase() == PlacementPhase.FALLBACK) {
+                placedPlayers++;
+            }
+        }
+        return placedPlayers;
+    }
+
     @Nonnull
     private String buildReturnContextJson(@Nonnull ArenaActiveMatch match, @Nonnull String returnReason, long nowEpochMs) {
         JsonObject root = new JsonObject();
@@ -695,6 +853,48 @@ public final class ArenaMatchService {
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? defaultValue : normalized;
+    }
+
+    private void maybeLogPlacementState(
+        @Nonnull ArenaActiveMatch match,
+        int expectedPlayers,
+        int arrivedPlayers,
+        int placedPlayers,
+        boolean placementComplete
+    ) {
+        String summary = expectedPlayers + "|" + arrivedPlayers + "|" + placedPlayers + "|" + placementComplete;
+        String previous = lastLoggedPlacementStatesByMatchId.put(match.matchId(), summary);
+        if (summary.equals(previous)) {
+            return;
+        }
+
+        logger.atInfo().log(
+            "NEXORI_PLACEMENT_STATE matchId=" + match.matchId()
+                + " expectedPlayers=" + expectedPlayers
+                + " arrivedPlayers=" + arrivedPlayers
+                + " placedPlayers=" + placedPlayers
+                + " placementComplete=" + placementComplete
+        );
+    }
+
+    private void logPlacementConfirmed(
+        @Nonnull PlayerRef playerRef,
+        String matchId,
+        @Nonnull World world,
+        @Nonnull TransformComponent transformComponent,
+        @Nonnull PendingInstanceSpawnTeleport pending,
+        double distanceSquared
+    ) {
+        logger.atInfo().log(
+            "NEXORI_PLACEMENT_CONFIRMED player=" + playerRef.getUsername()
+                + " matchId=" + normalizeOptional(matchId, "<unknown>")
+                + " templateId=" + pending.instanceTemplateId()
+                + " world=" + world.getName()
+                + " current=" + transformComponent.getPosition()
+                + " target=" + pending.transform().getPosition()
+                + " stableTicks=" + pending.stableTicks()
+                + " distanceSquared=" + distanceSquared
+        );
     }
 
     private record LaunchContext(
@@ -810,10 +1010,86 @@ public final class ArenaMatchService {
     ) {
     }
 
+    public record MatchPlacementState(
+        int expectedPlayers,
+        int arrivedPlayers,
+        int placedPlayers,
+        boolean placementComplete
+    ) {
+    }
+
     private record PendingInstanceSpawnTeleport(
         @Nonnull String expectedWorldName,
         @Nonnull String instanceTemplateId,
-        @Nonnull Transform transform
+        @Nonnull Transform transform,
+        @Nonnull PlacementPhase phase,
+        boolean teleportIssued,
+        long issuedAtEpochMs,
+        long readyObservedAtEpochMs,
+        int stableTicks
     ) {
+        @Nonnull
+        private PendingInstanceSpawnTeleport withTeleportIssued(boolean rawTeleportIssued, long rawIssuedAtEpochMs) {
+            return new PendingInstanceSpawnTeleport(
+                expectedWorldName,
+                instanceTemplateId,
+                transform,
+                phase,
+                rawTeleportIssued,
+                rawIssuedAtEpochMs,
+                readyObservedAtEpochMs,
+                stableTicks
+            );
+        }
+
+        @Nonnull
+        private PendingInstanceSpawnTeleport withStableTicks(int rawStableTicks) {
+            return new PendingInstanceSpawnTeleport(
+                expectedWorldName,
+                instanceTemplateId,
+                transform,
+                phase,
+                teleportIssued,
+                issuedAtEpochMs,
+                readyObservedAtEpochMs,
+                rawStableTicks
+            );
+        }
+
+        @Nonnull
+        private PendingInstanceSpawnTeleport withReadyObservedAtEpochMs(long rawReadyObservedAtEpochMs) {
+            return new PendingInstanceSpawnTeleport(
+                expectedWorldName,
+                instanceTemplateId,
+                transform,
+                phase,
+                teleportIssued,
+                issuedAtEpochMs,
+                rawReadyObservedAtEpochMs,
+                stableTicks
+            );
+        }
+
+        @Nonnull
+        private PendingInstanceSpawnTeleport withPhase(@Nonnull PlacementPhase rawPhase) {
+            return new PendingInstanceSpawnTeleport(
+                expectedWorldName,
+                instanceTemplateId,
+                transform,
+                rawPhase,
+                teleportIssued,
+                issuedAtEpochMs,
+                readyObservedAtEpochMs,
+                stableTicks
+            );
+        }
+    }
+
+    private enum PlacementPhase {
+        PENDING_ISSUE,
+        WAITING_FOR_POST_READY,
+        VALIDATING_SLOT,
+        CONFIRMED,
+        FALLBACK
     }
 }

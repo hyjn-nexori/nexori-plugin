@@ -18,7 +18,7 @@
   "IsGameTimePaused": true,
   "IsObjectiveMarkersEnabled": false,
   "IsAllNPCFrozen": false,
-  "IsSavingPlayers": false,
+  "IsSavingPlayers": true,
   "WorldGen": {
     "Type": "HytaleGenerator",
     "WorldStructure": "Default_Void"

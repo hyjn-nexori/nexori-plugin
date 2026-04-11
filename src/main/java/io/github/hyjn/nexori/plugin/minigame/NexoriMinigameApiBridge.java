@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerResolutionOutcome;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriResolvePlayerOutcome;
@@ -15,6 +16,12 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
     public NexoriMinigameApiBridge(@Nonnull ArenaMatchService arenaMatchService) {
         this.arenaMatchService = arenaMatchService;
+    }
+
+    @Nonnull
+    @Override
+    public Optional<String> findActiveMatchId(@Nonnull UUID playerUuid) {
+        return arenaMatchService.findActiveMatchId(playerUuid);
     }
 
     @Nonnull
@@ -55,5 +62,23 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 case LOSS -> NexoriPlayerResolutionOutcome.LOSS;
             }
         );
+    }
+
+    @Nonnull
+    @Override
+    public Optional<NexoriMatchPlacementState> findMatchPlacementState(@Nonnull String matchId) {
+        return arenaMatchService.findMatchPlacementState(matchId)
+            .map(state -> new NexoriMatchPlacementState(
+                state.expectedPlayers(),
+                state.arrivedPlayers(),
+                state.placedPlayers(),
+                state.placementComplete()
+            ));
+    }
+
+    @Nonnull
+    @Override
+    public Optional<String> findMatchResolutionTriggerId(@Nonnull String matchId) {
+        return arenaMatchService.findMatchResolutionTriggerId(matchId);
     }
 }

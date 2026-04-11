@@ -18,11 +18,17 @@ import java.util.Map;
 public final class ConfiguredPeerService {
 
     private final ConfiguredPeerStore store;
+    private final ConfiguredPeerMigrationService migrationService;
     private final DiagnosticsService diagnosticsService;
     private final Map<String, ConfiguredPeer> peersByAddress = new LinkedHashMap<>();
 
-    public ConfiguredPeerService(@Nonnull ConfiguredPeerStore store, @Nonnull DiagnosticsService diagnosticsService) throws IOException {
+    public ConfiguredPeerService(
+        @Nonnull ConfiguredPeerStore store,
+        @Nonnull ConfiguredPeerMigrationService migrationService,
+        @Nonnull DiagnosticsService diagnosticsService
+    ) throws IOException {
         this.store = store;
+        this.migrationService = migrationService;
         this.diagnosticsService = diagnosticsService;
         for (ConfiguredPeer peer : store.load()) {
             ConfiguredPeer normalized = peer.normalized();
@@ -84,6 +90,7 @@ public final class ConfiguredPeerService {
 
         peersByAddress.remove(existing.connectionAddress());
         peersByAddress.put(updated.connectionAddress(), updated);
+        migrationService.recordUpdate(existing, updated);
         persist();
         String operationId = diagnosticsService.newOperationId("config");
         diagnosticsService.record(
