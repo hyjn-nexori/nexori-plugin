@@ -25,6 +25,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Persists placed Nexori portals and keeps their auto-generated destination targets in sync.
+ */
 public final class PortalInstanceService {
 
     private static final Gson GSON = new Gson();
@@ -35,6 +38,9 @@ public final class PortalInstanceService {
     private final DiagnosticsService diagnosticsService;
     private final Map<String, PortalInstanceDefinition> portalsById = new LinkedHashMap<>();
 
+    /**
+     * Loads the saved portal registry for this server.
+     */
     public PortalInstanceService(
         @Nonnull PortalInstanceStore store,
         @Nonnull DestinationTargetService destinationTargetService,
@@ -51,6 +57,9 @@ public final class PortalInstanceService {
         }
     }
 
+    /**
+     * Lists every placed portal registered on this server.
+     */
     @Nonnull
     public synchronized List<PortalInstanceDefinition> list() {
         return portalsById.values().stream()
@@ -58,6 +67,9 @@ public final class PortalInstanceService {
             .toList();
     }
 
+    /**
+     * Finds a portal by its stable Nexori portal id.
+     */
     @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findById(@Nonnull String portalId) {
         if (portalId == null || portalId.isBlank()) {
@@ -66,6 +78,9 @@ public final class PortalInstanceService {
         return Optional.ofNullable(portalsById.get(portalId.trim().toLowerCase()));
     }
 
+    /**
+     * Finds the portal that owns a specific auto-generated destination target.
+     */
     @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findByAutoDestinationTargetId(@Nonnull String targetId) {
         if (targetId == null || targetId.isBlank()) {
@@ -77,6 +92,9 @@ public final class PortalInstanceService {
             .findFirst();
     }
 
+    /**
+     * Finds a portal placed at the exact block location in the given world.
+     */
     @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findByLocation(@Nonnull String worldName, @Nonnull Vector3i blockPosition) {
         String locationKey = PortalInstanceDefinition.locationKey(worldName, blockPosition.getX(), blockPosition.getY(), blockPosition.getZ());
@@ -85,6 +103,9 @@ public final class PortalInstanceService {
             .findFirst();
     }
 
+    /**
+     * Finds the nearest portal around a block location inside the provided search radius.
+     */
     @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findNearestByLocation(
         @Nonnull String worldName,
@@ -118,6 +139,9 @@ public final class PortalInstanceService {
         return Optional.ofNullable(bestMatch);
     }
 
+    /**
+     * Registers or refreshes a placed portal and the automatic arrival target linked to it.
+     */
     @Nonnull
     public synchronized PortalInstanceDefinition registerPlacedPortal(
         @Nonnull String worldName,
@@ -170,6 +194,9 @@ public final class PortalInstanceService {
         return portal;
     }
 
+    /**
+     * Removes a placed portal and any Nexori state generated for it.
+     */
     public synchronized boolean removePlacedPortal(@Nonnull String worldName, @Nonnull Vector3i blockPosition) throws IOException {
         PortalInstanceDefinition portal = findByLocation(worldName, blockPosition).orElse(null);
         if (portal == null) {
@@ -186,6 +213,9 @@ public final class PortalInstanceService {
         return true;
     }
 
+    /**
+     * Renames a placed portal and its paired destination target.
+     */
     @Nonnull
     public synchronized PortalInstanceDefinition renamePortalAndTarget(
         @Nonnull String targetId,
@@ -234,6 +264,9 @@ public final class PortalInstanceService {
         return updatedPortal;
     }
 
+    /**
+     * Enables or disables a placed portal.
+     */
     @Nonnull
     public synchronized PortalInstanceDefinition setEnabled(@Nonnull String portalId, boolean enabled) throws IOException {
         PortalInstanceDefinition current = findById(portalId)

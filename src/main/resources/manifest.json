@@ -1,8 +1,8 @@
 {
     "Group": "Nexori",
     "Name": "NexoriPlugin",
-    "Version": "1.0.0",
-    "Description": "Secure server-to-server trust bootstrap for Hytale networks.",
+    "Version": "2.0.0",
+    "Description": "Connected Hytale server networks with secure travel, portals, queues, and instanced minigames.",
     "Authors": [
         {
             "Name": "Janiel Nunez"

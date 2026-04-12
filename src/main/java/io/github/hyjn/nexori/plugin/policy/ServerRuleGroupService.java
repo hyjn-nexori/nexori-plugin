@@ -17,12 +17,18 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Manages reusable server rule groups and their server assignments.
+ */
 public final class ServerRuleGroupService {
 
     private final ServerRuleGroupStore store;
     private final DiagnosticsService diagnosticsService;
     private final Map<String, ServerRuleGroupDefinition> groupsById = new LinkedHashMap<>();
 
+    /**
+     * Loads the persisted server rule groups for this server.
+     */
     public ServerRuleGroupService(@Nonnull ServerRuleGroupStore store, @Nonnull DiagnosticsService diagnosticsService) throws IOException {
         this.store = store;
         this.diagnosticsService = diagnosticsService;
@@ -32,6 +38,9 @@ public final class ServerRuleGroupService {
         }
     }
 
+    /**
+     * Lists all rule groups saved on this server.
+     */
     @Nonnull
     public synchronized List<ServerRuleGroupDefinition> list() {
         return groupsById.values().stream()
@@ -39,6 +48,9 @@ public final class ServerRuleGroupService {
             .toList();
     }
 
+    /**
+     * Finds a rule group by id.
+     */
     @Nonnull
     public synchronized Optional<ServerRuleGroupDefinition> find(@Nonnull String groupId) {
         if (groupId.isBlank()) {
@@ -47,6 +59,9 @@ public final class ServerRuleGroupService {
         return Optional.ofNullable(groupsById.get(groupId.trim().toLowerCase()));
     }
 
+    /**
+     * Creates a new rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition create(
         @Nonnull String displayName,
@@ -71,6 +86,9 @@ public final class ServerRuleGroupService {
         return created;
     }
 
+    /**
+     * Deletes a rule group.
+     */
     public synchronized boolean remove(@Nonnull String groupId) throws IOException {
         ServerRuleGroupDefinition removed = groupsById.remove(groupId.trim().toLowerCase());
         persist();
@@ -80,6 +98,9 @@ public final class ServerRuleGroupService {
         return removed != null;
     }
 
+    /**
+     * Renames a rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition rename(@Nonnull String groupId, @Nonnull String displayName) throws IOException {
         ServerRuleGroupDefinition current = requireGroup(groupId);
@@ -94,6 +115,9 @@ public final class ServerRuleGroupService {
         return updated;
     }
 
+    /**
+     * Enables or disables recovery for a rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition setRecoveryEnabled(@Nonnull String groupId, boolean enabled) throws IOException {
         ServerRuleGroupDefinition current = requireGroup(groupId);
@@ -104,6 +128,9 @@ public final class ServerRuleGroupService {
         return updated;
     }
 
+    /**
+     * Sets the maximum backups per player for a rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition setMaxBackupsPerPlayer(@Nonnull String groupId, int maxBackupsPerPlayer) throws IOException {
         ServerRuleGroupDefinition current = requireGroup(groupId);
@@ -114,6 +141,9 @@ public final class ServerRuleGroupService {
         return updated;
     }
 
+    /**
+     * Assigns a server selection key to a rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition assignServer(@Nonnull String groupId, @Nonnull String serverSelectionKey) throws IOException {
         ServerRuleGroupDefinition current = requireGroup(groupId);
@@ -153,6 +183,9 @@ public final class ServerRuleGroupService {
         return updated;
     }
 
+    /**
+     * Removes a server selection key from a rule group.
+     */
     @Nonnull
     public synchronized ServerRuleGroupDefinition unassignServer(@Nonnull String groupId, @Nonnull String serverSelectionKey) throws IOException {
         ServerRuleGroupDefinition current = requireGroup(groupId);
@@ -163,6 +196,9 @@ public final class ServerRuleGroupService {
         return updated;
     }
 
+    /**
+     * Removes one server selection key from every rule group that currently contains it.
+     */
     public synchronized void removeServerAssignments(@Nonnull String serverSelectionKey) throws IOException {
         String normalizedKey = ServerRuleGroupDefinition.normalizeServerKey(serverSelectionKey);
         if (normalizedKey.isBlank()) {
@@ -182,6 +218,9 @@ public final class ServerRuleGroupService {
         }
     }
 
+    /**
+     * Finds the rule group that currently owns a server selection key.
+     */
     @Nonnull
     public synchronized Optional<ServerRuleGroupDefinition> findAssignedGroup(@Nonnull String serverSelectionKey) {
         String normalizedKey = ServerRuleGroupDefinition.normalizeServerKey(serverSelectionKey);

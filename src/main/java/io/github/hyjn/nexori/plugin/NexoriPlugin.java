@@ -127,6 +127,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
 
+/**
+ * Main Nexori plugin entrypoint.
+ * This class wires persistent stores, runtime services, commands, events, systems, and public integration surfaces.
+ */
 public class NexoriPlugin extends JavaPlugin {
 
     private ServerIdentityManager identityManager;
@@ -176,9 +180,11 @@ public class NexoriPlugin extends JavaPlugin {
     @Override
     protected void setup() {
         try {
+            // Prepare plugin storage and asset registration first so the rest of the setup can rely on them.
             Files.createDirectories(this.getDataDirectory());
             PluginAssetPackRegistrar.registerSelfAsAssetPack(this);
 
+            // Core identity and diagnostics services come first because most later systems depend on them.
             this.identityManager = new ServerIdentityManager(this.getDataDirectory().resolve("identity"));
             this.localIdentity = this.identityManager.loadOrCreate();
             this.diagnosticsService = new DiagnosticsService(
@@ -189,6 +195,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getClass().getPackage().getImplementationVersion()
             );
 
+            // Persistent configuration and runtime stores back every owner-facing workspace.
             this.bootstrapStateStore = new BootstrapStateStore(this.getDataDirectory().resolve("state"));
             BootstrapState bootstrapState = this.bootstrapStateStore.loadOrCreate();
             this.configuredPeerMigrationService = new ConfiguredPeerMigrationService(
@@ -251,6 +258,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.trustBundleStore.loadOrCreate();
             BootstrapRunStore bootstrapRunStore = new BootstrapRunStore(this.getDataDirectory().resolve("state").resolve("bootstrap-run.json"));
             bootstrapRunStore.load();
+            // Bootstrap and referral layers establish the secure server-to-server foundation for the tenant.
             this.bootstrapCoordinator = new BootstrapCoordinator(
                 this.getLogger(),
                 this.identityManager,
@@ -278,6 +286,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.trustBundleStore,
                 this.secureReferralService
             );
+            // Inventory, policy, and secure travel services build on top of the trust/referral layer.
             this.inventoryTransferService = new InventoryTransferService(
                 this.getLogger(),
                 new InventoryTransferBackupStore(this.getDataDirectory().resolve("state").resolve("inventory-transfer-backups.json")),
@@ -313,6 +322,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.diagnosticsService,
                 this.instanceSpawnSlotService
             );
+            // Queue, lobby, and arena services form the runtime minigame orchestration layer.
             this.queueCoordinatorService = new QueueCoordinatorService(
                 this.queueService,
                 this.arenaService,
@@ -323,6 +333,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.secureTravelService,
                 this.getLogger()
             );
+            // Discovery, HUD, world labels, and UI draft state support the owner and player-facing experience.
             this.destinationTargetDiscoveryService = new DestinationTargetDiscoveryService(
                 this.getLogger(),
                 this.trustBundleStore,
@@ -414,6 +425,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.errorHandler());
             this.portalInteractionService.registerPageSupplier();
 
+            // Commands expose the owner/operator surface for setup, travel, recovery, and diagnostics.
             this.getCommandRegistry().registerCommand(new NexoriCommand(this));
             this.getCommandRegistry().registerCommand(new NexoriBackupLimitCommand(this, this.inventoryTransferService));
             this.getCommandRegistry().registerCommand(new NexoriRecoveryModeCommand(this, this.inventoryTransferService));
@@ -456,6 +468,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getCommandRegistry().registerCommand(new NexoriTravelCommand(this.secureTravelService));
             this.getCommandRegistry().registerCommand(new NexoriWorldLabelCleanupCommand(this, this.worldLabelService));
             this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this));
+            // Event hooks glue secure travel, queue runtime, HUD refresh, and menu resume flows into player lifecycle events.
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.bootstrapCoordinator::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.arenaMatchService::handlePlayerSetupDisconnect);
@@ -504,6 +517,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.portalBindingSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.lobbyRoleSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
+            // Entity systems keep portals, queues, match state, HUDs, and labels updated during world ticks.
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
@@ -524,38 +538,65 @@ public class NexoriPlugin extends JavaPlugin {
         }
     }
 
+    /**
+     * Returns the local identity manager that owns the server keypair and persisted identity metadata.
+     */
     public ServerIdentityManager getIdentityManager() {
         return identityManager;
     }
 
+    /**
+     * Returns the bootstrap state store used by in-progress trust enrollment sessions.
+     */
     public BootstrapStateStore getBootstrapStateStore() {
         return bootstrapStateStore;
     }
 
+    /**
+     * Returns the editable local peer service used by the Servers workspace.
+     */
     public ConfiguredPeerService getConfiguredPeerService() {
         return configuredPeerService;
     }
 
+    /**
+     * Returns the service that stores this server's advertised connection address.
+     */
     public LocalConnectionAddressService getLocalConnectionAddressService() {
         return localConnectionAddressService;
     }
 
+    /**
+     * Returns the coordinator that owns trust-bundle setup and reruns.
+     */
     public BootstrapCoordinator getBootstrapCoordinator() {
         return bootstrapCoordinator;
     }
 
+    /**
+     * Returns this server's local Nexori identity.
+     */
     public ServerIdentity getLocalIdentity() {
         return localIdentity;
     }
 
+    /**
+     * Returns the secure referral service used to encode and verify Nexori cross-server messages.
+     */
     public SecureReferralService getSecureReferralService() {
         return secureReferralService;
     }
 
+    /**
+     * Returns the service that dispatches and accepts secure travel.
+     */
     public SecureTravelService getSecureTravelService() {
         return secureTravelService;
     }
 
+    /**
+     * Returns the inventory transfer service used by travel profiles and recovery flows.
+     */
     public InventoryTransferService getInventoryTransferService() {
         return inventoryTransferService;
     }

@@ -56,6 +56,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Owns Nexori's secure travel lifecycle from referral dispatch through destination arrival.
+ */
 public final class SecureTravelService implements SecureReferralHandler {
 
     public static final String PAYLOAD_TYPE = "travel.direct";
@@ -74,6 +77,9 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
 
+    /**
+     * Creates the travel service used by portals, queues, and direct owner/admin travel actions.
+     */
     public SecureTravelService(
         @Nonnull HytaleLogger logger,
         @Nonnull ServerIdentity localIdentity,
@@ -100,6 +106,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         return PAYLOAD_TYPE;
     }
 
+    /**
+     * Dispatches one secure cross-server travel referral to a concrete destination target.
+     */
     public void travel(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -111,6 +120,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         travel(playerRef, destination, destinationTargetId, arrivalPointId, travelProfileId, contextJson, diagnosticsService.newOperationId("travel"));
     }
 
+    /**
+     * Dispatches one secure cross-server travel referral using an existing diagnostics operation id.
+     */
     public void travel(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -123,6 +135,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         dispatchTravel(playerRef, destination, destinationTargetId, arrivalPointId, travelProfileId, contextJson, operationId);
     }
 
+    /**
+     * Dispatches one secure cross-server server hop without a specific destination target.
+     */
     public void travelToServer(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -132,6 +147,9 @@ public final class SecureTravelService implements SecureReferralHandler {
         travelToServer(playerRef, destination, travelProfileId, contextJson, diagnosticsService.newOperationId("travel"));
     }
 
+    /**
+     * Dispatches one secure cross-server server hop using an existing diagnostics operation id.
+     */
     public void travelToServer(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -428,20 +446,32 @@ public final class SecureTravelService implements SecureReferralHandler {
     }
 
     @Nonnull
+    /**
+     * Returns and clears the most recent accepted arrival record for one player.
+     */
     public Optional<PendingArrival> consumeRecentArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(recentArrivals.remove(playerUuid));
     }
 
     @Nonnull
+    /**
+     * Returns the still-pending arrival for one player without clearing it.
+     */
     public Optional<PendingArrival> peekPendingArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(pendingArrivals.get(playerUuid));
     }
 
     @Nonnull
+    /**
+     * Removes and returns one pending arrival, if any.
+     */
     public Optional<PendingArrival> removePendingArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(pendingArrivals.remove(playerUuid));
     }
 
+    /**
+     * Prevents freshly arrived portal travelers from immediately retriggering the same portal.
+     */
     public boolean shouldSuppressPortalTravel(@Nonnull UUID playerUuid, @Nonnull String destinationTargetId) {
         PortalArrivalSuppression suppression = recentPortalArrivals.get(playerUuid);
         if (suppression == null) {
@@ -512,6 +542,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                     baseWorld,
                     arrivalTransform.clone()
                 );
+            // The instance is prepared before the player enters it so placement rules are already in place.
             instanceFuture = materializedInstanceFuture.thenCompose(instanceWorld ->
                 ArenaInstanceRuntime.prepareInstanceForMatch(
                     instanceWorld,

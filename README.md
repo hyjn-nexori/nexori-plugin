@@ -1,173 +1,211 @@
 # Nexori Plugin
 
-Nexori is a Hytale network plugin focused on one job first: giving creators a
-safe, guided way to establish trust between their servers without forcing them
-onto a hosted backend.
+Nexori is a Hytale network plugin for creators who want to turn separate
+servers into one connected experience without building a backend first.
 
-Project planning and release/versioning rules live in
-[`docs/ROADMAP.md`](D:\JanielNunez\hyjn-nexori\nexori-plugin\docs\ROADMAP.md).
-The travel domain model lives in
-[`docs/TRAVEL_MODEL.md`](D:\JanielNunez\hyjn-nexori\nexori-plugin\docs\TRAVEL_MODEL.md).
+With Nexori, one owner can set up:
 
-## Current Scope
+- trusted server-to-server travel
+- labeled portals
+- lobbies
+- queues
+- instanced minigames
+- return-to-lobby flows
+- in-game owner setup for the full tenant
 
-This repository currently contains the first usable slice of the plugin:
+The current release line is `2.0.0`: the first stable **minigame network kit**
+built on top of Nexori's secure travel foundation.
 
-- per-server identity generation with an Ed25519 keypair
-- local persistence for server identity and bootstrap state
-- short-lived bootstrap sessions for enrollment windows
-- local bootstrap peer IPs persisted as JSON in the server data folder
-- bootstrap travel that collects public keys, gets a signed proof from each peer,
-  and installs the verified trust bundle across enrolled servers
-- bundle-backed trusted network state shared across enrolled servers after setup
-- destination targets stored on the destination server
-- trusted destination target discovery and caching on the origin server
-- configurable Nexori portals with secure trigger bindings
-- built-in travel profiles for keeping, clearing, or applying inventory
-- in-game recovery UI plus backup/recover flows for `APPLY_INVENTORY`
-- local destination overwrite backups for `APPLY_INVENTORY` claims
-- recovery mode and per-player backup limit controls for admins
-- a top-level HyUI admin shell for servers, rules, and targets
-- guided in-game owner setup for destination targets and portal binding setup
-- per-player draft-aware setup flows that resume after destination discovery travel
-- HyUI-based portal admin from the main menu and direct `F` interaction
-- HyUI-based player recovery page
-- in-game rule groups with trusted remote refresh/apply flows for server-wide Nexori settings
-- resettable bootstrap runs plus clearer bootstrap reporting and rerun safety checks
+## What Nexori Does
 
-## Current Commands
+Nexori is designed around one simple product story:
 
-Use these in game:
+1. connect your servers into one trusted network
+2. define where players can arrive
+3. wire portals and queue access in game
+4. launch players into instanced matches
+5. return them cleanly when the match resolves
+
+This lets one tenant mix:
+
+- adventure servers
+- lobby servers
+- queue portals
+- instanced minigames
+- local target travel inside the same server/world
+- secure travel between different servers
+
+## Key Features
+
+- trust bootstrap between servers with a distributed trust bundle
+- signed secure referrals for protected server-to-server flows
+- destination targets for:
+  - natural spawn
+  - coordinate targets
+  - portal targets
+- labeled Nexori portals with trigger bindings
+- built-in travel inventory policies:
+  - `KEEP_INVENTORY`
+  - `CLEAR_INVENTORY`
+  - `APPLY_INVENTORY`
+- inventory backup and recovery support
+- in-game owner menu for:
+  - servers
+  - portals
+  - rules
+  - minigames
+- lobby setup and queue orchestration
+- reusable game definitions that point to remote arena servers and instance
+  templates
+- queue-to-portal binding
+- instanced arena launch and return flow
+- spawn slot setup for instance templates
+- runtime placement of players into per-match spawn slots
+- queue HUD and return HUD feedback
+- public minigame API for third-party mods that want Nexori to handle return
+  flow after a manual win/loss decision
+- structured diagnostics and trusted diagnostics collect flows
+
+## Who Nexori Is For
+
+Nexori is for creators who want to build connected Hytale tenants such as:
+
+- one lobby plus several adventure servers
+- one lobby plus queue-driven minigames
+- one tenant per region without Redis, SQL, or hosted backend services
+- a hybrid network with portals, queues, and instanced matches living together
+
+Nexori is **not** trying to be:
+
+- a globally coordinated backend platform
+- a database-heavy orchestration layer
+- a giant generic minigame scripting engine
+
+## Current Release: `2.0.0`
+
+`2.0.0` is the first release where Nexori's minigame network loop is a real
+product slice instead of future roadmap work.
+
+That includes:
+
+- lobby designation
+- queue creation and countdown
+- reusable game definitions
+- instance template selection
+- return trigger selection
+- queue launch into instanced matches
+- spawn slot authoring for instance templates
+- runtime per-match spawn assignment
+- built-in `LAST_PLAYER_ALIVE` support
+- manual match resolution support for third-party mods through the public API
+- return-to-lobby flow after match resolution
+
+## Public API
+
+Nexori's public minigame integration story is intentionally narrow:
+
+- the third-party mod detects gameplay state itself
+- the third-party mod decides when a player won or lost
+- the third-party mod calls Nexori to resolve that outcome
+- Nexori handles the delayed return flow
+
+Main entrypoints live in
+[NexoriMinigameApi.java](D:/JanielNunez/hyjn-nexori/nexori-plugin/src/main/java/io/github/hyjn/nexori/plugin/api/minigame/NexoriMinigameApi.java).
+
+Detailed docs:
+
+- [docs/PUBLIC_API.md](D:/JanielNunez/hyjn-nexori/nexori-plugin/docs/PUBLIC_API.md)
+- example integration repo:
+  [nexori-public-api-demo](https://github.com/hyjn-nexori/nexori-public-api-demo)
+
+## Operator Docs
+
+Start here if you want to run Nexori as an owner/operator:
+
+- [docs/OPERATOR_GUIDE.md](D:/JanielNunez/hyjn-nexori/nexori-plugin/docs/OPERATOR_GUIDE.md)
+- [docs/ROADMAP.md](D:/JanielNunez/hyjn-nexori/nexori-plugin/docs/ROADMAP.md)
+- [docs/TRAVEL_MODEL.md](D:/JanielNunez/hyjn-nexori/nexori-plugin/docs/TRAVEL_MODEL.md)
+
+## Main Owner Flow
+
+Today the intended happy path is:
+
+1. install Nexori on each server
+2. In the game run /nexorimenu command
+3. Add your local peers in the Servers view
+4. run `Initial Setup` to build and distribute the trust bundle
+5. set one lobby server
+6. define portals, games, queues, and rules from the in-game menu
+7. attach queues to portals
+8. test the player loop:
+   - lobby
+   - queue
+   - match launch
+   - match end
+   - return to lobby
+
+## Commands
+
+For most owners, the main entrypoint is:
 
 ```text
-/nexori help
-/nexori status
-/nexori peers
-/nexori add <host:port>
-/nexori remove <host:port>
-/nexori clear
-/nexoristart
-/nexoritravel <host:port> [--targetId=<id>] [--arrivalPoint=<id>] [--travelProfile=<id>]
-/nexoritarget
-/nexoritargetlist
-/nexoritargetadd <targetId> <kind> <world> <arrivalPoint>
-/nexoritargetshow <targetId>
-/nexoritargetremove <targetId>
-/nexoridiscover <host:port>
-/nexoridiscovered [host:port]
-/nexoriportalgive
-/nexoriportallist
-/nexoriportalshow <portalId>
-/nexoriportalbind <portalId> <host:port> <targetId> [--travelProfile=<id>]
-/nexoriportalunbind <portalId>
-/nexorirecovery
-/nexoribackups
-/nexorirecover <transferId>
-/nexorirecoverymode <status|enable|disable>
-/nexoribackuplimit <1-50>
 /nexorimenu
 ```
 
-Normal owner setup now expects:
+That opens the full in-game admin menu.
 
-- `/nexorimenu` for the main HyUI admin page, including the Targets tab for guided target creation and portal setup
-- portal interaction with `F` for the guided portal setup flow
+Additional command surfaces still exist for diagnostics, recovery, advanced
+manual flows, and debugging. Use:
 
-The raw command `/nexoritargetadd` is now mainly an advanced/manual path for
-coordinate targets. Natural spawn targets are generated automatically per world,
-and portal targets are generated automatically when a Nexori portal is placed.
+```text
+/nexori help
+```
 
-Saved data currently lives under the plugin data directory:
+for the current command list.
+
+## Persistence
+
+Nexori stores its config and state under the plugin data directory.
+
+Important files include:
 
 - `config/configured-peers.json`
 - `config/discovered-destination-targets.json`
 - `config/destination-targets.json`
-- `config/discovered-server-policies.json`
-- `config/inventory-transfer-policy.json`
 - `config/portal-instances.json`
-- `config/server-rule-groups.json`
 - `config/trigger-bindings.json`
-- `state/bootstrap-state.properties`
-- `state/bootstrap-run.json`
-- `state/inventory-transfer-backups.json`
-- `state/inventory-transfer-receipts.json`
+- `config/queues.json`
+- `config/lobbies.json`
+- `config/arenas.json`
+- `config/server-rule-groups.json`
+- `config/network-lobby.json`
+- `config/instance-spawn-slots.json`
 - `state/trust-bundle.json`
+- `state/bootstrap-run.json`
+- `state/match-sessions.json`
+- `state/arena-active-matches.json`
+- `state/inventory-transfer-backups.json`
 - `identity/*`
-
-## Current Bootstrap Flow
-
-Today the plugin does this:
-
-1. collect each target server's public key
-2. deliver a short-lived challenge
-3. receive a signed proof back through referral payloads
-4. verify the proof on the origin server
-5. save a trusted bundle locally on the origin server
-6. distribute that same bundle back out so every enrolled server installs it
-
-## Destination Targets
-
-The next layer above secure travel is the destination target system.
-
-- the destination server offers explicit `DestinationTarget`s
-- a travel payload now identifies a destination target instead of a free-form route
-- each target can define a world and an arrival point id
-- the first target kinds are `NATURAL_SPAWN`, `COORDINATE`, and `PORTAL`
-- the plugin now auto-registers `<world>.natural_spawn` targets by reading each
-  world's `config.json` spawn point
-- the secure travel handler rejects unknown destination targets instead of accepting raw labels
-
-## Release Line
-
-The current committed milestone is `1.0.0`.
-
-- `0.7.0` closed the three-phase diagnostics milestone on top of the adventure multi-server foundation
-- `0.7.1` hardened the current owner flows before the stable cut
-- `1.0.0` is the first stable non-coder-friendly adventure multi-server kit
-
-The next active development line after this release should stay disciplined:
-
-- `1.0.x` for fixes and polish after the stable cut
-- `1.1.0+` only when phase 2 begins for the minigame direction
-
-## Secure Referrals
-
-Nexori now also includes a signed referral envelope for normal server-to-server
-travel after bootstrap.
-
-- the full payload is signed, not just one field
-- the destination verifies the signature against the current trust bundle
-- the payload type is explicit so future protocols can reuse the same envelope
-- the first payload type implemented is `travel.direct`
-
-This is now the foundation for destination targets, portals, discovery,
-inventory-aware travel profiles, guided owner setup flows, and recovery-aware
-inventory transfer without redesigning the security model.
-
-The current line is `1.0.0`: the adventure multi-server foundation now covers
-secure bootstrap, trusted travel, portals, inventory-aware travel modes,
-recovery, rules, and owner-facing diagnostics without needing a backend.
 
 ## Development Notes
 
-- Java 25 is required.
-- The Gradle build expects a local Hytale install.
-- If Hytale is installed outside the default location, pass `-Phytale_home=<path>`.
+- Java 25 is required
+- the Gradle build expects a local Hytale install
+- if Hytale is installed elsewhere, pass `-Phytale_home=<path>`
 
 Example:
 
 ```powershell
-.\gradlew.bat compileJava -Phytale_home=D:\JanielNunez\AppData
+.\gradlew.bat compileJava -Phytale_home=D:\USER\SOME_LOCATION
 ```
 
 ## Authentication Reminder
 
-When running a local Hytale server for development, authenticate it with the
-official flow:
+When running local Hytale servers for development:
 
 ```text
 auth login device
 auth persistence Encrypted
 ```
 
-Never share the resulting encrypted auth material.
+Never share your encrypted auth material.

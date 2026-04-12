@@ -21,6 +21,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Coordinates live queue membership, countdowns, batch readiness, and queue-driven match launch.
+ */
 public final class QueueCoordinatorService {
 
     private static final Gson GSON = new Gson();
@@ -39,6 +42,9 @@ public final class QueueCoordinatorService {
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
     private long lastWorldTickAdvanceAtEpochMs;
 
+    /**
+     * Creates the runtime queue coordinator for the current server.
+     */
     public QueueCoordinatorService(
         @Nonnull QueueService queueService,
         @Nonnull ArenaService arenaService,
@@ -60,6 +66,9 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    /**
+     * Attempts to enqueue one player into one queue from one lobby portal.
+     */
     public synchronized JoinResult joinQueue(
         @Nonnull UUID playerUuid,
         @Nonnull String playerName,
@@ -108,6 +117,9 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    /**
+     * Removes one player from whichever queue they currently belong to.
+     */
     public synchronized LeaveResult leaveCurrentQueue(@Nonnull UUID playerUuid) {
         RemovedPlayerResult removed = removePlayerFromQueue(playerUuid, System.currentTimeMillis());
         if (!removed.removed()) {
@@ -116,6 +128,9 @@ public final class QueueCoordinatorService {
         return LeaveResult.left(removed.queueId(), removed.state());
     }
 
+    /**
+     * Removes disconnected players from queue runtime state.
+     */
     public synchronized void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
         PlayerRef playerRef = event.getPlayerRef();
         if (playerRef == null) {
@@ -124,16 +139,25 @@ public final class QueueCoordinatorService {
         removePlayerFromQueue(playerRef.getUuid(), System.currentTimeMillis());
     }
 
+    /**
+     * Returns whether one player is currently tracked inside any queue.
+     */
     public synchronized boolean isQueued(@Nonnull UUID playerUuid) {
         return queueIdByPlayerUuid.containsKey(playerUuid);
     }
 
     @Nonnull
+    /**
+     * Returns the queue id for one queued player, if present.
+     */
     public synchronized Optional<String> findQueuedQueueId(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(queueIdByPlayerUuid.get(playerUuid));
     }
 
     @Nonnull
+    /**
+     * Returns the current runtime state for one queue id when that queue exists in config.
+     */
     public synchronized Optional<QueueRuntimeState> getQueueState(@Nonnull String rawQueueId) {
         try {
             String normalizedQueueId = QueueDefinition.normalizeId(rawQueueId);
@@ -147,6 +171,9 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    /**
+     * Builds the HUD snapshot shown to one queued player.
+     */
     public synchronized Optional<QueueHudState> findQueueHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
         String queueId = queueIdByPlayerUuid.get(playerUuid);
         if (queueId == null || queueId.isBlank()) {
@@ -171,6 +198,9 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    /**
+     * Returns every known queue runtime ordered by queue id.
+     */
     public synchronized List<QueueRuntimeState> listQueueStates() {
         long now = System.currentTimeMillis();
         for (QueueDefinition queue : queueService.list()) {
@@ -181,6 +211,9 @@ public final class QueueCoordinatorService {
             .toList();
     }
 
+    /**
+     * Advances countdown, launch, and handoff cleanup work on a throttled world-tick cadence.
+     */
     public synchronized void advanceWorldTick(long nowEpochMs) {
         if (nowEpochMs - lastWorldTickAdvanceAtEpochMs < WORLD_TICK_ADVANCE_INTERVAL_MS) {
             return;
@@ -203,6 +236,9 @@ public final class QueueCoordinatorService {
         }
     }
 
+    /**
+     * Moves queues from countdown into ready batches once their timer expires.
+     */
     public synchronized void advanceCountdowns(long nowEpochMs) {
         for (QueueDefinition queue : queueService.list()) {
             QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
@@ -245,6 +281,9 @@ public final class QueueCoordinatorService {
         }
     }
 
+    /**
+     * Launches ready queue batches into arena instances when their destination is available.
+     */
     public synchronized void launchReadyBatches(long nowEpochMs) {
         for (QueueDefinition queue : queueService.list()) {
             if (!queue.enabled()) {
@@ -338,6 +377,7 @@ public final class QueueCoordinatorService {
             }
             List<LaunchCandidate> launched = new ArrayList<>();
             String launchError = "";
+            // Launch order is preserved so each player can receive a stable placement index for the match.
             for (int launchIndex = 0; launchIndex < launchCandidates.size(); launchIndex++) {
                 LaunchCandidate candidate = launchCandidates.get(launchIndex);
                 try {

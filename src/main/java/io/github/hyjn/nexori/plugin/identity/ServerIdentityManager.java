@@ -23,6 +23,9 @@ import java.util.HexFormat;
 import java.util.Properties;
 import java.util.UUID;
 
+/**
+ * Loads, creates, and uses the local server identity used by Nexori trust bootstrap.
+ */
 public class ServerIdentityManager {
 
     private static final String ALGORITHM = "Ed25519";
@@ -32,6 +35,9 @@ public class ServerIdentityManager {
     private final Path privateKeyPath;
     private final Path publicKeyPath;
 
+    /**
+     * Creates an identity manager rooted at the given identity directory.
+     */
     public ServerIdentityManager(Path identityDir) {
         this.identityDir = identityDir;
         this.metadataPath = identityDir.resolve("identity.properties");
@@ -39,6 +45,9 @@ public class ServerIdentityManager {
         this.publicKeyPath = identityDir.resolve("server-public-key.spki");
     }
 
+    /**
+     * Loads the persisted server identity or creates a new one when the identity directory is empty.
+     */
     public ServerIdentity loadOrCreate() throws IOException, GeneralSecurityException {
         Files.createDirectories(identityDir);
         boolean metadataExists = Files.exists(metadataPath);
@@ -56,14 +65,23 @@ public class ServerIdentityManager {
         return loadExistingIdentity();
     }
 
+    /**
+     * Signs a bootstrap challenge with the local private key.
+     */
     public String signChallenge(ServerIdentity identity, BootstrapChallenge challenge) throws GeneralSecurityException {
         return signCanonicalPayload(identity, challenge.canonicalPayload());
     }
 
+    /**
+     * Verifies a signed bootstrap challenge using the provided public key.
+     */
     public boolean verifyChallenge(BootstrapChallenge challenge, String publicKeyBase64, String signatureBase64) throws GeneralSecurityException {
         return verifyCanonicalPayload(challenge.canonicalPayload(), publicKeyBase64, signatureBase64);
     }
 
+    /**
+     * Signs a canonical payload string with the local private key.
+     */
     public String signCanonicalPayload(ServerIdentity identity, String canonicalPayload) throws GeneralSecurityException {
         Signature signature = Signature.getInstance(ALGORITHM);
         signature.initSign(identity.privateKey());
@@ -71,6 +89,9 @@ public class ServerIdentityManager {
         return Base64.getEncoder().encodeToString(signature.sign());
     }
 
+    /**
+     * Verifies a canonical payload string with a public key and signature.
+     */
     public boolean verifyCanonicalPayload(String canonicalPayload, String publicKeyBase64, String signatureBase64) throws GeneralSecurityException {
         PublicKey publicKey = decodePublicKey(publicKeyBase64);
         Signature verifier = Signature.getInstance(ALGORITHM);

@@ -39,6 +39,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Discovers destination targets from other trusted Nexori servers and returns the operator to the
+ * origin server after the discovery response is stored locally.
+ */
 public final class DestinationTargetDiscoveryService {
 
     public static final String REQUEST_PAYLOAD_TYPE = "destination-targets.discover.request";
@@ -56,6 +60,9 @@ public final class DestinationTargetDiscoveryService {
     private final SecureReferralHandler requestHandler = new RequestHandler();
     private final SecureReferralHandler responseHandler = new ResponseHandler();
 
+    /**
+     * Creates the trusted discovery service for remote destination targets.
+     */
     public DestinationTargetDiscoveryService(
         @Nonnull HytaleLogger logger,
         @Nonnull TrustBundleStore trustBundleStore,
@@ -74,21 +81,33 @@ public final class DestinationTargetDiscoveryService {
         this.diagnosticsService = diagnosticsService;
     }
 
+    /**
+     * Returns the secure referral handler that answers discovery requests on the destination server.
+     */
     @Nonnull
     public SecureReferralHandler requestHandler() {
         return requestHandler;
     }
 
+    /**
+     * Returns the secure referral handler that stores discovery responses on the origin server.
+     */
     @Nonnull
     public SecureReferralHandler responseHandler() {
         return responseHandler;
     }
 
+    /**
+     * Exposes the local cache of discovered destination targets.
+     */
     @Nonnull
     public DiscoveredDestinationTargetCacheService cacheService() {
         return cacheService;
     }
 
+    /**
+     * Starts destination target discovery from a live player ref.
+     */
     public void discover(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -98,6 +117,9 @@ public final class DestinationTargetDiscoveryService {
         discover(playerRef, destination, originWorldName, originTransform, null);
     }
 
+    /**
+     * Starts destination target discovery from a live player ref and preserves a UI resume action.
+     */
     public void discover(
         @Nonnull PlayerRef playerRef,
         @Nonnull ConfiguredPeer destination,
@@ -155,6 +177,9 @@ public final class DestinationTargetDiscoveryService {
         );
     }
 
+    /**
+     * Starts destination target discovery while the operator is still inside setup connect.
+     */
     public void discover(
         @Nonnull PlayerSetupConnectEvent event,
         @Nonnull ConfiguredPeer destination,
@@ -212,6 +237,9 @@ public final class DestinationTargetDiscoveryService {
         );
     }
 
+    /**
+     * Teleports the operator back to the origin location and optionally resumes the UI after discovery finishes.
+     */
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
         PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
             event.getPlayerRef(),
@@ -261,6 +289,7 @@ public final class DestinationTargetDiscoveryService {
             }
         }
 
+        // Portal-owned targets keep their portal id in the discovered cache so the UI can preserve portal-specific actions.
         List<DiscoveredDestinationTargetSummary> targets = destinationTargetService.list().stream()
             .map(target -> summarizeTarget(target, portalIdsByTargetId))
             .toList();

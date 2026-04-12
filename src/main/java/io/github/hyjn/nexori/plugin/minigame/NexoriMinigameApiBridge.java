@@ -10,10 +10,17 @@ import javax.annotation.Nonnull;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Default implementation of Nexori's public minigame API.
+ * This bridge translates the public contract into the internal arena-match runtime.
+ */
 public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
     private final ArenaMatchService arenaMatchService;
 
+    /**
+     * Creates one bridge backed by the live arena-match service.
+     */
     public NexoriMinigameApiBridge(@Nonnull ArenaMatchService arenaMatchService) {
         this.arenaMatchService = arenaMatchService;
     }

@@ -38,6 +38,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Handles Nexori inventory handoff, backup, receipt tracking, and recovery flows across secure travel.
+ */
 public final class InventoryTransferService {
 
     public static final String QUERY_PAYLOAD_TYPE = "inventory-transfer.receipt-query";
@@ -57,6 +60,9 @@ public final class InventoryTransferService {
     private final SecureReferralHandler queryHandler = new QueryHandler();
     private final SecureReferralHandler replyHandler = new ReplyHandler();
 
+    /**
+     * Creates the inventory transfer service for secure travel and recovery.
+     */
     public InventoryTransferService(
         @Nonnull HytaleLogger logger,
         @Nonnull InventoryTransferBackupStore backupStore,
@@ -77,16 +83,25 @@ public final class InventoryTransferService {
         this.diagnosticsService = diagnosticsService;
     }
 
+    /**
+     * Returns the secure referral handler that answers remote receipt queries.
+     */
     @Nonnull
     public SecureReferralHandler queryHandler() {
         return queryHandler;
     }
 
+    /**
+     * Returns the secure referral handler that processes receipt query replies on the origin server.
+     */
     @Nonnull
     public SecureReferralHandler replyHandler() {
         return replyHandler;
     }
 
+    /**
+     * Captures the current live inventory state of the player.
+     */
     @Nonnull
     public InventoryTransferState captureCurrentInventory(@Nonnull PlayerRef playerRef) {
         Player player = playerRef.getComponent(Player.getComponentType());
@@ -96,6 +111,9 @@ public final class InventoryTransferService {
         return inventorySnapshotService.capture(player);
     }
 
+    /**
+     * Saves the origin backup created before APPLY_INVENTORY travel clears the source inventory.
+     */
     @Nonnull
     public InventoryTransferBackupRecord saveOriginBackup(
         @Nonnull String transferId,
@@ -139,6 +157,9 @@ public final class InventoryTransferService {
         return saved;
     }
 
+    /**
+     * Saves a local overwrite backup before inbound APPLY_INVENTORY replaces the destination inventory.
+     */
     @Nonnull
     public InventoryTransferBackupRecord saveLocalOverwriteBackup(
         @Nonnull UUID playerUuid,
@@ -179,6 +200,9 @@ public final class InventoryTransferService {
         return saved;
     }
 
+    /**
+     * Clears the origin inventory after the outbound backup has been saved.
+     */
     public void clearOriginInventory(@Nonnull PlayerRef playerRef, @Nonnull InventoryTransferState sourceInventory) {
         InventoryTransferState emptied = InventoryTransferState.emptyLike(sourceInventory);
         playerSaveRepository.applyInventoryState(playerRef.getUuid(), emptied);
@@ -201,6 +225,9 @@ public final class InventoryTransferService {
         );
     }
 
+    /**
+     * Prepares the destination-side inventory state that should exist when the player arrives.
+     */
     public void prepareInboundArrival(
         @Nonnull UUID playerUuid,
         @Nonnull TravelProfileType profileType,
@@ -236,17 +263,26 @@ public final class InventoryTransferService {
         }
     }
 
+    /**
+     * Lists recovery backups available for one player.
+     */
     @Nonnull
     public List<InventoryTransferBackupRecord> listBackups(@Nonnull UUID playerUuid) {
         return backupStore.listByPlayer(playerUuid);
     }
 
+    /**
+     * Finds one recovery backup owned by the given player.
+     */
     @Nonnull
     public Optional<InventoryTransferBackupRecord> findPlayerBackup(@Nonnull UUID playerUuid, @Nonnull String transferId) {
         return backupStore.find(transferId)
             .filter(record -> playerUuid.equals(record.playerUuid()));
     }
 
+    /**
+     * Starts the recovery flow for the requested backup.
+     */
     @Nonnull
     public RecoveryStartResult startRecovery(
         @Nonnull PlayerRef playerRef,
@@ -330,33 +366,54 @@ public final class InventoryTransferService {
         );
     }
 
+    /**
+     * Returns whether recovery is currently enabled by policy.
+     */
     public boolean isRecoveryEnabled() {
         return policyStore.isApplyInventoryBackupsEnabled();
     }
 
+    /**
+     * Enables or disables recovery.
+     */
     public void setRecoveryEnabled(boolean enabled) throws IOException {
         policyStore.setApplyInventoryBackupsEnabled(enabled);
     }
 
+    /**
+     * Returns the configured backup limit per player.
+     */
     public int getMaxBackupsPerPlayer() {
         return policyStore.getMaxBackupsPerPlayer();
     }
 
+    /**
+     * Updates the configured backup limit per player.
+     */
     public void setMaxBackupsPerPlayer(int maxBackupsPerPlayer) throws IOException {
         policyStore.setMaxBackupsPerPlayer(maxBackupsPerPlayer);
         trimAllBackupsToPolicy();
     }
 
+    /**
+     * Throws if recovery is currently disabled by policy.
+     */
     public void requireRecoveryEnabled() {
         if (!policyStore.isApplyInventoryBackupsEnabled()) {
             throw new IllegalStateException("Nexori inventory recovery is currently disabled by this server's admin.");
         }
     }
 
+    /**
+     * Returns whether the supplied inventory state contains any visible items worth transferring.
+     */
     public boolean shouldTransferInventory(InventoryTransferState state) {
         return state != null && occupiedVisibleSlots(state) > 0;
     }
 
+    /**
+     * Ensures the player inventory is empty before recovery overwrites it.
+     */
     public void requireRecoveryInventoryEmpty(@Nonnull UUID playerUuid, Player player) {
         InventoryTransferState currentState = null;
         if (player != null) {
@@ -374,6 +431,9 @@ public final class InventoryTransferService {
         }
     }
 
+    /**
+     * Flushes any deferred runtime inventory state as soon as the player is fully connected.
+     */
     public void handlePlayerConnect(@Nonnull PlayerConnectEvent event) {
         PlayerRef playerRef = event.getPlayerRef();
         if (playerRef == null) {
@@ -389,6 +449,9 @@ public final class InventoryTransferService {
         flushPendingRuntimeInventory(playerUuid, player);
     }
 
+    /**
+     * Teleports the player back to the recovery origin and resumes the recovery UI when a recovery query finishes.
+     */
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
         PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
             event.getPlayerRef(),

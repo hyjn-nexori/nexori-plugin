@@ -29,6 +29,9 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.IntConsumer;
 
+/**
+ * Reconciles floating world labels by spawning or removing invisible carrier entities in each world.
+ */
 public final class WorldLabelService {
 
     private static final String CARRIER_BLOCK_TYPE = "Barrier";
@@ -40,6 +43,9 @@ public final class WorldLabelService {
     private final Map<String, Long> nextReconcileAtByWorld = new HashMap<>();
     private final Set<String> pendingWorlds = new HashSet<>();
 
+    /**
+     * Creates the runtime label reconciler for the provided label source.
+     */
     public WorldLabelService(
         @Nonnull HytaleLogger logger,
         @Nonnull WorldLabelSource source
@@ -48,6 +54,9 @@ public final class WorldLabelService {
         this.source = source;
     }
 
+    /**
+     * Schedules reconciliation for one world when the reconcile interval elapses.
+     */
     public synchronized void handleWorldTick(@Nonnull World world, long nowEpochMillis) {
         if (!world.isAlive()) {
             return;
@@ -80,6 +89,9 @@ public final class WorldLabelService {
         });
     }
 
+    /**
+     * Removes every barrier-based nameplate carrier from the current world.
+     */
     public void clearBarrierNameplateCarriers(
         @Nonnull World world,
         @Nonnull IntConsumer onComplete
@@ -224,6 +236,7 @@ public final class WorldLabelService {
         @Nonnull WorldLabelDefinition definition
     ) {
         try {
+            // Labels use a barrier block entity as a lightweight invisible carrier for the nameplate.
             Holder<EntityStore> holder = BlockEntity.assembleDefaultBlockEntity(
                 timeResource,
                 CARRIER_BLOCK_TYPE,

@@ -32,6 +32,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
+/**
+ * Coordinates Nexori trust bootstrap runs, including proof exchange, bundle installation,
+ * peer migration, and deferred UI feedback for the operator who started the run.
+ */
 public final class BootstrapCoordinator {
 
     private final HytaleLogger logger;
@@ -50,6 +54,9 @@ public final class BootstrapCoordinator {
     private final Map<UUID, Boolean> pendingMenuResumeRequests = new ConcurrentHashMap<>();
     private final Map<UUID, String> pendingMenuResumeStatuses = new ConcurrentHashMap<>();
 
+    /**
+     * Creates the bootstrap coordinator used by the origin server and every remote install target.
+     */
     public BootstrapCoordinator(
         @Nonnull HytaleLogger logger,
         @Nonnull ServerIdentityManager identityManager,
@@ -77,6 +84,9 @@ public final class BootstrapCoordinator {
         this.payloadCodec = new BootstrapPayloadCodec();
     }
 
+    /**
+     * Starts a new bootstrap run from the local server and refers the operator through the proof flow.
+     */
     @Nonnull
     public StartResult start(@Nonnull PlayerRef playerRef) {
         String operationId = diagnosticsService.newOperationId("bootstrap");
@@ -170,6 +180,9 @@ public final class BootstrapCoordinator {
         }
     }
 
+    /**
+     * Clears the currently active bootstrap run on the origin server.
+     */
     @Nonnull
     public StartResult resetActiveRun(@Nonnull PlayerRef playerRef) {
         BootstrapRun currentRun = bootstrapRunStore.getCurrentRun();
@@ -205,6 +218,9 @@ public final class BootstrapCoordinator {
         return StartResult.started("Cleared the active Nexori bootstrap state on this origin server. You can run Initial Setup again.");
     }
 
+    /**
+     * Handles bootstrap referrals during player setup connect before the player fully enters the destination server.
+     */
     public void handlePlayerSetupConnect(@Nonnull PlayerSetupConnectEvent event) {
         BootstrapReferralPayload payload = decode(event);
         if (payload == null) {
@@ -220,6 +236,9 @@ public final class BootstrapCoordinator {
         }
     }
 
+    /**
+     * Delivers deferred bootstrap status messages after the operator reconnects.
+     */
     public void handlePlayerConnect(@Nonnull PlayerConnectEvent event) {
         if (event.getPlayerRef() == null) {
             return;
@@ -232,16 +251,25 @@ public final class BootstrapCoordinator {
         }
     }
 
+    /**
+     * Marks that the next reconnect for this player should reopen the Nexori menu instead of showing a chat message.
+     */
     public void requestMenuResume(@Nonnull UUID playerUuid) {
         pendingMenuResumeRequests.put(playerUuid, Boolean.TRUE);
     }
 
+    /**
+     * Returns and clears the pending bootstrap status that should be shown when the menu resumes.
+     */
     @Nonnull
     public String consumePendingMenuResumeStatus(@Nonnull UUID playerUuid) {
         String status = pendingMenuResumeStatuses.remove(playerUuid);
         return status == null ? "" : status;
     }
 
+    /**
+     * Returns the currently installed trust bundle for this server.
+     */
     @Nonnull
     public TrustBundle getTrustBundle() {
         return trustBundleStore.getCurrentBundle();

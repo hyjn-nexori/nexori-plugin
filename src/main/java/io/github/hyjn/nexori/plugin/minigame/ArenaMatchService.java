@@ -33,6 +33,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Tracks active arena matches, observes player arrivals and returns, and coordinates the
+ * runtime lifecycle that sits between queue launch and secure return to the lobby.
+ */
 public final class ArenaMatchService {
 
     private static final Gson GSON = new Gson();
@@ -53,6 +57,9 @@ public final class ArenaMatchService {
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
 
+    /**
+     * Creates the arena match runtime service used by queue launch, match resolution, and return HUDs.
+     */
     public ArenaMatchService(
         @Nonnull HytaleLogger logger,
         @Nonnull SecureTravelService secureTravelService,
@@ -67,6 +74,9 @@ public final class ArenaMatchService {
         this.instanceSpawnSlotService = instanceSpawnSlotService;
     }
 
+    /**
+     * Observes player-ready events and consumes Nexori launch or return arrivals for that player.
+     */
     public synchronized void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
         PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
             event.getPlayerRef(),
@@ -96,6 +106,9 @@ public final class ArenaMatchService {
         }
     }
 
+    /**
+     * Removes disconnecting players from the active match runtime and reevaluates automatic resolution.
+     */
     public synchronized void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
         PlayerRef playerRef = event.getPlayerRef();
         if (playerRef == null) {
@@ -125,6 +138,9 @@ public final class ArenaMatchService {
         }
     }
 
+    /**
+     * Handles setup disconnects that happen before a launch or return arrival can finish.
+     */
     public synchronized void handlePlayerSetupDisconnect(@Nonnull PlayerSetupDisconnectEvent event) {
         PendingArrival arrival = secureTravelService.peekPendingArrival(event.getUuid()).orElse(null);
         if (arrival == null) {
@@ -166,6 +182,9 @@ public final class ArenaMatchService {
         }
     }
 
+    /**
+     * Advances per-player match runtime such as elimination handling and pending lobby returns.
+     */
     public synchronized void handlePlayerTick(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
@@ -221,6 +240,9 @@ public final class ArenaMatchService {
         }
     }
 
+    /**
+     * Lists the currently tracked active matches.
+     */
     @Nonnull
     public synchronized List<ArenaActiveMatch> listMatches() {
         return matchesById.values().stream()
@@ -228,6 +250,9 @@ public final class ArenaMatchService {
             .toList();
     }
 
+    /**
+     * Finds an active match by id.
+     */
     @Nonnull
     public synchronized Optional<ArenaActiveMatch> find(@Nonnull String rawMatchId) {
         if (rawMatchId == null || rawMatchId.isBlank()) {
@@ -236,6 +261,9 @@ public final class ArenaMatchService {
         return Optional.ofNullable(matchesById.get(rawMatchId.trim().toLowerCase()));
     }
 
+    /**
+     * Returns the countdown state that should be rendered for a player who is waiting to return to the lobby.
+     */
     @Nonnull
     public synchronized Optional<ReturnHudState> findReturnHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
         String matchId = matchIdByPlayerUuid.get(playerUuid);
@@ -276,6 +304,9 @@ public final class ArenaMatchService {
         ));
     }
 
+    /**
+     * Resolves a player token within an active match into the runtime player UUID tracked by Nexori.
+     */
     @Nonnull
     public synchronized Optional<UUID> findActivePlayerUuid(@Nonnull String rawMatchId, @Nonnull String rawPlayerToken) {
         ArenaActiveMatch match = find(rawMatchId).orElse(null);
@@ -299,6 +330,9 @@ public final class ArenaMatchService {
         return Optional.empty();
     }
 
+    /**
+     * Finds the active match currently associated with a player UUID.
+     */
     @Nonnull
     public synchronized Optional<String> findActiveMatchId(@Nonnull UUID playerUuid) {
         String matchId = matchIdByPlayerUuid.get(playerUuid);
@@ -313,6 +347,9 @@ public final class ArenaMatchService {
         return Optional.of(match.matchId());
     }
 
+    /**
+     * Returns the runtime placement state for an active match.
+     */
     @Nonnull
     public synchronized Optional<MatchPlacementState> findMatchPlacementState(@Nonnull String rawMatchId) {
         ArenaActiveMatch match = find(rawMatchId).orElse(null);
@@ -343,12 +380,18 @@ public final class ArenaMatchService {
         ));
     }
 
+    /**
+     * Returns the configured resolution trigger id for an active match.
+     */
     @Nonnull
     public synchronized Optional<String> findMatchResolutionTriggerId(@Nonnull String rawMatchId) {
         return find(rawMatchId)
             .map(ArenaActiveMatch::matchResolutionTriggerId);
     }
 
+    /**
+     * Records the resolved outcome for one player in an active match and schedules the return countdown.
+     */
     @Nonnull
     public synchronized ResolvePlayerResult resolvePlayerOutcome(
         @Nonnull String rawMatchId,
@@ -379,6 +422,9 @@ public final class ArenaMatchService {
         return ResolvePlayerResult.updated(updated, playerUuid, outcome);
     }
 
+    /**
+     * Forces an active match to end and schedules every remaining player to return immediately.
+     */
     @Nonnull
     public synchronized EndMatchResult endMatch(@Nonnull String rawMatchId, @Nonnull String rawReason) {
         String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
@@ -429,6 +475,7 @@ public final class ArenaMatchService {
             ).normalized()
             : existing.withPlayerArrival(playerRef.getUuid(), now);
 
+        // A player can only belong to one active match at a time.
         String previousMatchId = matchIdByPlayerUuid.put(playerRef.getUuid(), updated.matchId());
         if (previousMatchId != null && !previousMatchId.equals(updated.matchId())) {
             ArenaActiveMatch previous = matchesById.get(previousMatchId);
@@ -661,6 +708,9 @@ public final class ArenaMatchService {
         }
     }
 
+    /**
+     * Applies Nexori-owned automatic resolution rules to a match runtime.
+     */
     @Nonnull
     private ArenaActiveMatch applyAutomaticResolutionTrigger(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
         if (match.hasWinner()) {
@@ -686,6 +736,9 @@ public final class ArenaMatchService {
         );
     }
 
+    /**
+     * Marks a player as the winner inside the in-memory match runtime.
+     */
     @Nonnull
     ArenaActiveMatch markPlayerWinInternal(
         @Nonnull ArenaActiveMatch match,
@@ -700,6 +753,9 @@ public final class ArenaMatchService {
         return updated;
     }
 
+    /**
+     * Marks a player as eliminated inside the in-memory match runtime.
+     */
     @Nonnull
     ArenaActiveMatch markPlayerLossInternal(
         @Nonnull ArenaActiveMatch match,
