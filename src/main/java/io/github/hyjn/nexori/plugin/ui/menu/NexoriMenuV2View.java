@@ -7,7 +7,7 @@ public enum NexoriMenuV2View {
     RULES("Rules"),
     QUEUES("Minigames"),
     OPERATIONS("Operations"),
-    ABOUT("HOW TO USE");
+    ABOUT("ABOUT NEXORI");
 
     private final String label;
 

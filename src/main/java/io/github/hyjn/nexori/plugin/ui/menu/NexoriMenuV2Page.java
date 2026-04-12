@@ -220,15 +220,7 @@ public final class NexoriMenuV2Page {
     ) {
         GroupBuilder sidebar = card(SIDEBAR_W, CONTENT_H, PANEL_BG);
         sidebar.addChild(label("Views", TITLE, SIDEBAR_W - 32));
-        sidebar.addChild(spacerY(8));
-        sidebar.addChild(label(
-            setup.viewsLocked()
-                ? "Finish Servers setup first to unlock the rest of the workspace."
-                : "Servers is the operational view. The center panel changes with the selected view.",
-            MUTED,
-            SIDEBAR_W - 32
-        ));
-        sidebar.addChild(spacerY(16));
+        sidebar.addChild(spacerY(12));
 
         List<NexoriMenuV2View> views = List.of(
             NexoriMenuV2View.HOME,
@@ -527,7 +519,7 @@ public final class NexoriMenuV2Page {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Spawn Slots", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("Select an instance template, stand on the exact island spawn you want, then save your current position. Nexori will distribute arriving players across these slots when the match instance is created.", MUTED, width - 32));
+        card.addChild(label("Select an instance template, stand on the exact position spawn you want, then save your current position. Nexori will distribute arriving players across these slots when the match instance is created.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         int summaryWidth = Math.max(360, width - 32 - 340 - 12);
@@ -949,7 +941,7 @@ public final class NexoriMenuV2Page {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Rule Group Setup", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("Create or update a rule group here, then assign servers to it below.", MUTED, width - 32));
+        card.addChild(label("Here you can create server configuration templates and choose which servers to apply them to.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(HOME_INPUT_FIELD_H));
@@ -2845,6 +2837,11 @@ public final class NexoriMenuV2Page {
     ) {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Travel Bind", TITLE, width - 32));
+        card.addChild(label(
+                "Here you can connect portals to each other or send them to exact coordinates, whether across servers, between worlds on the same server, or between two different locations in the same world.",
+                MUTED,
+                width - 32
+        ));
         card.addChild(spacerY(12));
 
         GroupBuilder stack = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(height - 32));
@@ -4754,6 +4751,11 @@ public final class NexoriMenuV2Page {
     ) {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Queue Portals", TITLE, width - 32));
+        card.addChild(label(
+                "Here you can configure portals so that, when crossed, they add a player to a queue or remove them from one.",
+                MUTED,
+                width - 32
+        ));
         card.addChild(spacerY(12));
 
         boolean hasPortal = !state.selectedQueuePortalId().isBlank();
@@ -5163,7 +5165,7 @@ public final class NexoriMenuV2Page {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Lobby", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("Queues created in this UI live on the lobby server. Pick one local world here and every queue created below will belong to this machine.", MUTED, width - 32));
+        card.addChild(label("Only one server can act as the lobby and host the queues. The world you select here also defines the return point from minigames. If you later move the lobby to another server, queues on the previous server will stop working.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         String selectedWorldLabel = selectedWorld == null ? "Select a lobby world below." : selectedWorld.worldName();
@@ -5654,7 +5656,7 @@ public final class NexoriMenuV2Page {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Games", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("Create a reusable minigame definition here, then point queues at it below.", MUTED, width - 32));
+        card.addChild(label("Choose the server where the arena instance will be created, the instance template to launch, and the trigger that returns players to the lobby. Nexori includes a built-in trigger called Last Player Alive, where eliminated players return as losses and the final surviving player is resolved as the winner. The Manual option is intended for third-party mods that manage their own rule engine and use the Nexori API to decide when a player should be returned.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         GroupBuilder topRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
@@ -6454,7 +6456,7 @@ public final class NexoriMenuV2Page {
         card.addChild(label(
             currentLobby == null
                 ? "This server is not a lobby yet. Use the Lobby tab first, then create queues here."
-                : "Queues created here belong to the lobby on world '" + currentLobby.worldName() + "'.",
+                : "Queues created here belong to the lobby on world '" + currentLobby.worldName() + "'. Queues can be attached to multiple portals, but each queue can point to only one game at a time. Once the minimum player count is reached, the countdown begins, and additional players may still join until it reaches zero. If a player leaves and the queue no longer meets the minimum requirement, the countdown resets and waits again.",
             currentLobby == null ? BAD : MUTED,
             width - 32
         ));
@@ -6753,7 +6755,7 @@ public final class NexoriMenuV2Page {
             case HOME -> "Minimal server setup, trust bundle status, and local server list.";
             case PORTALS -> "";
             case TARGETS -> "Targets are now folded into the Portals travel bind workspace.";
-            case RULES -> "Rules stay separate because they group servers under policies.";
+            case RULES -> "";
             case QUEUES -> "Configure the lobby, reusable games, and the queues that launch into them.";
             case OPERATIONS -> "Live runtime, diagnostics, and recovery belong here.";
             case ABOUT -> "Detailed context for what Nexori does and how this workspace is organized.";
