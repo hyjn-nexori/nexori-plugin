@@ -101,6 +101,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexorimatchsessionstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchend <matchId> [--reason=<MATCH_ENDED|MATCH_ABORTED|RECOVERY_RETURN>]"));
         ctx.sendMessage(Message.raw("- /nexorimatchresolveplayer <matchId> <player> <WIN|LOSS> [--delaySeconds=<0+>] [--reason=<id>]"));
+        ctx.sendMessage(Message.raw("- /nexoriworldlabelcleanup"));
+        ctx.sendMessage(Message.raw("  Removes all barrier-based Nexori world-label carriers from your current world, including orphaned portal labels left behind after deleting persistence."));
         ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));
         ctx.sendMessage(Message.raw("- /nexorirecoverymode <status|enable|disable>"));
         ctx.sendMessage(Message.raw("- /nexorirecovery"));
@@ -110,9 +112,7 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("  Travel profiles: KEEP_INVENTORY, CLEAR_INVENTORY, APPLY_INVENTORY"));
         ctx.sendMessage(Message.raw("  Optional command args in Nexori use --name=value syntax."));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
-        ctx.sendMessage(Message.raw("  Opens the main Nexori HyUI admin page for server, rules, and target setup."));
-        ctx.sendMessage(Message.raw("- /nexorimenuv2"));
-        ctx.sendMessage(Message.raw("  Opens the new full-size Nexori menu shell that will replace the old menu over time."));
+        ctx.sendMessage(Message.raw("  Opens the main Nexori admin menu for servers, portals, rules, and minigames."));
     }
 
     private void sendStatus(CommandContext ctx) {

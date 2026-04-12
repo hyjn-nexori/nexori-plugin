@@ -11,6 +11,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
+import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Page;
 
 import javax.annotation.Nonnull;
 
@@ -19,7 +20,7 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
     private final NexoriPlugin plugin;
 
     public NexoriMenuCommand(@Nonnull NexoriPlugin plugin) {
-        super("nexorimenu", "Opens the Nexori admin HyUI.");
+        super("nexorimenu", "Opens the Nexori admin menu.");
         this.plugin = plugin;
         setPermissionGroup(GameMode.Adventure);
     }
@@ -38,6 +39,6 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
             return;
         }
 
-        NexoriMenuHyUiPage.open(ref, store, playerRef, player, plugin);
+        NexoriMenuV2Page.open(ref, store, playerRef, player, plugin);
     }
 }

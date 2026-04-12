@@ -1,10 +1,13 @@
 package io.github.hyjn.nexori.plugin.worldlabel;
 
 import com.hypixel.hytale.component.AddReason;
+import com.hypixel.hytale.component.ArchetypeChunk;
+import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.Holder;
+import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.entity.entities.BlockEntity;
 import com.hypixel.hytale.server.core.entity.nameplate.Nameplate;
@@ -23,6 +26,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
+import java.util.function.IntConsumer;
 
 public final class WorldLabelService {
 
@@ -72,6 +77,51 @@ public final class WorldLabelService {
                     pendingWorlds.remove(worldName);
                 }
             }
+        });
+    }
+
+    public void clearBarrierNameplateCarriers(
+        @Nonnull World world,
+        @Nonnull IntConsumer onComplete
+    ) {
+        if (!world.isAlive()) {
+            onComplete.accept(0);
+            return;
+        }
+
+        String worldName = normalizeWorldName(world.getName());
+        synchronized (this) {
+            pendingWorlds.add(worldName);
+            nextReconcileAtByWorld.remove(worldName);
+            runtimeById.entrySet().removeIf(entry -> entry.getValue().worldName().equals(worldName));
+        }
+
+        world.execute(() -> {
+            int removedCount = 0;
+            try {
+                Store<EntityStore> store = world.getEntityStore().getStore();
+                List<Ref<EntityStore>> toRemove = new ArrayList<>();
+                store.forEachChunk(
+                    Query.any(),
+                    (BiConsumer<ArchetypeChunk<EntityStore>, CommandBuffer<EntityStore>>)
+                        (chunk, commandBuffer) -> collectBarrierNameplateCarriers(chunk, store, toRemove)
+                );
+                for (Ref<EntityStore> ref : toRemove) {
+                    try {
+                        store.removeEntity(ref, RemoveReason.REMOVE);
+                        removedCount++;
+                    } catch (Exception exception) {
+                        logger.atWarning().withCause(exception).log("Failed to remove Nexori world label carrier during cleanup in " + world.getName() + ".");
+                    }
+                }
+            } catch (Exception exception) {
+                logger.atWarning().withCause(exception).log("Failed to sweep Nexori world label carriers in " + world.getName() + ".");
+            } finally {
+                synchronized (WorldLabelService.this) {
+                    pendingWorlds.remove(worldName);
+                }
+            }
+            onComplete.accept(removedCount);
         });
     }
 
@@ -134,6 +184,27 @@ public final class WorldLabelService {
             return store.getComponent(ref, BlockEntity.getComponentType()) != null;
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private void collectBarrierNameplateCarriers(
+        @Nonnull ArchetypeChunk<EntityStore> chunk,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull List<Ref<EntityStore>> toRemove
+    ) {
+        for (int entityId = 0; entityId < chunk.size(); entityId++) {
+            Ref<EntityStore> ref = chunk.getReferenceTo(entityId);
+            if (ref == null) {
+                continue;
+            }
+            BlockEntity blockEntity = store.getComponent(ref, BlockEntity.getComponentType());
+            if (blockEntity == null || !CARRIER_BLOCK_TYPE.equalsIgnoreCase(blockEntity.getBlockTypeKey())) {
+                continue;
+            }
+            if (store.getComponent(ref, Nameplate.getComponentType()) == null) {
+                continue;
+            }
+            toRemove.add(ref);
         }
     }
 

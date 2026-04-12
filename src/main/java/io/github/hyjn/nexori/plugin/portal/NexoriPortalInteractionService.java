@@ -245,6 +245,9 @@ public final class NexoriPortalInteractionService {
                     continue;
                 }
                 case TRAVEL -> {
+                    if (blockQueuedRemoteTravel(player, playerRef)) {
+                        return;
+                    }
                 }
             }
 
@@ -302,6 +305,20 @@ public final class NexoriPortalInteractionService {
             }
             return;
         }
+    }
+
+    private boolean blockQueuedRemoteTravel(
+        @Nonnull Player player,
+        @Nonnull PlayerRef playerRef
+    ) {
+        String currentQueueId = queueCoordinatorService.findQueuedQueueId(playerRef.getUuid()).orElse("");
+        if (currentQueueId.isBlank()) {
+            return false;
+        }
+        player.sendMessage(Message.raw(
+            "You are currently in Nexori queue " + currentQueueId + ". Leave the queue before using a cross-server portal."
+        ));
+        return true;
     }
 
     private boolean leaveQueue(
