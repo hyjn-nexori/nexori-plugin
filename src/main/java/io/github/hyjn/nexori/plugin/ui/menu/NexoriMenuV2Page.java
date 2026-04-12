@@ -5578,6 +5578,8 @@ public final class NexoriMenuV2Page {
             : state.pendingDestinationConnectionAddress();
         List<RemoteTargetOption> remoteTargets = buildRemoteTargetOptions(plugin, selectedConnectionAddress);
         List<String> instanceIds = buildInstanceTemplateIds();
+        String localSelectorAddress = localSelectorAddress(setup.localConnectionAddress());
+        List<TravelServerGroup> groups = buildTravelServerGroups(plugin, peers, setup.localConnectionAddress(), localSelectorAddress);
 
         int setupHeight = 156;
         int selectorsViewportHeight = 300;
@@ -5589,7 +5591,23 @@ public final class NexoriMenuV2Page {
 
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
-        scroll.addChild(destinationSetupCard(ref, store, playerRef, player, plugin, state, editing, innerWidth, setupHeight));
+        scroll.addChild(
+                destinationSetupCard(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state,
+                        peers,
+                        groups,
+                        setup.localConnectionAddress(),
+                        localSelectorAddress,
+                        editing,
+                        innerWidth,
+                        setupHeight
+                )
+        );
         scroll.addChild(spacerY(12));
         scroll.addChild(destinationSelectionTableCard(ref, store, playerRef, player, plugin, state, remoteServers, remoteTargets, instanceIds, innerWidth, tableHeight, selectorsViewportHeight, scrollId));
         scroll.addChild(spacerY(12));
@@ -5599,15 +5617,19 @@ public final class NexoriMenuV2Page {
 
     @Nonnull
     private static GroupBuilder destinationSetupCard(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef,
-        @Nonnull Player player,
-        @Nonnull NexoriPlugin plugin,
-        @Nonnull NexoriMenuV2State state,
-        ArenaDefinition editing,
-        int width,
-        int height
+            @Nonnull Ref<EntityStore> ref,
+            @Nonnull Store<EntityStore> store,
+            @Nonnull PlayerRef playerRef,
+            @Nonnull Player player,
+            @Nonnull NexoriPlugin plugin,
+            @Nonnull NexoriMenuV2State state,
+            @Nonnull List<ConfiguredPeer> peers,
+            @Nonnull List<TravelServerGroup> groups,
+            @Nonnull String rawLocalConnectionAddress,
+            @Nonnull String localSelectorAddress,
+            ArenaDefinition editing,
+            int width,
+            int height
     ) {
         String displayValue = state.pendingDestinationDisplayName().isBlank()
             ? (editing == null ? "New Destination" : editing.displayName())
@@ -5638,40 +5660,58 @@ public final class NexoriMenuV2Page {
         GroupBuilder topRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
         topRow.addChild(inputField("Display Name", DESTINATION_DISPLAY_NAME_INPUT_ID, displayValue, "New Game", 280));
         topRow.addChild(spacerX(12));
-        GroupBuilder actions = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(340).setHeight(HOME_INPUT_BLOCK_H));
+        GroupBuilder actions = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_BLOCK_H));
         actions.addChild(spacerY(HOME_ACTION_BUTTON_TOP));
-        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(340).setHeight(HOME_INPUT_FIELD_H));
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_FIELD_H));
         actionRow.addChild(
-            ButtonBuilder.textButton()
-                .withText(editing == null ? "SAVE GAME" : "UPDATE GAME")
-                .withDisabled(!canSave)
-                .withAnchor(new HyUIAnchor().setWidth(190).setHeight(HOME_INPUT_FIELD_H))
-                .onClick((ignored, ctx) -> {
-                    String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
-                    try {
-                        String destinationId = editing == null ? deriveId(displayName, "destination") : editing.arenaId();
-                        ArenaDefinition saved = plugin.getArenaService().upsert(new ArenaDefinition(
-                            destinationId,
-                            displayName,
-                            state.pendingDestinationConnectionAddress(),
-                            state.pendingDestinationTargetId(),
-                            state.pendingDestinationInstanceTemplateId(),
-                            state.pendingDestinationTriggerId(),
-                            DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
-                            true
-                        ));
-                        open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
-                    } catch (IOException | IllegalArgumentException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), state.pendingDestinationTargetId(), state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
-                    }
-                })
+                ButtonBuilder.textButton()
+                        .withText(editing == null ? "SAVE GAME" : "UPDATE GAME")
+                        .withDisabled(!canSave)
+                        .withAnchor(new HyUIAnchor().setWidth(190).setHeight(HOME_INPUT_FIELD_H))
+                        .onClick((ignored, ctx) -> {
+                            String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
+                            try {
+                                String destinationId = editing == null ? deriveId(displayName, "destination") : editing.arenaId();
+                                ArenaDefinition saved = plugin.getArenaService().upsert(new ArenaDefinition(
+                                        destinationId,
+                                        displayName,
+                                        state.pendingDestinationConnectionAddress(),
+                                        state.pendingDestinationTargetId(),
+                                        state.pendingDestinationInstanceTemplateId(),
+                                        state.pendingDestinationTriggerId(),
+                                        DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
+                                        true
+                                ));
+                                open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
+                            } catch (IOException | IllegalArgumentException exception) {
+                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), state.pendingDestinationTargetId(), state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
+                            }
+                        })
         );
         actionRow.addChild(spacerX(12));
         actionRow.addChild(
-            ButtonBuilder.secondaryTextButton()
-                .withText("CANCEL")
-                .withAnchor(new HyUIAnchor().setWidth(120).setHeight(HOME_INPUT_FIELD_H))
-                .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Game edit cleared.")))
+                ButtonBuilder.secondaryTextButton()
+                        .withText("CANCEL")
+                        .withAnchor(new HyUIAnchor().setWidth(120).setHeight(HOME_INPUT_FIELD_H))
+                        .onClick((ignored, ctx) -> open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Game edit cleared.")))
+        );
+        actionRow.addChild(spacerX(12));
+        actionRow.addChild(
+                ButtonBuilder.textButton()
+                        .withText("SYNC INFO ON ALL SERVERS")
+                        .withAnchor(new HyUIAnchor().setWidth(280).setHeight(HOME_INPUT_FIELD_H))
+                        .onClick((ignored, ctx) -> synchronizeTravelInfo(
+                                ref,
+                                store,
+                                playerRef,
+                                player,
+                                plugin,
+                                state,
+                                peers,
+                                groups,
+                                rawLocalConnectionAddress,
+                                localSelectorAddress
+                        ))
         );
         actions.addChild(actionRow);
         topRow.addChild(actions);
