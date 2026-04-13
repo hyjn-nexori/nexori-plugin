@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.ui.menu;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import au.ellie.hyui.builders.ButtonBuilder;
 import au.ellie.hyui.builders.ContainerBuilder;
 import au.ellie.hyui.builders.GroupBuilder;
@@ -16,7 +18,11 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
+import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.math.vector.Vector3f;
+import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
+import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
 import com.hypixel.hytale.protocol.packets.interface_.Page;
 import com.hypixel.hytale.server.core.Message;
@@ -62,6 +68,7 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.Optional;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -75,6 +82,7 @@ public final class NexoriMenuV2Page {
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
         .withZone(ZoneId.systemDefault());
+    private static final Gson GSON = new Gson();
 
     private static final int PAGE_W = 1900;
     private static final int PAGE_H = 1040;
@@ -107,6 +115,7 @@ public final class NexoriMenuV2Page {
     private static final String QUEUE_MAX_PLAYERS_INPUT_ID = "nexori-v2-queue-max-players";
     private static final String QUEUE_COUNTDOWN_INPUT_ID = "nexori-v2-queue-countdown";
     private static final String RULE_GROUP_NAME_INPUT_ID = "nexori-v2-rule-group-name";
+    private static final String TARGET_DISPLAY_NAME_INPUT_ID = "nexori-v2-target-display-name";
     private static final String DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID = "keep_inventory";
     private static final int DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS = 9999;
     private static final String NEW_RULE_GROUP_ID = "__new__";
@@ -441,6 +450,7 @@ public final class NexoriMenuV2Page {
         return switch (state.selectedPortalTab()) {
             case BIND -> buildTravelBindScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case SETTINGS -> buildPortalQueueBindingsScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
+            case TARGETS -> buildPortalTargetsScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
         };
     }
 
@@ -4732,6 +4742,501 @@ public final class NexoriMenuV2Page {
         scroll.addChild(spacerY(12));
         scroll.addChild(portalQueueActionListContainer(ref, store, playerRef, player, plugin, state, savedBindings, queues, innerWidth, savedHeight, savedViewportHeight, scrollId + "-saved-queue-portals"));
         return scroll;
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder buildPortalTargetsScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull HomeSetupState setup,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int width = CONTENT_W - 32;
+        int innerWidth = width - 16;
+        String localSelectorAddress = localSelectorAddress(setup.localConnectionAddress());
+        String rawLocalConnectionAddress = setup.localConnectionAddress();
+        List<TravelServerGroup> groups = buildCoordinateTargetServerGroups(plugin, peers, rawLocalConnectionAddress, localSelectorAddress);
+
+        int setupHeight = Math.max(520, viewportHeight - 32);
+        int contentHeight = 16 + setupHeight + 20;
+
+        ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(16));
+        scroll.addChild(portalTargetsSetupCard(ref, store, playerRef, player, plugin, state, peers, groups, rawLocalConnectionAddress, localSelectorAddress, innerWidth, setupHeight, scrollId + "-targets"));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder portalTargetsSetupCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull List<TravelServerGroup> groups,
+        @Nonnull String rawLocalConnectionAddress,
+        @Nonnull String localSelectorAddress,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        GroupBuilder card = card(width, height, PANEL_BG);
+        card.addChild(label("Targets", TITLE, width - 32));
+        card.addChild(label(
+            "Here you can save your current location as a coordinate target and manage targets on each server.",
+            MUTED,
+            width - 32
+        ));
+        card.addChild(spacerY(12));
+
+        TravelServerGroup selectedGroup = groups.stream()
+            .filter(g -> g.connectionAddress().equalsIgnoreCase(state.selectedTargetServerConnectionAddress()))
+            .findFirst()
+            .orElse(groups.isEmpty() ? null : groups.getFirst());
+
+        int inputW = 320;
+        int saveW = 220;
+        int syncW = 220;
+        int actionWidth = inputW + 12 + saveW + 12 + syncW;
+        GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
+        actionRow.addChild(spacerX(Math.max(0, ((width - 32) - actionWidth) / 2)));
+        actionRow.addChild(inputField("Display Name", TARGET_DISPLAY_NAME_INPUT_ID, "", "My Target", inputW));
+        actionRow.addChild(spacerX(12));
+        GroupBuilder buttonsColumn = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(saveW + 12 + syncW).setHeight(HOME_INPUT_BLOCK_H));
+        GroupBuilder saveColumn = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(saveW).setHeight(HOME_INPUT_BLOCK_H));
+        saveColumn.addChild(spacerY(HOME_ACTION_BUTTON_TOP));
+        saveColumn.addChild(
+            ButtonBuilder.textButton()
+                .withText("SAVE CURRENT LOCATION")
+                .withAnchor(new HyUIAnchor().setWidth(saveW).setHeight(HOME_INPUT_FIELD_H))
+                .onClick((ignored, ctx) -> {
+                    String displayName = ctx.getValue(TARGET_DISPLAY_NAME_INPUT_ID, String.class).orElse("").trim();
+                    if (displayName.isBlank()) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Enter a display name before saving a target."));
+                        return;
+                    }
+                    try {
+                        DestinationTargetDefinition saved = plugin.getDestinationTargetService().upsert(new DestinationTargetDefinition(
+                            deriveId(displayName, "target"),
+                            displayName,
+                            DestinationTargetKind.COORDINATE,
+                            player.getWorld().getName(),
+                            "",
+                            "",
+                            buildCoordinateTargetMetadataJson(store, ref)
+                        ));
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedTargetServerConnectionAddress(plugin.getLocalConnectionAddressService().getConnectionAddressOrBlank())
+                                .withStatusText("Saved target " + saved.displayName() + ".")
+                        );
+                    } catch (IOException | IllegalArgumentException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not save target: " + exception.getMessage()));
+                    }
+                })
+        );
+        buttonsColumn.addChild(saveColumn);
+        buttonsColumn.addChild(spacerX(12));
+        GroupBuilder syncColumn = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(syncW).setHeight(HOME_INPUT_BLOCK_H));
+        syncColumn.addChild(spacerY(HOME_ACTION_BUTTON_TOP));
+        syncColumn.addChild(
+            ButtonBuilder.textButton()
+                .withText("SYNC INFO ON ALL SERVERS")
+                .withAnchor(new HyUIAnchor().setWidth(syncW).setHeight(HOME_INPUT_FIELD_H))
+                .onClick((ignored, ctx) -> synchronizeTravelInfo(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state,
+                    peers,
+                    groups,
+                    rawLocalConnectionAddress,
+                    localSelectorAddress
+                ))
+        );
+        buttonsColumn.addChild(syncColumn);
+        actionRow.addChild(buttonsColumn);
+        card.addChild(actionRow);
+        card.addChild(spacerY(12));
+
+        int summaryGap = 12;
+        int summaryRowWidth = width - 32;
+        int summaryWidth = (summaryRowWidth - summaryGap) / 2;
+        GroupBuilder summaryRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(72));
+        summaryRow.addChild(selectionSummaryCard(
+            "SERVER",
+            selectedGroup == null ? "Select a server below." : selectedGroup.displayName(),
+            summaryWidth,
+            selectedGroup != null
+        ));
+        summaryRow.addChild(spacerX(summaryGap));
+        summaryRow.addChild(selectionSummaryCard(
+            "TARGETS",
+            selectedGroup == null ? "Select a server below." : "Coordinate targets on " + selectedGroup.displayName() + ".",
+            summaryWidth,
+            selectedGroup != null
+        ));
+        card.addChild(summaryRow);
+        card.addChild(spacerY(12));
+
+        int listHeight = Math.max(320, height - 32 - HOME_INPUT_BLOCK_H - 12 - 72 - 12);
+        GroupBuilder listsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(summaryRowWidth).setHeight(listHeight));
+        listsRow.addChild(targetServerListScroll(ref, store, playerRef, player, plugin, state, groups, summaryWidth, listHeight, scrollId + "-servers"));
+        listsRow.addChild(spacerX(summaryGap));
+        listsRow.addChild(targetListScroll(ref, store, playerRef, player, plugin, state, selectedGroup, rawLocalConnectionAddress, localSelectorAddress, summaryWidth, listHeight, scrollId + "-targets"));
+        card.addChild(listsRow);
+        return card;
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder targetServerListScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<TravelServerGroup> groups,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int rowGap = 8;
+        int contentHeight = groups.isEmpty()
+            ? height
+            : 8 + groups.size() * HOME_SERVER_CARD_H + Math.max(0, groups.size() - 1) * rowGap + 8;
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        if (groups.isEmpty()) {
+            scroll.addChild(label("No servers available yet.", MUTED, width - 16));
+        } else {
+            for (int index = 0; index < groups.size(); index++) {
+                scroll.addChild(targetServerRow(ref, store, playerRef, player, plugin, state, groups.get(index), width - 16, HOME_SERVER_CARD_H));
+                if (index + 1 < groups.size()) {
+                    scroll.addChild(spacerY(rowGap));
+                }
+            }
+        }
+        scroll.addChild(spacerY(8));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder targetServerRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TravelServerGroup group,
+        int width,
+        int height
+    ) {
+        boolean selected = state.selectedTargetServerConnectionAddress().equalsIgnoreCase(group.connectionAddress())
+            || (state.selectedTargetServerConnectionAddress().isBlank() && group.local());
+        return travelBindSelectorRowCard(
+            group.displayName(),
+            group.connectionAddress().isBlank() ? "local" : group.connectionAddress(),
+            selected ? "SELECTED" : "SELECT",
+            selected,
+            false,
+            width,
+            height,
+            () -> open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withSelectedTargetServerConnectionAddress(group.connectionAddress()).withStatusText("Selected server " + group.displayName() + ".")
+            )
+        );
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder targetListScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        TravelServerGroup selectedGroup,
+        @Nonnull String rawLocalConnectionAddress,
+        @Nonnull String localSelectorAddress,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        List<TravelTargetEndpoint> targets = selectedGroup == null ? List.of() : selectedGroup.coordinateTargets();
+        int rowGap = 8;
+        int contentHeight = targets.isEmpty()
+            ? height
+            : 8 + targets.size() * HOME_SERVER_CARD_H + Math.max(0, targets.size() - 1) * rowGap + 8;
+        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(8));
+        if (selectedGroup == null) {
+            scroll.addChild(label("Select a server first.", MUTED, width - 16));
+        } else if (targets.isEmpty()) {
+            scroll.addChild(label("No coordinate targets saved on this server.", MUTED, width - 16));
+        } else {
+            for (int index = 0; index < targets.size(); index++) {
+                scroll.addChild(targetManagementRow(ref, store, playerRef, player, plugin, state, selectedGroup, targets.get(index), rawLocalConnectionAddress, localSelectorAddress, width - 16, HOME_SERVER_CARD_H));
+                if (index + 1 < targets.size()) {
+                    scroll.addChild(spacerY(rowGap));
+                }
+            }
+        }
+        scroll.addChild(spacerY(8));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder targetManagementRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull TravelServerGroup selectedGroup,
+        @Nonnull TravelTargetEndpoint target,
+        @Nonnull String rawLocalConnectionAddress,
+        @Nonnull String localSelectorAddress,
+        int width,
+        int height
+    ) {
+        boolean local = selectedGroup.local();
+        // Para viajar a un server remoto necesitamos su connection address real, no el selector address.
+        // El connectionAddress del grupo es el real (o blank si es local sin dirección configurada).
+        String destinationAddress = local ? rawLocalConnectionAddress : selectedGroup.connectionAddress();
+        boolean canTravel = !destinationAddress.isBlank();
+
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(12, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 24).setHeight(rowHeight));
+        int buttonAreaW = 80 + 8 + 110;
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 24 - buttonAreaW - 10).setHeight(rowHeight));
+        identity.addChild(label(target.displayName(), SUBTITLE, width - 24 - buttonAreaW - 10));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(target.targetId(), MUTED, width - 24 - buttonAreaW - 10));
+        row.addChild(identity);
+        row.addChild(spacerX(10));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("TRAVEL")
+                .withAnchor(new HyUIAnchor().setWidth(80).setHeight(30))
+                .withDisabled(!canTravel)
+                .onClick((ignored, ctx) -> {
+                    if (local) {
+                        // Viaje local: mismo servidor, puede ser mismo mundo o mundo diferente.
+                        Optional<DestinationTargetDefinition> maybeDefinition = plugin.getDestinationTargetService().find(target.targetId());
+                        if (maybeDefinition.isEmpty()) {
+                            open(ref, store, playerRef, player, plugin, state.withStatusText("Target " + target.displayName() + " not found."));
+                            return;
+                        }
+                        DestinationTargetDefinition definition = maybeDefinition.get();
+                        String metadataJson = definition.metadataJson();
+                        if (metadataJson == null || metadataJson.isBlank()) {
+                            open(ref, store, playerRef, player, plugin, state.withStatusText("Target " + target.displayName() + " has no position data."));
+                            return;
+                        }
+                        try {
+                            JsonObject root = GSON.fromJson(metadataJson, JsonObject.class);
+                            JsonObject position = root.getAsJsonObject("position");
+                            Vector3d pos = new Vector3d(
+                                position.get("x").getAsDouble(),
+                                position.get("y").getAsDouble(),
+                                position.get("z").getAsDouble()
+                            );
+                            JsonObject rotation = root.has("rotation") ? root.getAsJsonObject("rotation") : null;
+                            Vector3f rot = rotation == null
+                                ? new Vector3f(0.0f, 0.0f, 0.0f)
+                                : new Vector3f(
+                                    rotation.get("pitch").getAsFloat(),
+                                    rotation.get("yaw").getAsFloat(),
+                                    rotation.get("roll").getAsFloat()
+                                );
+                            Transform transform = new Transform(pos, rot);
+                            String targetWorldName = definition.worldName();
+                            boolean sameWorld = player.getWorld() != null
+                                && player.getWorld().getName().equalsIgnoreCase(targetWorldName);
+                            Teleport teleport;
+                            if (sameWorld) {
+                                teleport = Teleport.createForPlayer(transform.clone());
+                            } else {
+                                World targetWorld = Universe.get().getWorld(targetWorldName);
+                                if (targetWorld == null) {
+                                    open(ref, store, playerRef, player, plugin, state.withStatusText("World " + targetWorldName + " is not loaded."));
+                                    return;
+                                }
+                                teleport = Teleport.createForPlayer(targetWorld, transform.clone());
+                            }
+                            store.addComponent(ref, Teleport.getComponentType(), teleport);
+                            dismissPage(player, ref, store);
+                        } catch (Exception exception) {
+                            open(ref, store, playerRef, player, plugin, state.withStatusText("Could not travel to " + target.displayName() + ": " + exception.getMessage()));
+                        }
+                    } else {
+                        // Viaje a otro servidor.
+                        try {
+                            ConfiguredPeer destination = ConfiguredPeer.parse(destinationAddress);
+                            plugin.getSecureTravelService().travel(
+                                playerRef,
+                                destination,
+                                target.targetId(),
+                                "",
+                                TravelProfileType.KEEP_INVENTORY.id(),
+                                ""
+                            );
+                            dismissPage(player, ref, store);
+                        } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+                            open(ref, store, playerRef, player, plugin, state.withStatusText("Could not travel to " + target.displayName() + ": " + exception.getMessage()));
+                        }
+                    }
+                })
+        );
+        row.addChild(spacerX(8));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText("REMOVE")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .withDisabled(!local)
+                .onClick((ignored, ctx) -> {
+                    try {
+                        boolean removed = plugin.getDestinationTargetService().remove(target.targetId());
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withSelectedTargetServerConnectionAddress(selectedGroup.connectionAddress())
+                                .withStatusText(removed ? "Removed target " + target.displayName() + "." : target.displayName() + " was already removed.")
+                        );
+                    } catch (IOException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withStatusText("Could not remove target: " + exception.getMessage()));
+                    }
+                })
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static List<TravelServerGroup> buildCoordinateTargetServerGroups(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull String rawLocalConnectionAddress,
+        @Nonnull String localSelectorAddress
+    ) {
+        String localConnectionAddress = rawLocalConnectionAddress == null ? "" : rawLocalConnectionAddress.trim().toLowerCase();
+        Map<String, ConfiguredPeer> configuredByAddress = new LinkedHashMap<>();
+        for (ConfiguredPeer peer : peers) {
+            configuredByAddress.put(peer.connectionAddress().toLowerCase(), peer);
+        }
+
+        List<String> orderedAddresses = new ArrayList<>();
+        if (!localConnectionAddress.isBlank()) {
+            orderedAddresses.add(localConnectionAddress);
+        }
+        for (ConfiguredPeer peer : peers) {
+            if (!orderedAddresses.contains(peer.connectionAddress().toLowerCase())) {
+                orderedAddresses.add(peer.connectionAddress().toLowerCase());
+            }
+        }
+        for (BundleMember member : plugin.getBootstrapCoordinator().getTrustBundle().members()) {
+            String connectionAddress = member.connectionAddress() == null ? "" : member.connectionAddress().trim().toLowerCase();
+            if (!connectionAddress.isBlank() && !orderedAddresses.contains(connectionAddress)) {
+                orderedAddresses.add(connectionAddress);
+            }
+        }
+
+        List<TravelServerGroup> groups = new ArrayList<>();
+        for (String connectionAddress : orderedAddresses) {
+            boolean local = !localConnectionAddress.isBlank() && connectionAddress.equals(localConnectionAddress);
+            String selectorAddress = local ? localSelectorAddress : connectionAddress;
+            String displayName = resolveServerDisplayName(configuredByAddress, connectionAddress, local);
+            List<TravelTargetEndpoint> targets = new ArrayList<>();
+
+            if (local) {
+                for (DestinationTargetDefinition target : plugin.getDestinationTargetService().list()) {
+                    if (target.kind() != DestinationTargetKind.COORDINATE) {
+                        continue;
+                    }
+                    targets.add(new TravelTargetEndpoint(
+                        selectorAddress,
+                        displayName,
+                        target.id(),
+                        target.displayName()
+                    ));
+                }
+            } else {
+                DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(connectionAddress).orElse(null);
+                if (discovery != null) {
+                    for (DiscoveredDestinationTargetSummary target : discovery.targets()) {
+                        DestinationTargetKind kind;
+                        try {
+                            kind = DestinationTargetKind.parse(target.kind());
+                        } catch (IllegalArgumentException ignored) {
+                            continue;
+                        }
+                        if (kind != DestinationTargetKind.COORDINATE) {
+                            continue;
+                        }
+                        targets.add(new TravelTargetEndpoint(
+                            selectorAddress,
+                            displayName,
+                            target.id(),
+                            target.displayName()
+                        ));
+                    }
+                }
+            }
+
+            groups.add(new TravelServerGroup(displayName, connectionAddress, local, List.of(), targets));
+        }
+        return groups;
+    }
+
+    @Nonnull
+    private static String buildCoordinateTargetMetadataJson(
+        @Nonnull Store<EntityStore> store,
+        @Nonnull Ref<EntityStore> ref
+    ) {
+        Transform transform = captureCurrentTransform(store, ref);
+        JsonObject root = new JsonObject();
+        JsonObject position = new JsonObject();
+        position.addProperty("x", transform.getPosition().x);
+        position.addProperty("y", transform.getPosition().y);
+        position.addProperty("z", transform.getPosition().z);
+        root.add("position", position);
+        JsonObject rotation = new JsonObject();
+        rotation.addProperty("pitch", transform.getRotation().x);
+        rotation.addProperty("yaw", transform.getRotation().y);
+        rotation.addProperty("roll", transform.getRotation().z);
+        root.add("rotation", rotation);
+        return GSON.toJson(root);
     }
 
     @Nonnull

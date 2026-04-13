@@ -4,7 +4,8 @@ import javax.annotation.Nonnull;
 
 public enum PortalWorkspaceTab {
     BIND("TRAVEL"),
-    SETTINGS("QUEUE PORTALS");
+    SETTINGS("QUEUE PORTALS"),
+    TARGETS("TARGETS");
 
     private final String label;
 
