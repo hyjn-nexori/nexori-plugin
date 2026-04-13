@@ -313,14 +313,15 @@ public class NexoriPlugin extends JavaPlugin {
                 this.diagnosticsService
             );
             this.secureTravelService = new SecureTravelService(
-                this.getLogger(),
-                this.localIdentity,
-                this.trustBundleStore,
-                this.destinationTargetService,
-                this.secureReferralService,
-                this.inventoryTransferService,
-                this.diagnosticsService,
-                this.instanceSpawnSlotService
+                    this.getLogger(),
+                    this.getDataDirectory(),
+                    this.localIdentity,
+                    this.trustBundleStore,
+                    this.destinationTargetService,
+                    this.secureReferralService,
+                    this.inventoryTransferService,
+                    this.diagnosticsService,
+                    this.instanceSpawnSlotService
             );
             // Queue, lobby, and arena services form the runtime minigame orchestration layer.
             this.queueCoordinatorService = new QueueCoordinatorService(

@@ -55,6 +55,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Owns Nexori's secure travel lifecycle from referral dispatch through destination arrival.
@@ -67,6 +70,7 @@ public final class SecureTravelService implements SecureReferralHandler {
 
     private final HytaleLogger logger;
     private final ServerIdentity localIdentity;
+    private final Path pluginDataDirectory;
     private final TrustBundleStore trustBundleStore;
     private final DestinationTargetService destinationTargetService;
     private final SecureReferralService secureReferralService;
@@ -82,6 +86,7 @@ public final class SecureTravelService implements SecureReferralHandler {
      */
     public SecureTravelService(
         @Nonnull HytaleLogger logger,
+        @Nonnull Path pluginDataDirectory,
         @Nonnull ServerIdentity localIdentity,
         @Nonnull TrustBundleStore trustBundleStore,
         @Nonnull DestinationTargetService destinationTargetService,
@@ -91,6 +96,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull InstanceSpawnSlotService instanceSpawnSlotService
     ) {
         this.logger = logger;
+        this.pluginDataDirectory = pluginDataDirectory;
         this.localIdentity = localIdentity;
         this.trustBundleStore = trustBundleStore;
         this.destinationTargetService = destinationTargetService;
@@ -225,6 +231,14 @@ public final class SecureTravelService implements SecureReferralHandler {
             inventoryTransferService.clearOriginInventory(playerRef, inventoryState);
         }
 
+        logger.atInfo().log(
+                "NEXORI_TRAVEL_DISPATCH destination=" + destination.connectionAddress()
+                        + " targetId=" + destinationTargetId
+                        + " arrivalPointId=" + arrivalPointId
+                        + " travelProfileId=" + profileType.id()
+                        + " contextJson=" + (contextJson == null ? "{}" : contextJson)
+        );
+
         playerRef.referToServer(destination.host(), destination.port(), encodedPayload);
         recordTravel(
             operationId,
@@ -253,83 +267,135 @@ public final class SecureTravelService implements SecureReferralHandler {
     public void handle(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
         SecureTravelPayload payload = referral.decodePayload(secureReferralService.gson(), SecureTravelPayload.class);
         String operationId = payload.travelOperationId() == null || payload.travelOperationId().isBlank()
-            ? diagnosticsService.newOperationId("travel")
-            : payload.travelOperationId();
+                ? diagnosticsService.newOperationId("travel")
+                : payload.travelOperationId();
+
+        JsonObject context = parseContext(payload.contextJson());
+        ResolvedDestinationTarget resolvedTarget;
+        String effectiveTargetIdForErrors = normalizeOptional(payload.destinationTargetId());
+
+        logger.atInfo().log(
+                "NEXORI_TRAVEL_HANDLE payloadTargetId=" + normalizeOptional(payload.destinationTargetId())
+                        + " arrivalPointId=" + normalizeOptional(payload.arrivalPointId())
+                        + " serverEntryMode=" + (context != null && context.has("serverEntryMode")
+                        ? normalizeOptional(context.get("serverEntryMode").getAsString())
+                        : "")
+        );
+
         if (payload.destinationTargetId() == null || payload.destinationTargetId().isBlank()) {
-            try {
-                TravelProfileType profileType = TravelProfileType.parse(payload.travelProfileId());
-                inventoryTransferService.prepareInboundArrival(
-                    event.getUuid(),
-                    profileType,
-                    payload.inventoryTransferId(),
-                    payload.inventoryState(),
-                    payload.sourceServerId(),
-                    payload.sourceConnectionAddress()
-                );
+            if (shouldUseDefaultWorldNaturalSpawnEntry(context)) {
+                resolvedTarget = resolveDefaultWorldNaturalSpawnEntry().orElse(null);
+                if (resolvedTarget == null) {
+                    recordTravel(
+                            operationId,
+                            DiagnosticsAction.TRAVEL_ACCEPT,
+                            DiagnosticsOutcome.FAILED,
+                            DiagnosticsReasonClass.MISCONFIG,
+                            DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
+                            "This Nexori minigame launch could not resolve the default-world natural spawn target on the destination server.",
+                            eventDetails -> eventDetails
+                                    .playerUuid(event.getUuid().toString())
+                                    .playerNameClaimed(event.getUsername())
+                                    .payloadType(PAYLOAD_TYPE)
+                                    .remoteServerId(payload.sourceServerId())
+                                    .remoteConnectionAddress(payload.sourceConnectionAddress())
+                                    .travelProfileId(payload.travelProfileId())
+                                    .transferId(payload.inventoryTransferId())
+                    );
+                    event.setCancelled(true);
+                    event.setReason(Message.raw("This Nexori minigame launch could not resolve the destination server default world natural spawn target."));
+                    return;
+                }
+                effectiveTargetIdForErrors = resolvedTarget.definition().id();
+            } else {
+                resolvedTarget = null;
+                try {
+
+                    logger.atInfo().log(
+                            "NEXORI_TRAVEL_DEFAULT_ENTRY_RESOLVED payloadTargetId="
+                                    + normalizeOptional(payload.destinationTargetId())
+                                    + " resolvedTargetId=" + resolvedTarget.definition().id()
+                                    + " resolvedWorldName=" + resolvedTarget.effectiveWorldName()
+                                    + " resolvedArrivalPointId=" + resolvedTarget.effectiveArrivalPointId()
+                    );
+
+                    TravelProfileType profileType = TravelProfileType.parse(payload.travelProfileId());
+                    inventoryTransferService.prepareInboundArrival(
+                            event.getUuid(),
+                            profileType,
+                            payload.inventoryTransferId(),
+                            payload.inventoryState(),
+                            payload.sourceServerId(),
+                            payload.sourceConnectionAddress()
+                    );
+                    recordTravel(
+                            operationId,
+                            DiagnosticsAction.TRAVEL_ACCEPT,
+                            DiagnosticsOutcome.ACCEPTED,
+                            DiagnosticsReasonClass.NORMAL,
+                            DiagnosticsReasonCode.TRAVEL_ACCEPTED,
+                            "Accepted secure Nexori server travel on the destination server.",
+                            eventDetails -> eventDetails
+                                    .playerUuid(event.getUuid().toString())
+                                    .playerNameClaimed(event.getUsername())
+                                    .payloadType(PAYLOAD_TYPE)
+                                    .remoteServerId(payload.sourceServerId())
+                                    .remoteConnectionAddress(payload.sourceConnectionAddress())
+                                    .travelProfileId(profileType.id())
+                                    .transferId(payload.inventoryTransferId())
+                    );
+                    logger.atInfo().log("Accepted secure Nexori server travel for " + event.getUsername()
+                            + " from server "
+                            + payload.sourceServerId());
+                } catch (IllegalArgumentException | IOException exception) {
+                    recordTravel(
+                            operationId,
+                            DiagnosticsAction.TRAVEL_ACCEPT,
+                            DiagnosticsOutcome.FAILED,
+                            DiagnosticsReasonClass.IO,
+                            DiagnosticsReasonCode.INVENTORY_PROFILE_APPLY_FAILED,
+                            "This Nexori travel could not apply its inventory profile: " + exception.getMessage(),
+                            eventDetails -> eventDetails
+                                    .playerUuid(event.getUuid().toString())
+                                    .playerNameClaimed(event.getUsername())
+                                    .payloadType(PAYLOAD_TYPE)
+                                    .remoteServerId(payload.sourceServerId())
+                                    .remoteConnectionAddress(payload.sourceConnectionAddress())
+                                    .travelProfileId(payload.travelProfileId())
+                                    .transferId(payload.inventoryTransferId())
+                    );
+                    event.setCancelled(true);
+                    event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
+                }
+                return;
+            }
+        } else {
+            resolvedTarget = destinationTargetService.resolve(payload.destinationTargetId(), payload.arrivalPointId()).orElse(null);
+            if (resolvedTarget == null) {
+                String finalEffectiveTargetIdForErrors = effectiveTargetIdForErrors;
+                ResolvedDestinationTarget finalResolvedTarget = resolvedTarget;
                 recordTravel(
-                    operationId,
-                    DiagnosticsAction.TRAVEL_ACCEPT,
-                    DiagnosticsOutcome.ACCEPTED,
-                    DiagnosticsReasonClass.NORMAL,
-                    DiagnosticsReasonCode.TRAVEL_ACCEPTED,
-                    "Accepted secure Nexori server travel on the destination server.",
-                    eventDetails -> eventDetails
-                        .playerUuid(event.getUuid().toString())
-                        .playerNameClaimed(event.getUsername())
-                        .payloadType(PAYLOAD_TYPE)
-                        .remoteServerId(payload.sourceServerId())
-                        .remoteConnectionAddress(payload.sourceConnectionAddress())
-                        .travelProfileId(profileType.id())
-                        .transferId(payload.inventoryTransferId())
-                );
-                logger.atInfo().log("Accepted secure Nexori server travel for " + event.getUsername()
-                    + " from server "
-                    + payload.sourceServerId());
-            } catch (IllegalArgumentException | IOException exception) {
-                recordTravel(
-                    operationId,
-                    DiagnosticsAction.TRAVEL_ACCEPT,
-                    DiagnosticsOutcome.FAILED,
-                    DiagnosticsReasonClass.IO,
-                    DiagnosticsReasonCode.INVENTORY_PROFILE_APPLY_FAILED,
-                    "This Nexori travel could not apply its inventory profile: " + exception.getMessage(),
-                    eventDetails -> eventDetails
-                        .playerUuid(event.getUuid().toString())
-                        .playerNameClaimed(event.getUsername())
-                        .payloadType(PAYLOAD_TYPE)
-                        .remoteServerId(payload.sourceServerId())
-                        .remoteConnectionAddress(payload.sourceConnectionAddress())
-                        .travelProfileId(payload.travelProfileId())
-                        .transferId(payload.inventoryTransferId())
+                        operationId,
+                        DiagnosticsAction.TRAVEL_ACCEPT,
+                        DiagnosticsOutcome.FAILED,
+                        DiagnosticsReasonClass.MISCONFIG,
+                        DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
+                        "This Nexori destination target is not configured on the destination server.",
+                        eventDetails -> eventDetails
+                                .playerUuid(event.getUuid().toString())
+                                .playerNameClaimed(event.getUsername())
+                                .payloadType(PAYLOAD_TYPE)
+                                .remoteServerId(payload.sourceServerId())
+                                .remoteConnectionAddress(payload.sourceConnectionAddress())
+                                .targetId(finalEffectiveTargetIdForErrors)
+                                .arrivalPointId(finalResolvedTarget == null ? payload.arrivalPointId() : finalResolvedTarget.effectiveArrivalPointId())
+                                .travelProfileId(payload.travelProfileId())
+                                .transferId(payload.inventoryTransferId())
                 );
                 event.setCancelled(true);
-                event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
+                event.setReason(Message.raw("This Nexori destination target is not configured on the destination server: " + payload.destinationTargetId()));
+                return;
             }
-            return;
-        }
-        ResolvedDestinationTarget resolvedTarget = destinationTargetService.resolve(payload.destinationTargetId(), payload.arrivalPointId()).orElse(null);
-        if (resolvedTarget == null) {
-            recordTravel(
-                operationId,
-                DiagnosticsAction.TRAVEL_ACCEPT,
-                DiagnosticsOutcome.FAILED,
-                DiagnosticsReasonClass.MISCONFIG,
-                DiagnosticsReasonCode.DESTINATION_TARGET_MISSING,
-                "This Nexori destination target is not configured on the destination server.",
-                eventDetails -> eventDetails
-                    .playerUuid(event.getUuid().toString())
-                    .playerNameClaimed(event.getUsername())
-                    .payloadType(PAYLOAD_TYPE)
-                    .remoteServerId(payload.sourceServerId())
-                    .remoteConnectionAddress(payload.sourceConnectionAddress())
-                    .targetId(payload.destinationTargetId())
-                    .arrivalPointId(payload.arrivalPointId())
-                    .travelProfileId(payload.travelProfileId())
-                    .transferId(payload.inventoryTransferId())
-            );
-            event.setCancelled(true);
-            event.setReason(Message.raw("This Nexori destination target is not configured on the destination server: " + payload.destinationTargetId()));
-            return;
         }
 
         TravelProfileType profileType;
@@ -384,6 +450,7 @@ public final class SecureTravelService implements SecureReferralHandler {
             payload.contextJson(),
             resolvedTarget.definition().metadataJson()
         ));
+        ResolvedDestinationTarget finalResolvedTarget1 = resolvedTarget;
         recordTravel(
             operationId,
             DiagnosticsAction.TRAVEL_ACCEPT,
@@ -397,11 +464,11 @@ public final class SecureTravelService implements SecureReferralHandler {
                 .payloadType(PAYLOAD_TYPE)
                 .remoteServerId(payload.sourceServerId())
                 .remoteConnectionAddress(payload.sourceConnectionAddress())
-                .targetId(resolvedTarget.definition().id())
-                .targetDisplayName(resolvedTarget.definition().displayName())
-                .targetKind(resolvedTarget.definition().kind().name())
-                .arrivalPointId(resolvedTarget.effectiveArrivalPointId())
-                .worldName(resolvedTarget.effectiveWorldName())
+                .targetId(finalResolvedTarget1.definition().id())
+                .targetDisplayName(finalResolvedTarget1.definition().displayName())
+                .targetKind(finalResolvedTarget1.definition().kind().name())
+                .arrivalPointId(finalResolvedTarget1.effectiveArrivalPointId())
+                .worldName(finalResolvedTarget1.effectiveWorldName())
                 .travelProfileId(profileType.id())
                 .transferId(payload.inventoryTransferId())
         );
@@ -737,6 +804,61 @@ public final class SecureTravelService implements SecureReferralHandler {
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? "" : normalized;
+    }
+
+    private boolean shouldUseDefaultWorldNaturalSpawnEntry(JsonObject context) {
+        return context != null
+                && context.has("serverEntryMode")
+                && "default_world_natural_spawn".equalsIgnoreCase(normalizeOptional(context.get("serverEntryMode").getAsString()));
+    }
+
+    @Nonnull
+    private Optional<ResolvedDestinationTarget> resolveDefaultWorldNaturalSpawnEntry() {
+        Path serverDirectory = findServerDirectory();
+        if (serverDirectory == null) {
+            return Optional.empty();
+        }
+
+        Path configFile = serverDirectory.resolve("config.json");
+        if (!Files.isRegularFile(configFile)) {
+            return Optional.empty();
+        }
+
+        try {
+            String json = Files.readString(configFile, StandardCharsets.UTF_8);
+            JsonObject root = GSON.fromJson(json, JsonObject.class);
+            if (root == null || !root.has("Defaults")) {
+                return Optional.empty();
+            }
+
+            JsonObject defaults = root.getAsJsonObject("Defaults");
+            if (defaults == null || !defaults.has("World")) {
+                return Optional.empty();
+            }
+
+            String defaultWorldName = normalizeOptional(defaults.get("World").getAsString());
+            if (defaultWorldName.isBlank()) {
+                return Optional.empty();
+            }
+
+            String targetId = defaultWorldName.toLowerCase(Locale.ROOT) + ".natural_spawn";
+            return destinationTargetService.resolve(targetId, "");
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log("Failed to resolve the default-world natural spawn target for Nexori minigame launch.");
+            return Optional.empty();
+        }
+    }
+
+    private Path findServerDirectory() {
+        Path current = pluginDataDirectory.toAbsolutePath().normalize();
+        while (current != null) {
+            if (Files.isRegularFile(current.resolve("config.json"))
+                    && Files.isDirectory(current.resolve("universe").resolve("worlds"))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        return null;
     }
 
     private boolean isTrustedDestination(@Nonnull ConfiguredPeer destination) {

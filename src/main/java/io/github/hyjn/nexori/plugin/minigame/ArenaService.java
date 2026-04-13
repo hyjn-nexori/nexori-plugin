@@ -62,7 +62,7 @@ public final class ArenaService {
     private ArenaDefinition normalizeAndValidate(@Nonnull ArenaDefinition definition) {
         ArenaDefinition normalized = definition.normalized();
         ConfiguredPeer peer = ConfiguredPeer.parse(normalized.destinationConnectionAddress());
-        if (normalized.destinationTargetId().isBlank()) {
+        if (!normalized.usesInstanceTemplate() && normalized.destinationTargetId().isBlank()) {
             throw new IllegalArgumentException("Arena destination target id cannot be blank.");
         }
         if (normalized.maxSupportedPlayers() < 1) {

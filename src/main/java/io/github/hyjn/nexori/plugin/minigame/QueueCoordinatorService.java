@@ -381,16 +381,25 @@ public final class QueueCoordinatorService {
             for (int launchIndex = 0; launchIndex < launchCandidates.size(); launchIndex++) {
                 LaunchCandidate candidate = launchCandidates.get(launchIndex);
                 try {
-                    secureTravelService.travel(
-                        candidate.playerRef(),
-                        destination,
-                        arena.get().destinationTargetId(),
-                        "",
-                        queue.launchTravelProfileId(),
-                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
-                    );
+                    if (arena.get().usesInstanceTemplate()) {
+                        secureTravelService.travelToServer(
+                                candidate.playerRef(),
+                                destination,
+                                queue.launchTravelProfileId(),
+                                contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                        );
+                    } else {
+                        secureTravelService.travel(
+                                candidate.playerRef(),
+                                destination,
+                                arena.get().destinationTargetId(),
+                                "",
+                                queue.launchTravelProfileId(),
+                                contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                        );
+                    }
                     launched.add(candidate);
-                } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+                } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
                     launchError = exception.getMessage();
                     logger.atWarning().withCause(exception).log(
                         "Failed to launch Nexori queue "
@@ -582,6 +591,9 @@ public final class QueueCoordinatorService {
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
+        if (arena.usesInstanceTemplate()) {
+            root.addProperty("serverEntryMode", "default_world_natural_spawn");
+        }
         MatchSessionState matchSessionState = new MatchSessionState(
             matchId,
             queue.queueId(),

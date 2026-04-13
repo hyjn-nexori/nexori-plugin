@@ -5637,21 +5637,17 @@ public final class NexoriMenuV2Page {
             ? (editing == null ? "New Destination" : editing.displayName())
             : state.pendingDestinationDisplayName();
         String selectedServer = state.pendingDestinationConnectionAddress().isBlank()
-            ? (editing == null ? "Select a remote server below." : editing.destinationConnectionAddress())
-            : state.pendingDestinationConnectionAddress();
-        String selectedTarget = state.pendingDestinationTargetId().isBlank()
-            ? (editing == null ? "Select an entry target below." : editing.destinationTargetId())
-            : state.pendingDestinationTargetId();
+                ? (editing == null ? "Select a remote server below." : editing.destinationConnectionAddress())
+                : state.pendingDestinationConnectionAddress();
         String selectedInstance = state.pendingDestinationInstanceTemplateId().isBlank()
-            ? (editing == null ? "Select an instance template below." : editing.instanceTemplateId())
-            : state.pendingDestinationInstanceTemplateId();
+                ? (editing == null ? "Select an instance template below." : editing.instanceTemplateId())
+                : state.pendingDestinationInstanceTemplateId();
         String selectedTrigger = "last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
-            ? "Last Player Alive"
-            : "Manual";
+                ? "Last Player Alive"
+                : "Manual";
 
         boolean canSave = !state.pendingDestinationConnectionAddress().isBlank()
-            && !state.pendingDestinationTargetId().isBlank()
-            && !state.pendingDestinationInstanceTemplateId().isBlank();
+                && !state.pendingDestinationInstanceTemplateId().isBlank();
 
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Games", TITLE, width - 32));
@@ -5678,7 +5674,7 @@ public final class NexoriMenuV2Page {
                                         destinationId,
                                         displayName,
                                         state.pendingDestinationConnectionAddress(),
-                                        state.pendingDestinationTargetId(),
+                                        "",
                                         state.pendingDestinationInstanceTemplateId(),
                                         state.pendingDestinationTriggerId(),
                                         DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
@@ -5686,7 +5682,7 @@ public final class NexoriMenuV2Page {
                                 ));
                                 open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
                             } catch (IOException | IllegalArgumentException exception) {
-                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), state.pendingDestinationTargetId(), state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
+                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
                             }
                         })
         );
@@ -5738,29 +5734,24 @@ public final class NexoriMenuV2Page {
         @Nonnull String scrollId
     ) {
         String selectedServer = state.pendingDestinationConnectionAddress().isBlank()
-            ? "Select a remote server below."
-            : state.pendingDestinationConnectionAddress();
-        String selectedTarget = state.pendingDestinationTargetId().isBlank()
-            ? "Select an entry target below."
-            : state.pendingDestinationTargetId();
+                ? "Select a remote server below."
+                : state.pendingDestinationConnectionAddress();
         String selectedInstance = state.pendingDestinationInstanceTemplateId().isBlank()
-            ? "Select an instance template below."
-            : state.pendingDestinationInstanceTemplateId();
+                ? "Select an instance template below."
+                : state.pendingDestinationInstanceTemplateId();
         String selectedTrigger = "last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
-            ? "Last Player Alive"
-            : "Manual";
+                ? "Last Player Alive"
+                : "Manual";
 
         int availableWidth = width - 32;
         int columnGap = 12;
-        int columnWidth = (availableWidth - (columnGap * 3)) / 4;
+        int columnWidth = (availableWidth - (columnGap * 2)) / 3;
         int outerGap = 12;
         GroupBuilder card = card(width, height, PANEL_BG);
 
         card.addChild(spacerY(outerGap));
         GroupBuilder headerRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(availableWidth).setHeight(72));
         headerRow.addChild(selectionSummaryCard("SERVER", selectedServer, columnWidth, !state.pendingDestinationConnectionAddress().isBlank()));
-        headerRow.addChild(spacerX(columnGap));
-        headerRow.addChild(selectionSummaryCard("ENTRY TARGET", selectedTarget, columnWidth, !state.pendingDestinationTargetId().isBlank()));
         headerRow.addChild(spacerX(columnGap));
         headerRow.addChild(selectionSummaryCard("INSTANCE", selectedInstance, columnWidth, !state.pendingDestinationInstanceTemplateId().isBlank()));
         headerRow.addChild(spacerX(columnGap));
@@ -5771,13 +5762,10 @@ public final class NexoriMenuV2Page {
         GroupBuilder columnsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(availableWidth).setHeight(selectorsViewportHeight));
         columnsRow.addChild(destinationServerColumnScroll(ref, store, playerRef, player, plugin, state, remoteServers, columnWidth, selectorsViewportHeight, scrollId + "-games-server"));
         columnsRow.addChild(spacerX(columnGap));
-        columnsRow.addChild(destinationTargetColumnScroll(ref, store, playerRef, player, plugin, state, remoteTargets, columnWidth, selectorsViewportHeight, scrollId + "-games-target"));
-        columnsRow.addChild(spacerX(columnGap));
         columnsRow.addChild(destinationInstanceColumnScroll(ref, store, playerRef, player, plugin, state, instanceIds, columnWidth, selectorsViewportHeight, scrollId + "-games-instance"));
         columnsRow.addChild(spacerX(columnGap));
         columnsRow.addChild(destinationTriggerColumnScroll(ref, store, playerRef, player, plugin, state, columnWidth, selectorsViewportHeight, scrollId + "-games-trigger"));
         card.addChild(columnsRow);
-        card.addChild(spacerY(outerGap));
         return card;
     }
 
