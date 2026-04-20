@@ -40,7 +40,8 @@ import java.util.UUID;
 public final class ArenaMatchService {
 
     private static final Gson GSON = new Gson();
-    private static final long ELIMINATED_RETURN_DELAY_MS = 10_000L;
+    private static final long ELIMINATED_RETURN_DELAY_MS = 1_000L;
+    private static final long WINNER_RETURN_DELAY_MS = 5_000L;
     private static final long RETURN_RETRY_DELAY_MS = 1_000L;
     private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
     private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
@@ -221,7 +222,7 @@ public final class ArenaMatchService {
                 nowEpochMs + ELIMINATED_RETURN_DELAY_MS,
                 nowEpochMs
             );
-            playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 10 seconds."));
+            playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 1 second."));
         }
 
         updated = applyAutomaticResolutionTrigger(updated, nowEpochMs);
@@ -716,7 +717,7 @@ public final class ArenaMatchService {
         if (match.hasWinner()) {
             UUID winnerUuid = parseWinnerUuid(match.winnerPlayerUuid());
             if (winnerUuid != null && !match.hasPendingReturn(winnerUuid) && match.hasPlayer(winnerUuid)) {
-                return match.withPendingReturn(winnerUuid, nowEpochMs + ELIMINATED_RETURN_DELAY_MS, nowEpochMs);
+                return match.withPendingReturn(winnerUuid, nowEpochMs + WINNER_RETURN_DELAY_MS, nowEpochMs);
             }
             return match;
         }
@@ -746,7 +747,7 @@ public final class ArenaMatchService {
         @Nonnull String reason,
         long nowEpochMs
     ) {
-        ArenaActiveMatch updated = match.withWinner(playerUuid, nowEpochMs + ELIMINATED_RETURN_DELAY_MS, nowEpochMs);
+        ArenaActiveMatch updated = match.withWinner(playerUuid, nowEpochMs + WINNER_RETURN_DELAY_MS, nowEpochMs);
         if (reason != null && !reason.isBlank()) {
             updated = updated.withLastError(reason, nowEpochMs);
         }
