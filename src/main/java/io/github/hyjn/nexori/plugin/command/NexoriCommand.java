@@ -33,13 +33,16 @@ public class NexoriCommand extends CommandBase {
     public NexoriCommand(NexoriPlugin plugin) {
         super("nexori", "Shows Nexori status, manages saved peer IPs, and controls the local bootstrap window.");
         this.plugin = plugin;
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
         this.actionArg = this.withDefaultArg("action", "Action to run.", ArgTypes.STRING, "status", "status");
         this.valueArg = this.withOptionalArg("value", "Optional value for the selected action.", ArgTypes.STRING);
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         String action = ctx.get(actionArg).toLowerCase(Locale.ROOT);
         switch (action) {
             case "help" -> sendHelp(ctx);

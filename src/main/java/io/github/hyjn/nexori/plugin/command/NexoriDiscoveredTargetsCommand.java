@@ -27,11 +27,14 @@ public final class NexoriDiscoveredTargetsCommand extends CommandBase {
         super("nexoridiscovered", "Shows cached Nexori destination targets discovered from trusted servers.");
         this.cacheService = cacheService;
         this.destinationArg = withOptionalArg("destination", "Optional destination in host:port format.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         if (ctx.provided(destinationArg)) {
             cacheService.find(ctx.get(destinationArg)).ifPresentOrElse(discovery -> {
                 ctx.sendMessage(Message.raw("Cached Nexori targets for " + discovery.connectionAddress() + ":"));

@@ -11,11 +11,14 @@ public final class NexoriTargetHelpCommand extends CommandBase {
 
     public NexoriTargetHelpCommand() {
         super("nexoritarget", "Shows Nexori destination target command help.");
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         ctx.sendMessage(Message.raw("Nexori destination target commands:"));
         ctx.sendMessage(Message.raw("- /nexorimenu"));
         ctx.sendMessage(Message.raw("- /nexoritargetlist"));

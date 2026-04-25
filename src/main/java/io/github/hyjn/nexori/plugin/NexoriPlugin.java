@@ -1,6 +1,8 @@
 package io.github.hyjn.nexori.plugin;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
+import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateService;
+import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateStore;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapCoordinator;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapPersistenceMigrationService;
@@ -113,6 +115,8 @@ import io.github.hyjn.nexori.plugin.worldlabel.WorldLabelService;
 import io.github.hyjn.nexori.plugin.worldlabel.WorldLabelTickSystem;
 
 import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.command.system.AbstractCommand;
+import com.hypixel.hytale.server.core.command.system.CommandManager;
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
@@ -126,6 +130,8 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
+import java.util.Iterator;
+import java.util.Map;
 
 /**
  * Main Nexori plugin entrypoint.
@@ -172,6 +178,7 @@ public class NexoriPlugin extends JavaPlugin {
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
     private WorldLabelService worldLabelService;
+    private NexoriAccessGateService accessGateService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -278,6 +285,11 @@ public class NexoriPlugin extends JavaPlugin {
                 this.localIdentity,
                 this.trustBundleStore,
                 this.diagnosticsService
+            );
+            this.accessGateService = new NexoriAccessGateService(
+                this.getLogger(),
+                this.secureReferralService,
+                new NexoriAccessGateStore(this.getDataDirectory().resolve("config").resolve("access-gate.json"))
             );
             this.diagnosticsCollectService = new DiagnosticsCollectService(
                 this.getLogger(),
@@ -427,56 +439,61 @@ public class NexoriPlugin extends JavaPlugin {
             this.portalInteractionService.registerPageSupplier();
 
             // Commands expose the owner/operator surface for setup, travel, recovery, and diagnostics.
-            this.getCommandRegistry().registerCommand(new NexoriCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriBackupLimitCommand(this, this.inventoryTransferService));
-            this.getCommandRegistry().registerCommand(new NexoriRecoveryModeCommand(this, this.inventoryTransferService));
-            this.getCommandRegistry().registerCommand(new NexoriBackupsCommand(this.inventoryTransferService));
-            this.getCommandRegistry().registerCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
-            this.getCommandRegistry().registerCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
-            this.getCommandRegistry().registerCommand(new NexoriPortalGiveCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriPortalListCommand(this.portalInstanceService, this.triggerBindingService));
-            this.getCommandRegistry().registerCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
-            this.getCommandRegistry().registerCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
-            this.getCommandRegistry().registerCommand(new NexoriPortalLocalBindCommand(
+            this.registerAdminCommand(new NexoriCommand(this));
+            this.registerAdminCommand(new NexoriBackupLimitCommand(this, this.inventoryTransferService));
+            this.registerAdminCommand(new NexoriRecoveryModeCommand(this, this.inventoryTransferService));
+            this.registerAdminCommand(new NexoriBackupsCommand(this.inventoryTransferService));
+            this.registerAdminCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
+            this.registerAdminCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
+            this.registerAdminCommand(new NexoriPortalGiveCommand(this));
+            this.registerAdminCommand(new NexoriPortalListCommand(this.portalInstanceService, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriPortalShowCommand(this.portalInstanceService, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriPortalBindCommand(this, this.portalInstanceService, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriPortalLocalBindCommand(
                 this,
                 this.portalInstanceService,
                 this.destinationTargetService,
                 this.triggerBindingService
             ));
-            this.getCommandRegistry().registerCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.lobbyService, this.queueService, this.triggerBindingService));
-            this.getCommandRegistry().registerCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
-            this.getCommandRegistry().registerCommand(new NexoriLobbyUpsertCommand(this, this.lobbyService));
-            this.getCommandRegistry().registerCommand(new NexoriLobbyListCommand(this.lobbyService));
-            this.getCommandRegistry().registerCommand(new NexoriArenaUpsertCommand(this, this.arenaService));
-            this.getCommandRegistry().registerCommand(new NexoriArenaListCommand(this.arenaService));
-            this.getCommandRegistry().registerCommand(new NexoriInstanceListCommand());
-            this.getCommandRegistry().registerCommand(new NexoriQueueUpsertCommand(this, this.queueService));
-            this.getCommandRegistry().registerCommand(new NexoriQueueListCommand(this.queueService));
-            this.getCommandRegistry().registerCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
-            this.getCommandRegistry().registerCommand(new NexoriQueueLeaveCommand(this.queueCoordinatorService));
-            this.getCommandRegistry().registerCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
-            this.getCommandRegistry().registerCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
-            this.getCommandRegistry().registerCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
-            this.getCommandRegistry().registerCommand(new NexoriMatchResolvePlayerCommand(this, this.arenaMatchService));
-            this.getCommandRegistry().registerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
-            this.getCommandRegistry().registerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
-            this.getCommandRegistry().registerCommand(new NexoriTargetHelpCommand());
-            this.getCommandRegistry().registerCommand(new NexoriTargetListCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriTargetShowCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriTargetAddCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriTargetRemoveCommand(this));
-            this.getCommandRegistry().registerCommand(new NexoriStartCommand(this.bootstrapCoordinator, this.getBasePermission() + ".admin"));
-            this.getCommandRegistry().registerCommand(new NexoriTravelCommand(this.secureTravelService));
-            this.getCommandRegistry().registerCommand(new NexoriWorldLabelCleanupCommand(this, this.worldLabelService));
-            this.getCommandRegistry().registerCommand(new NexoriMenuCommand(this));
+            this.registerAdminCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.lobbyService, this.queueService, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriLobbyUpsertCommand(this, this.lobbyService));
+            this.registerAdminCommand(new NexoriLobbyListCommand(this.lobbyService));
+            this.registerAdminCommand(new NexoriArenaUpsertCommand(this, this.arenaService));
+            this.registerAdminCommand(new NexoriArenaListCommand(this.arenaService));
+            this.registerAdminCommand(new NexoriInstanceListCommand());
+            this.registerAdminCommand(new NexoriQueueUpsertCommand(this, this.queueService));
+            this.registerAdminCommand(new NexoriQueueListCommand(this.queueService));
+            this.registerAdminCommand(new NexoriQueueStatusCommand(this.queueCoordinatorService));
+            this.registerAdminCommand(new NexoriQueueLeaveCommand(this.queueCoordinatorService));
+            this.registerAdminCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
+            this.registerAdminCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
+            this.registerAdminCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
+            this.registerAdminCommand(new NexoriMatchResolvePlayerCommand(this, this.arenaMatchService));
+            this.registerAdminCommand(new NexoriRecoverCommand(this.inventoryTransferService));
+            this.registerAdminCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
+            this.registerAdminCommand(new NexoriTargetHelpCommand());
+            this.registerAdminCommand(new NexoriTargetListCommand(this));
+            this.registerAdminCommand(new NexoriTargetShowCommand(this));
+            this.registerAdminCommand(new NexoriTargetAddCommand(this));
+            this.registerAdminCommand(new NexoriTargetRemoveCommand(this));
+            this.registerAdminCommand(new NexoriStartCommand(this.bootstrapCoordinator, this.getBasePermission() + ".admin"));
+            this.registerAdminCommand(new NexoriTravelCommand(this.secureTravelService));
+            this.registerAdminCommand(new NexoriWorldLabelCleanupCommand(this, this.worldLabelService));
+            this.registerAdminCommand(new NexoriMenuCommand(this));
+            this.removeBuiltInOpCommands();
             // Event hooks glue secure travel, queue runtime, HUD refresh, and menu resume flows into player lifecycle events.
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.bootstrapCoordinator::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
+            this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.accessGateService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.arenaMatchService::handlePlayerSetupDisconnect);
+            this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.accessGateService::handlePlayerSetupDisconnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
+            this.getEventRegistry().register(PlayerConnectEvent.class, this.accessGateService::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.queueCoordinatorService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.arenaMatchService::handlePlayerDisconnect);
+            this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.accessGateService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
                 if (event.getPlayerRef() != null) {
                     this.nexoriStatusHudService.remove(event.getPlayerRef());
@@ -712,5 +729,41 @@ public class NexoriPlugin extends JavaPlugin {
      */
     public NexoriMinigameApi getMinigameApi() {
         return minigameApi;
+    }
+
+    private void registerAdminCommand(@Nonnull AbstractCommand command) {
+        command.requirePermission(this.getBasePermission() + ".admin");
+        this.getCommandRegistry().registerCommand(command);
+    }
+
+    private void removeBuiltInOpCommands() {
+        CommandManager commandManager = CommandManager.get();
+        if (commandManager == null) {
+            this.getLogger().atWarning().log("Nexori could not resolve CommandManager; built-in OP commands were not removed.");
+            return;
+        }
+
+        Map<String, AbstractCommand> registrations = commandManager.getCommandRegistration();
+        if (registrations == null || registrations.isEmpty()) {
+            this.getLogger().atWarning().log("Nexori found no registered commands to filter; built-in OP commands may remain visible.");
+            return;
+        }
+
+        int removed = 0;
+        Iterator<Map.Entry<String, AbstractCommand>> iterator = registrations.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, AbstractCommand> entry = iterator.next();
+            AbstractCommand command = entry.getValue();
+            if (command == null) {
+                continue;
+            }
+            String className = command.getClass().getName();
+            if (className.startsWith("com.hypixel.hytale.server.core.permissions.commands.op.")) {
+                iterator.remove();
+                removed++;
+            }
+        }
+
+        this.getLogger().atInfo().log("Nexori removed " + removed + " built-in OP command registrations.");
     }
 }

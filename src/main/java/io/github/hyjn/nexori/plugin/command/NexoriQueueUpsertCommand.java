@@ -40,7 +40,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
         this.countdownSecondsArg = withRequiredArg("countdownSeconds", "Countdown seconds.", ArgTypes.INTEGER);
         this.launchTravelProfileArg = withRequiredArg("launchTravelProfile", "Launch travel profile.", ArgTypes.STRING);
         this.displayNameArg = withOptionalArg("displayName", "Optional display name.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

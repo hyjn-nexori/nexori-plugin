@@ -33,7 +33,7 @@ public final class NexoriLobbyUpsertCommand extends CommandBase {
         this.entryTargetIdArg = withRequiredArg("entryTargetId", "Entry target id.", ArgTypes.STRING);
         this.returnTargetIdArg = withOptionalArg("returnTargetId", "Optional return target id.", ArgTypes.STRING);
         this.displayNameArg = withOptionalArg("displayName", "Optional display name.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

@@ -26,7 +26,7 @@ public final class NexoriPortalUnbindCommand extends CommandBase {
         this.plugin = plugin;
         this.triggerBindingService = triggerBindingService;
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

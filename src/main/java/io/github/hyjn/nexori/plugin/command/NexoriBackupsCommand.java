@@ -23,7 +23,7 @@ public final class NexoriBackupsCommand extends AbstractPlayerCommand {
     public NexoriBackupsCommand(@Nonnull InventoryTransferService inventoryTransferService) {
         super("nexoribackups", "Lists your recent Nexori inventory transfer backups.");
         this.inventoryTransferService = inventoryTransferService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
@@ -34,6 +34,9 @@ public final class NexoriBackupsCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         if (!inventoryTransferService.isRecoveryEnabled()) {
             context.sendMessage(Message.raw("Nexori inventory recovery is currently disabled by this server's admin."));
             return;

@@ -17,11 +17,14 @@ public final class NexoriTargetListCommand extends CommandBase {
     public NexoriTargetListCommand(@Nonnull NexoriPlugin plugin) {
         super("nexoritargetlist", "Lists Nexori destination targets.");
         this.plugin = plugin;
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         List<DestinationTargetDefinition> targets = plugin.getDestinationTargetService().list();
         if (targets.isEmpty()) {
             ctx.sendMessage(Message.raw("No Nexori destination targets are set yet. Add one with /nexoritargetadd <targetId> <kind> <world> <arrivalPoint>."));

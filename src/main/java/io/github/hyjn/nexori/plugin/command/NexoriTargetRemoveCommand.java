@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin.command;
 
+import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
@@ -23,6 +24,9 @@ public final class NexoriTargetRemoveCommand extends CommandBase {
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         try {
             boolean removed = plugin.getDestinationTargetService().remove(ctx.get(targetIdArg));
             ctx.sendMessage(Message.raw(removed

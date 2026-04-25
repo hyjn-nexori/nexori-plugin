@@ -22,7 +22,7 @@ public final class NexoriRecoveryPageCommand extends AbstractPlayerCommand {
     public NexoriRecoveryPageCommand(@Nonnull InventoryTransferService inventoryTransferService) {
         super("nexorirecovery", "Opens your Nexori inventory recovery page.");
         this.inventoryTransferService = inventoryTransferService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
@@ -33,6 +33,9 @@ public final class NexoriRecoveryPageCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         if (!inventoryTransferService.isRecoveryEnabled()) {
             context.sendMessage(Message.raw("Nexori inventory recovery is currently disabled by this server's admin."));
             return;

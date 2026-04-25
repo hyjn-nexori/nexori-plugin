@@ -17,11 +17,14 @@ public final class NexoriQueueListCommand extends CommandBase {
     public NexoriQueueListCommand(@Nonnull QueueService queueService) {
         super("nexoriqueuelist", "Lists persisted Nexori queues on this server.");
         this.queueService = queueService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<QueueDefinition> queues = queueService.list();
         if (queues.isEmpty()) {
             context.sendMessage(Message.raw("No Nexori queues are registered on this server yet."));

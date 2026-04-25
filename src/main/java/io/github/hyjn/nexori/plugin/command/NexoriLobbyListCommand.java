@@ -17,11 +17,14 @@ public final class NexoriLobbyListCommand extends CommandBase {
     public NexoriLobbyListCommand(@Nonnull LobbyService lobbyService) {
         super("nexorilobbylist", "Lists persisted Nexori lobbies on this server.");
         this.lobbyService = lobbyService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<LobbyDefinition> lobbies = lobbyService.list();
         if (lobbies.isEmpty()) {
             context.sendMessage(Message.raw("No Nexori lobbies are registered on this server yet."));

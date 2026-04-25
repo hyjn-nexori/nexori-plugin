@@ -218,6 +218,46 @@ public final class SecureReferralService {
         return true;
     }
 
+    /**
+     * Returns true only when this setup connection contains a trusted Nexori secure referral:
+     * decodable payload, not expired, trusted issuer, valid signature, and supported payload type.
+     */
+    public boolean isTrustedNexoriReferral(@Nonnull PlayerSetupConnectEvent event) {
+        if (!event.isReferralConnection()) {
+            return false;
+        }
+
+        try {
+            Optional<SecureReferralEnvelope> decoded = codec.tryDecode(event.getReferralData());
+            if (decoded.isEmpty()) {
+                return false;
+            }
+
+            SecureReferralEnvelope envelope = decoded.get();
+            if (envelope.isExpired(Instant.now())) {
+                return false;
+            }
+
+            BundleMember issuer = findTrustedIssuer(envelope.issuerServerId());
+            if (issuer == null) {
+                return false;
+            }
+
+            boolean valid = identityManager.verifyCanonicalPayload(
+                envelope.canonicalPayload(),
+                issuer.publicKeyBase64(),
+                envelope.signatureBase64()
+            );
+            if (!valid) {
+                return false;
+            }
+
+            return handlersByType.containsKey(envelope.payloadType());
+        } catch (IOException | GeneralSecurityException exception) {
+            return false;
+        }
+    }
+
     private BundleMember findTrustedIssuer(@Nonnull String issuerServerId) {
         TrustBundle bundle = trustBundleStore.getCurrentBundle();
         for (BundleMember member : bundle.members()) {

@@ -17,11 +17,14 @@ public final class NexoriMatchSessionStatusCommand extends CommandBase {
     public NexoriMatchSessionStatusCommand(@Nonnull MatchSessionService matchSessionService) {
         super("nexorimatchsessionstatus", "Shows the persisted Nexori match sessions on this server.");
         this.matchSessionService = matchSessionService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<MatchSessionState> sessions = matchSessionService.list();
         if (sessions.isEmpty()) {
             context.sendMessage(Message.raw("No retained Nexori handoff records are active on this server."));

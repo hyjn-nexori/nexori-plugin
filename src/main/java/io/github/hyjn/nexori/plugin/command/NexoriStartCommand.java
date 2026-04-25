@@ -22,7 +22,7 @@ public final class NexoriStartCommand extends AbstractPlayerCommand {
         super("nexoristart", "Starts Nexori bootstrap using the saved peer IP list.");
         this.bootstrapCoordinator = bootstrapCoordinator;
         this.adminPermission = adminPermission;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

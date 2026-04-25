@@ -47,7 +47,7 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
         this.queueIdArg = withRequiredArg("queueId", "Queue id.", ArgTypes.STRING);
         this.modeArg = withOptionalArg("mode", "Queue portal mode: join or leave.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

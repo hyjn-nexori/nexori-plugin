@@ -29,7 +29,7 @@ public final class NexoriWorldLabelCleanupCommand extends AbstractPlayerCommand 
         );
         this.plugin = plugin;
         this.worldLabelService = worldLabelService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

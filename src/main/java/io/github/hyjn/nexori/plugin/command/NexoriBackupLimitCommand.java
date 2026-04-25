@@ -28,7 +28,7 @@ public final class NexoriBackupLimitCommand extends CommandBase {
         super("nexoribackuplimit", "Sets how many Nexori inventory transfer backups each player can keep.");
         this.plugin = plugin;
         this.inventoryTransferService = inventoryTransferService;
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
         this.limitArg = this.withRequiredArg("limit", "Maximum backups per player.", ArgTypes.INTEGER);
     }
 

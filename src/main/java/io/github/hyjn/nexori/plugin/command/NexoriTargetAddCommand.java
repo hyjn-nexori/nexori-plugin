@@ -40,7 +40,7 @@ public final class NexoriTargetAddCommand extends AbstractPlayerCommand {
         this.kindArg = withRequiredArg("kind", "Destination target kind.", ArgTypes.STRING);
         this.worldArg = withRequiredArg("world", "Destination world.", ArgTypes.STRING);
         this.arrivalPointArg = withRequiredArg("arrivalPoint", "Arrival point id.", ArgTypes.STRING);
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
     }
 
     @Override

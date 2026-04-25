@@ -33,7 +33,7 @@ public final class NexoriMatchResolvePlayerCommand extends CommandBase {
         this.outcomeArg = withRequiredArg("outcome", "WIN or LOSS.", ArgTypes.STRING);
         this.delaySecondsArg = withOptionalArg("delaySeconds", "Optional return delay in seconds.", ArgTypes.INTEGER);
         this.reasonArg = withOptionalArg("reason", "Optional resolution reason.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

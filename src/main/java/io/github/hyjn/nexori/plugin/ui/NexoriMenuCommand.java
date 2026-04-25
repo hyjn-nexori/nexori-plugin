@@ -11,6 +11,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
+import io.github.hyjn.nexori.plugin.command.NexoriOpAccess;
 import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2Page;
 
 import javax.annotation.Nonnull;
@@ -22,7 +23,7 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
     public NexoriMenuCommand(@Nonnull NexoriPlugin plugin) {
         super("nexorimenu", "Opens the Nexori admin menu.");
         this.plugin = plugin;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
@@ -33,6 +34,9 @@ public final class NexoriMenuCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
             context.sendMessage(Message.raw("nexorimenu: could not resolve the live player entity."));

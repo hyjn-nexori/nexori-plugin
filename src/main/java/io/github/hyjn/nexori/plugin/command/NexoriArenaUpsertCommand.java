@@ -45,7 +45,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
             "Optional automatic arena resolution trigger id. Defaults to 'none'; use 'last_player_alive' to enable built-in auto resolution.",
             ArgTypes.STRING
         );
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override

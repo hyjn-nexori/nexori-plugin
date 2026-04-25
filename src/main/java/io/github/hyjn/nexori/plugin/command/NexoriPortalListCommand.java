@@ -25,11 +25,14 @@ public final class NexoriPortalListCommand extends CommandBase {
         super("nexoriportallist", "Lists Nexori portal instances on this server.");
         this.portalInstanceService = portalInstanceService;
         this.triggerBindingService = triggerBindingService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<PortalInstanceDefinition> portals = portalInstanceService.list();
         if (portals.isEmpty()) {
             context.sendMessage(Message.raw("No Nexori portals have been placed on this server yet."));

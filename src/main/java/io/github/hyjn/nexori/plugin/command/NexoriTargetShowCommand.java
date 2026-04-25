@@ -19,11 +19,14 @@ public final class NexoriTargetShowCommand extends CommandBase {
         super("nexoritargetshow", "Shows one Nexori destination target.");
         this.plugin = plugin;
         this.targetIdArg = withRequiredArg("targetId", "Destination target id to inspect.", ArgTypes.STRING);
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
+        if (!NexoriOpAccess.requireOp(ctx)) {
+            return;
+        }
         plugin.getDestinationTargetService().find(ctx.get(targetIdArg)).ifPresentOrElse(target -> {
             ctx.sendMessage(Message.raw("Target id: " + target.id()));
             ctx.sendMessage(Message.raw("Display: " + target.displayName()));

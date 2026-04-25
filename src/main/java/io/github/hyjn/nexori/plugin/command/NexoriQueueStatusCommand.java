@@ -17,11 +17,14 @@ public final class NexoriQueueStatusCommand extends CommandBase {
     public NexoriQueueStatusCommand(@Nonnull QueueCoordinatorService queueCoordinatorService) {
         super("nexoriqueuestatus", "Shows the in-memory Nexori queue runtime state.");
         this.queueCoordinatorService = queueCoordinatorService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<QueueRuntimeState> states = queueCoordinatorService.listQueueStates();
         if (states.isEmpty()) {
             context.sendMessage(Message.raw("No Nexori queues are registered on this server yet."));

@@ -26,7 +26,7 @@ public final class NexoriRecoveryModeCommand extends CommandBase {
         super("nexorirecoverymode", "Enables, disables, or shows Nexori inventory recovery access.");
         this.plugin = plugin;
         this.inventoryTransferService = inventoryTransferService;
-        this.setPermissionGroup(GameMode.Adventure);
+        this.setPermissionGroups("OP");
         this.actionArg = this.withRequiredArg("action", "status, enable, or disable", ArgTypes.STRING);
     }
 

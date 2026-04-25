@@ -31,7 +31,7 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
         super("nexorirecover", "Queries the destination for one of your Nexori inventory transfer backups and restores it if needed.");
         this.inventoryTransferService = inventoryTransferService;
         this.transferIdArg = withRequiredArg("transferId", "The transfer id shown by /nexoribackups.", ArgTypes.STRING);
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
@@ -42,6 +42,9 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         try {
             Player player = store.getComponent(ref, Player.getComponentType());
             inventoryTransferService.requireRecoveryInventoryEmpty(playerRef.getUuid(), player);

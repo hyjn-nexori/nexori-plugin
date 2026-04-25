@@ -17,11 +17,14 @@ public final class NexoriArenaListCommand extends CommandBase {
     public NexoriArenaListCommand(@Nonnull ArenaService arenaService) {
         super("nexoriarenalist", "Lists persisted Nexori arenas on this server.");
         this.arenaService = arenaService;
-        setPermissionGroup(GameMode.Adventure);
+        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
+        if (!NexoriOpAccess.requireOp(context)) {
+            return;
+        }
         List<ArenaDefinition> arenas = arenaService.list();
         if (arenas.isEmpty()) {
             context.sendMessage(Message.raw("No Nexori arenas are registered on this server yet."));
