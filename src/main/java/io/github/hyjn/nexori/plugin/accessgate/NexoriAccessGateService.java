@@ -6,11 +6,13 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
-import com.hypixel.hytale.server.core.permissions.PermissionsModule;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +29,7 @@ public final class NexoriAccessGateService {
 
     private final HytaleLogger logger;
     private final SecureReferralService secureReferralService;
+    private final NexoriAccessGateStore store;
     private final Map<UUID, Long> pendingSetupConnections = new ConcurrentHashMap<>();
     private final Set<UUID> connectedPlayers = ConcurrentHashMap.newKeySet();
     private volatile NexoriAccessGateConfigDocument config;
@@ -38,7 +41,122 @@ public final class NexoriAccessGateService {
     ) throws IOException {
         this.logger = logger;
         this.secureReferralService = secureReferralService;
+        this.store = store;
         this.config = store.loadOrCreate().normalized();
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument getConfig() {
+        return config;
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument reloadConfig() throws IOException {
+        this.config = store.loadOrCreate().normalized();
+        return this.config;
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument saveConfig(@Nonnull NexoriAccessGateConfigDocument nextConfig) throws IOException {
+        NexoriAccessGateConfigDocument normalized = nextConfig.normalized();
+        store.save(normalized);
+        this.config = normalized;
+        return normalized;
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument setEnabled(boolean enabled) throws IOException {
+        return saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            enabled,
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            config.bypassReferralConnections(),
+            config.bypassPlayerUuids()
+        ));
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument setBypassReferralConnections(boolean enabled) throws IOException {
+        return saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            config.enabled(),
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            enabled,
+            config.bypassPlayerUuids()
+        ));
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument addBypassPlayerUuid(@Nonnull UUID playerUuid) throws IOException {
+        return addBypassPlayerUuid(playerUuid, "");
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument addBypassPlayerUuid(@Nonnull UUID playerUuid, @Nonnull String username) throws IOException {
+        String token = playerUuid.toString().toLowerCase(Locale.ROOT);
+        LinkedHashMap<String, String> bypassPlayers = new LinkedHashMap<>();
+        for (NexoriAccessGateBypassPlayer entry : config.bypassPlayerUuids()) {
+            if (entry == null || entry.uuid() == null || entry.uuid().isBlank()) {
+                continue;
+            }
+            bypassPlayers.put(entry.uuid(), entry.username() == null ? "" : entry.username());
+        }
+        String normalizedUsername = username.trim();
+        if (!bypassPlayers.containsKey(token) || !normalizedUsername.isBlank()) {
+            bypassPlayers.put(token, normalizedUsername);
+        }
+
+        List<NexoriAccessGateBypassPlayer> updatedPlayers = new ArrayList<>();
+        for (Map.Entry<String, String> entry : bypassPlayers.entrySet()) {
+            updatedPlayers.add(new NexoriAccessGateBypassPlayer(entry.getKey(), entry.getValue()));
+        }
+        return saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            config.enabled(),
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            config.bypassReferralConnections(),
+            List.copyOf(updatedPlayers)
+        ));
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument removeBypassPlayerUuid(@Nonnull UUID playerUuid) throws IOException {
+        return removeBypassPlayerToken(playerUuid.toString().toLowerCase(Locale.ROOT));
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument removeBypassPlayerToken(@Nonnull String token) throws IOException {
+        String normalizedToken = token.trim().toLowerCase(Locale.ROOT);
+        List<NexoriAccessGateBypassPlayer> updatedPlayers = new ArrayList<>();
+        for (NexoriAccessGateBypassPlayer entry : config.bypassPlayerUuids()) {
+            if (entry == null || entry.uuid() == null) {
+                continue;
+            }
+            if (entry.uuid().trim().toLowerCase(Locale.ROOT).equals(normalizedToken)) {
+                continue;
+            }
+            updatedPlayers.add(entry);
+        }
+        return saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            config.enabled(),
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            config.bypassReferralConnections(),
+            List.copyOf(updatedPlayers)
+        ));
+    }
+
+    @Nonnull
+    public synchronized List<UUID> connectedPlayerUuids() {
+        return List.copyOf(new ArrayList<>(connectedPlayers));
     }
 
     public synchronized void handlePlayerSetupConnect(@Nonnull PlayerSetupConnectEvent event) {
@@ -119,38 +237,8 @@ public final class NexoriAccessGateService {
             return BypassType.TRUSTED_REFERRAL;
         }
 
-        if (currentConfig.bypassPlayerUuids().contains(event.getUuid().toString().toLowerCase(Locale.ROOT))) {
+        if (currentConfig.containsBypassUuid(event.getUuid())) {
             return BypassType.UUID;
-        }
-
-        PermissionsModule permissions = PermissionsModule.get();
-        if (permissions == null) {
-            return BypassType.NONE;
-        }
-
-        try {
-            for (String permission : currentConfig.bypassPermissions()) {
-                if (permissions.hasPermission(event.getUuid(), permission)) {
-                    return BypassType.PERMISSION;
-                }
-            }
-
-            if (!currentConfig.bypassGroupNames().isEmpty()) {
-                Set<String> groups = permissions.getGroupsForUser(event.getUuid());
-                for (String group : groups) {
-                    if (group == null) {
-                        continue;
-                    }
-                    if (currentConfig.bypassGroupNames().contains(group.trim().toLowerCase(Locale.ROOT))) {
-                        return BypassType.GROUP;
-                    }
-                }
-            }
-        } catch (Exception exception) {
-            logger.atWarning().withCause(exception).log(
-                "NEXORI_ACCESS_GATE setup permissions unavailable for " + event.getUsername()
-                    + "; falling back to UUID/referral trusted bypass only."
-            );
         }
 
         return BypassType.NONE;
@@ -187,8 +275,6 @@ public final class NexoriAccessGateService {
     private enum BypassType {
         NONE,
         UUID,
-        GROUP,
-        PERMISSION,
         TRUSTED_REFERRAL
     }
 }

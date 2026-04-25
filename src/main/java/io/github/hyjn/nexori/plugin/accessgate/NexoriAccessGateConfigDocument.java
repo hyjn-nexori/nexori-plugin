@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public record NexoriAccessGateConfigDocument(
     int schemaVersion,
@@ -13,12 +14,10 @@ public record NexoriAccessGateConfigDocument(
     int reservedPrioritySlots,
     String fullMessage,
     boolean bypassReferralConnections,
-    List<String> bypassPlayerUuids,
-    List<String> bypassGroupNames,
-    List<String> bypassPermissions
+    List<NexoriAccessGateBypassPlayer> bypassPlayerUuids
 ) {
 
-    public static final int CURRENT_SCHEMA_VERSION = 1;
+    public static final int CURRENT_SCHEMA_VERSION = 2;
     public static final int DEFAULT_MAX_PLAYERS = 80;
     public static final int DEFAULT_RESERVED_PRIORITY_SLOTS = 0;
     public static final String DEFAULT_FULL_MESSAGE = "This Nexori server is currently full. Please try again in a moment.";
@@ -32,8 +31,6 @@ public record NexoriAccessGateConfigDocument(
             DEFAULT_RESERVED_PRIORITY_SLOTS,
             DEFAULT_FULL_MESSAGE,
             true,
-            List.of(),
-            List.of(),
             List.of()
         );
     }
@@ -50,10 +47,18 @@ public record NexoriAccessGateConfigDocument(
             normalizedReserved,
             normalizedMessage,
             bypassReferralConnections,
-            normalizeEntries(bypassPlayerUuids, false),
-            normalizeEntries(bypassGroupNames, true),
-            normalizeEntries(bypassPermissions, true)
+            normalizeBypassPlayers(bypassPlayerUuids)
         );
+    }
+
+    public boolean containsBypassUuid(@Nonnull UUID playerUuid) {
+        String token = playerUuid.toString().toLowerCase(Locale.ROOT);
+        for (NexoriAccessGateBypassPlayer entry : bypassPlayerUuids()) {
+            if (entry != null && token.equals(entry.uuid())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Nonnull
@@ -66,25 +71,23 @@ public record NexoriAccessGateConfigDocument(
     }
 
     @Nonnull
-    private static List<String> normalizeEntries(List<String> rawValues, boolean lowercase) {
-        if (rawValues == null || rawValues.isEmpty()) {
+    private static List<NexoriAccessGateBypassPlayer> normalizeBypassPlayers(List<NexoriAccessGateBypassPlayer> rawPlayers) {
+        if (rawPlayers == null || rawPlayers.isEmpty()) {
             return List.of();
         }
-
-        LinkedHashSet<String> normalized = new LinkedHashSet<>();
-        for (String rawValue : rawValues) {
-            if (rawValue == null) {
+        LinkedHashSet<String> seenUuids = new LinkedHashSet<>();
+        List<NexoriAccessGateBypassPlayer> normalized = new ArrayList<>();
+        for (NexoriAccessGateBypassPlayer rawPlayer : rawPlayers) {
+            if (rawPlayer == null) {
                 continue;
             }
-            String value = rawValue.trim();
-            if (value.isBlank()) {
+            NexoriAccessGateBypassPlayer entry = rawPlayer.normalized();
+            if (entry.uuid().isBlank() || seenUuids.contains(entry.uuid())) {
                 continue;
             }
-            if (lowercase) {
-                value = value.toLowerCase(Locale.ROOT);
-            }
-            normalized.add(value);
+            seenUuids.add(entry.uuid());
+            normalized.add(entry);
         }
-        return List.copyOf(new ArrayList<>(normalized));
+        return List.copyOf(normalized);
     }
 }

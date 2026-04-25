@@ -2,9 +2,16 @@ package io.github.hyjn.nexori.plugin.accessgate;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,7 +45,8 @@ public final class NexoriAccessGateStore {
             return defaults;
         }
 
-        NexoriAccessGateConfigDocument document = GSON.fromJson(json, NexoriAccessGateConfigDocument.class);
+        String migratedJson = migrateLegacyJson(json);
+        NexoriAccessGateConfigDocument document = GSON.fromJson(migratedJson, NexoriAccessGateConfigDocument.class);
         if (document == null) {
             NexoriAccessGateConfigDocument defaults = NexoriAccessGateConfigDocument.defaults();
             save(defaults);
@@ -71,5 +79,86 @@ public final class NexoriAccessGateStore {
         if (parent != null) {
             Files.createDirectories(parent);
         }
+    }
+
+    @Nonnull
+    private static String migrateLegacyJson(@Nonnull String json) {
+        JsonElement rootElement = JsonParser.parseString(json);
+        if (!rootElement.isJsonObject()) {
+            return json;
+        }
+        JsonObject root = rootElement.getAsJsonObject();
+
+        List<NexoriAccessGateBypassPlayer> merged = new ArrayList<>();
+        JsonArray existingPairs = root.getAsJsonArray("bypassPlayerUuids");
+        if (existingPairs != null) {
+            for (JsonElement element : existingPairs) {
+                if (element != null && element.isJsonObject()) {
+                    JsonObject pair = element.getAsJsonObject();
+                    String uuid = pair.has("uuid") && pair.get("uuid").isJsonPrimitive()
+                        ? pair.get("uuid").getAsString().trim().toLowerCase(Locale.ROOT)
+                        : "";
+                    String username = pair.has("username") && pair.get("username").isJsonPrimitive()
+                        ? pair.get("username").getAsString().trim()
+                        : "";
+                    if (!uuid.isBlank()) {
+                        merged.add(new NexoriAccessGateBypassPlayer(uuid, username));
+                    }
+                }
+            }
+        }
+
+        JsonArray legacyPairs = root.getAsJsonArray("bypassPlayers");
+        if (legacyPairs != null) {
+            for (JsonElement element : legacyPairs) {
+                if (element != null && element.isJsonObject()) {
+                    JsonObject pair = element.getAsJsonObject();
+                    String uuid = pair.has("uuid") && pair.get("uuid").isJsonPrimitive()
+                        ? pair.get("uuid").getAsString().trim().toLowerCase(Locale.ROOT)
+                        : "";
+                    String username = pair.has("username") && pair.get("username").isJsonPrimitive()
+                        ? pair.get("username").getAsString().trim()
+                        : "";
+                    if (!uuid.isBlank()) {
+                        merged.add(new NexoriAccessGateBypassPlayer(uuid, username));
+                    }
+                }
+            }
+        }
+
+        JsonArray legacyStrings = root.getAsJsonArray("bypassPlayerUuids");
+        if (legacyStrings != null) {
+            for (JsonElement element : legacyStrings) {
+                if (element != null && element.isJsonPrimitive()) {
+                    String uuid = element.getAsString().trim().toLowerCase(Locale.ROOT);
+                    if (!uuid.isBlank()) {
+                        merged.add(new NexoriAccessGateBypassPlayer(uuid, ""));
+                    }
+                }
+            }
+        }
+
+        JsonArray normalizedPairs = new JsonArray();
+        List<String> seen = new ArrayList<>();
+        for (NexoriAccessGateBypassPlayer player : merged) {
+            if (player == null || player.uuid() == null) {
+                continue;
+            }
+            String token = player.uuid().trim().toLowerCase(Locale.ROOT);
+            if (token.isBlank() || seen.contains(token)) {
+                continue;
+            }
+            seen.add(token);
+            JsonObject pair = new JsonObject();
+            pair.addProperty("uuid", token);
+            pair.addProperty("username", player.username() == null ? "" : player.username().trim());
+            normalizedPairs.add(pair);
+        }
+
+        root.add("bypassPlayerUuids", normalizedPairs);
+        root.remove("bypassPlayers");
+        root.remove("bypassGroupNames");
+        root.remove("bypassPermissions");
+        return GSON.toJson(root);
     }
 }

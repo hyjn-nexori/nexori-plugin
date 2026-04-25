@@ -723,6 +723,10 @@ public class NexoriPlugin extends JavaPlugin {
         return nexoriStatusHudService;
     }
 
+    public NexoriAccessGateService getAccessGateService() {
+        return accessGateService;
+    }
+
     /**
      * Returns Nexori's public minigame integration surface for other mods.
      * Prefer this API over touching internal runtime services directly.
