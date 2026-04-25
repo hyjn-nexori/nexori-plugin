@@ -208,7 +208,7 @@ public final class NexoriStatusHudService {
             .withAnchor(new HyUIAnchor()
                 .setLeft(0)
                 .setRight(0)
-                .setTop(270)
+                .setTop(200)
                 .setHeight(250))
             .withHitTestVisible(false);
 

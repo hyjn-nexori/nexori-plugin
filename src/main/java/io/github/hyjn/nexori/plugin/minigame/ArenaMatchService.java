@@ -6,14 +6,18 @@ import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.protocol.packets.interface_.CustomPage;
+import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBinding;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
+import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -27,10 +31,12 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,13 +46,14 @@ import java.util.UUID;
 public final class ArenaMatchService {
 
     private static final Gson GSON = new Gson();
-    private static final long ELIMINATED_RETURN_DELAY_MS = 1_000L;
-    private static final long WINNER_RETURN_DELAY_MS = 5_000L;
-    private static final long RETURN_RETRY_DELAY_MS = 1_000L;
+    private static final long ELIMINATED_RETURN_DELAY_MS = 5_000L;
+    private static final long WINNER_RETURN_DELAY_MS = 10_000L;
+    private static final long RETURN_RETRY_DELAY_MS = 5_000L;
     private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
     private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
     private static final long INITIAL_PLACEMENT_TIMEOUT_MS = 7_500L;
     private static final long INITIAL_PLACEMENT_POST_READY_GRACE_MS = 750L;
+    private static final String RESPAWN_PAGE_CLASS_NAME = "com.hypixel.hytale.server.core.entity.entities.player.pages.RespawnPage";
 
     private final HytaleLogger logger;
     private final SecureTravelService secureTravelService;
@@ -57,6 +64,7 @@ public final class ArenaMatchService {
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
+    private final Set<UUID> patchedRespawnPagePlayers = new HashSet<>();
 
     /**
      * Creates the arena match runtime service used by queue launch, match resolution, and return HUDs.
@@ -116,6 +124,7 @@ public final class ArenaMatchService {
             return;
         }
 
+        patchedRespawnPagePlayers.remove(playerRef.getUuid());
         pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerRef.getUuid());
         String matchId = matchIdByPlayerUuid.remove(playerRef.getUuid());
         if (matchId == null) {
@@ -159,6 +168,7 @@ public final class ArenaMatchService {
         }
 
         secureTravelService.removePendingArrival(event.getUuid());
+        patchedRespawnPagePlayers.remove(event.getUuid());
         long now = System.currentTimeMillis();
         String reason = "Player setup disconnect before ready: " + event.getDisconnectReason();
 
@@ -214,15 +224,21 @@ public final class ArenaMatchService {
         ArenaActiveMatch updated = match;
         boolean useBuiltInDeathElimination =
             LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(updated.matchResolutionTriggerId());
+        DeathComponent deathComponent = store.getComponent(ref, DeathComponent.getComponentType());
+        if (useBuiltInDeathElimination && deathComponent != null) {
+            patchActiveRespawnPageForLastPlayerAlive(ref, store, player, playerRef);
+        } else {
+            patchedRespawnPagePlayers.remove(playerRef.getUuid());
+        }
         if (useBuiltInDeathElimination
             && !updated.isPlayerEliminated(playerRef.getUuid())
-            && store.getComponent(ref, DeathComponent.getComponentType()) != null) {
+            && deathComponent != null) {
             updated = updated.withEliminatedPlayer(
                 playerRef.getUuid(),
                 nowEpochMs + ELIMINATED_RETURN_DELAY_MS,
                 nowEpochMs
             );
-            playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 1 second."));
+            playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 5 seconds."));
         }
 
         updated = applyAutomaticResolutionTrigger(updated, nowEpochMs);
@@ -779,7 +795,9 @@ public final class ArenaMatchService {
         @Nonnull Store<EntityStore> store,
         long nowEpochMs
     ) {
-        if (store.getComponent(ref, DeathComponent.getComponentType()) != null) {
+        boolean builtInLastPlayerAlive =
+            LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(match.matchResolutionTriggerId());
+        if (!builtInLastPlayerAlive && store.getComponent(ref, DeathComponent.getComponentType()) != null) {
             tryRespawn(store, ref, playerRef);
             return match.withPendingReturn(playerRef.getUuid(), nowEpochMs + RETURN_RETRY_DELAY_MS, nowEpochMs);
         }
@@ -818,11 +836,47 @@ public final class ArenaMatchService {
     private void tryRespawn(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref, @Nonnull PlayerRef playerRef) {
         try {
             DeathComponent.respawn(store, ref);
+            patchedRespawnPagePlayers.remove(playerRef.getUuid());
         } catch (Exception exception) {
             logger.atWarning().withCause(exception).log(
                 "Failed to request respawn for eliminated Nexori player " + playerRef.getUuid() + "."
             );
         }
+    }
+
+    private void patchActiveRespawnPageForLastPlayerAlive(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull Player player,
+        @Nonnull PlayerRef playerRef
+    ) {
+        if (patchedRespawnPagePlayers.contains(playerRef.getUuid())) {
+            return;
+        }
+
+        PageManager pageManager = player.getPageManager();
+        if (pageManager == null || pageManager.getCustomPage() == null) {
+            return;
+        }
+        if (!RESPAWN_PAGE_CLASS_NAME.equals(pageManager.getCustomPage().getClass().getName())) {
+            return;
+        }
+
+        UICommandBuilder commands = new UICommandBuilder();
+        commands.set("#RespawnButton.Visible", false);
+        commands.set("#RespawnButton.Disabled", true);
+        commands.set("#DeathData.Visible", false);
+
+        CustomPage patch = new CustomPage(
+            RESPAWN_PAGE_CLASS_NAME,
+            false,
+            false,
+            pageManager.getCustomPage().getLifetime(),
+            commands.getCommands(),
+            new CustomUIEventBinding[0]
+        );
+        pageManager.updateCustomPage(patch);
+        patchedRespawnPagePlayers.add(playerRef.getUuid());
     }
 
     private UUID parseWinnerUuid(@Nonnull String rawWinnerPlayerUuid) {
@@ -841,6 +895,7 @@ public final class ArenaMatchService {
 
     private void removeMatchPlayers(@Nonnull String matchId, @Nonnull List<UUID> playerUuids) {
         for (UUID playerUuid : playerUuids) {
+            patchedRespawnPagePlayers.remove(playerUuid);
             String currentMatchId = matchIdByPlayerUuid.get(playerUuid);
             if (matchId.equals(currentMatchId)) {
                 matchIdByPlayerUuid.remove(playerUuid);
