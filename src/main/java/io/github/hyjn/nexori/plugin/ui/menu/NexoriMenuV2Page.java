@@ -59,6 +59,7 @@ import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
+import io.github.hyjn.nexori.plugin.ui.menu.state.AccessGateWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.MinigameWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State;
 import io.github.hyjn.nexori.plugin.ui.menu.state.PortalWorkspaceTab;
@@ -298,8 +299,14 @@ public final class NexoriMenuV2Page {
             panel.addChild(spacerY(12));
             panel.addChild(minigameTabs(ref, store, playerRef, player, plugin, state));
         }
+        if (state.selectedView() == NexoriMenuV2View.ACCESS_GATE) {
+            panel.addChild(spacerY(12));
+            panel.addChild(accessGateTabs(ref, store, playerRef, player, plugin, state));
+        }
         panel.addChild(spacerY(12));
-        int viewportHeight = CONTENT_H - ((state.selectedView() == NexoriMenuV2View.PORTALS || state.selectedView() == NexoriMenuV2View.QUEUES) ? 158 : 104);
+        int viewportHeight = CONTENT_H - ((state.selectedView() == NexoriMenuV2View.PORTALS
+            || state.selectedView() == NexoriMenuV2View.QUEUES
+            || state.selectedView() == NexoriMenuV2View.ACCESS_GATE) ? 158 : 104);
         panel.addChild(buildContentScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight));
         return panel;
     }
@@ -319,7 +326,8 @@ public final class NexoriMenuV2Page {
         String scrollId = "nexori-v2-scroll-" + state.selectedView().name().toLowerCase()
             + (state.selectedView() == NexoriMenuV2View.PORTALS ? "-" + state.selectedPortalTab().name().toLowerCase() : "")
             + (state.selectedView() == NexoriMenuV2View.QUEUES ? "-" + state.selectedMinigameTab().name().toLowerCase() : "")
-            + (state.selectedView() == NexoriMenuV2View.RULES ? "-" + state.selectedRulesTab().name().toLowerCase() : "");
+            + (state.selectedView() == NexoriMenuV2View.RULES ? "-" + state.selectedRulesTab().name().toLowerCase() : "")
+            + (state.selectedView() == NexoriMenuV2View.ACCESS_GATE ? "-" + state.selectedAccessGateTab().name().toLowerCase() : "");
         return switch (state.selectedView()) {
             case HOME -> buildHomeScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case ABOUT -> buildAboutScroll(viewportHeight, scrollId);
@@ -398,6 +406,43 @@ public final class NexoriMenuV2Page {
                     player,
                     plugin,
                     state.withSelectedMinigameTab(tab).withStatusText("")
+                ));
+            row.addChild(button);
+            if (index + 1 < tabs.length) {
+                row.addChild(spacerX(gap));
+            }
+        }
+        return row;
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateTabs(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state
+    ) {
+        int tabWidth = 220;
+        int gap = 8;
+        AccessGateWorkspaceTab[] tabs = AccessGateWorkspaceTab.values();
+        int totalWidth = tabs.length * tabWidth + Math.max(0, tabs.length - 1) * gap;
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(CONTENT_W - 32).setHeight(42));
+        row.addChild(spacerX(Math.max(0, ((CONTENT_W - 32) - totalWidth) / 2)));
+        for (int index = 0; index < tabs.length; index++) {
+            AccessGateWorkspaceTab tab = tabs[index];
+            ButtonBuilder button = ButtonBuilder.secondaryTextButton()
+                .withText(tab.label())
+                .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
+                .withDisabled(state.selectedAccessGateTab() == tab)
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedAccessGateTab(tab).withStatusText("")
                 ));
             row.addChild(button);
             if (index + 1 < tabs.length) {
@@ -950,6 +995,23 @@ public final class NexoriMenuV2Page {
         int viewportHeight,
         @Nonnull String scrollId
     ) {
+        return switch (state.selectedAccessGateTab()) {
+            case ACCESS_GATE -> buildAccessGateMainScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
+            case MANUAL_CONNECTIONS -> buildAccessGateManualConnectionsScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
+        };
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder buildAccessGateMainScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
         int width = CONTENT_W - 32;
         int innerWidth = width - 16;
         NexoriAccessGateConfigDocument config = plugin.getAccessGateService().getConfig();
@@ -999,63 +1061,6 @@ public final class NexoriMenuV2Page {
         card.addChild(label("Max Players is the total hard cap. Reserved Priority Slots are carved out for bypass entries. Example: maxPlayers=100 and reservedPrioritySlots=10 means up to 90 non-bypass joins, keeping 10 slots available for bypass traffic. The bypass list can contain many players, but only up to the reserved slots can use bypass concurrently.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
-        GroupBuilder topActions = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(HOME_INPUT_FIELD_H));
-        topActions.addChild(
-            ButtonBuilder.textButton()
-                .withText("SAVE CONFIG")
-                .withAnchor(new HyUIAnchor().setWidth(170).setHeight(HOME_INPUT_FIELD_H))
-                .onClick((ignored, ctx) -> {
-                    String rawMaxPlayers = ctx.getValue(ACCESS_GATE_MAX_PLAYERS_INPUT_ID, String.class).orElse(Integer.toString(config.maxPlayers())).trim();
-                    String rawReserved = ctx.getValue(ACCESS_GATE_RESERVED_SLOTS_INPUT_ID, String.class).orElse(Integer.toString(config.reservedPrioritySlots())).trim();
-                    String fullMessage = ctx.getValue(ACCESS_GATE_FULL_MESSAGE_INPUT_ID, String.class).orElse(config.fullMessage()).trim();
-                    Integer maxPlayers = parseInteger(rawMaxPlayers);
-                    Integer reservedSlots = parseInteger(rawReserved);
-                    if (maxPlayers == null || maxPlayers < 1) {
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Max Players must be a number greater than 0."));
-                        return;
-                    }
-                    if (reservedSlots == null || reservedSlots < 0) {
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Reserved Priority Slots must be a number of 0 or more."));
-                        return;
-                    }
-                    if (reservedSlots > maxPlayers) {
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Reserved Priority Slots cannot be greater than Max Players."));
-                        return;
-                    }
-
-                    try {
-                        plugin.getAccessGateService().saveConfig(new NexoriAccessGateConfigDocument(
-                            config.schemaVersion(),
-                            config.enabled(),
-                            maxPlayers,
-                            reservedSlots,
-                            fullMessage,
-                            config.bypassReferralConnections(),
-                            config.bypassPlayerUuids()
-                        ));
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Access Gate config saved and reloaded."));
-                    } catch (IOException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Could not save Access Gate config: " + exception.getMessage()));
-                    }
-                })
-        );
-        topActions.addChild(spacerX(10));
-        topActions.addChild(
-            ButtonBuilder.secondaryTextButton()
-                .withText("RELOAD FROM FILE")
-                .withAnchor(new HyUIAnchor().setWidth(190).setHeight(HOME_INPUT_FIELD_H))
-                .onClick((ignored, ctx) -> {
-                    try {
-                        plugin.getAccessGateService().reloadConfig();
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Reloaded Access Gate config from file."));
-                    } catch (IOException exception) {
-                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Could not reload Access Gate config: " + exception.getMessage()));
-                    }
-                })
-        );
-        card.addChild(topActions);
-        card.addChild(spacerY(12));
-
         GroupBuilder togglesRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(96));
         togglesRow.addChild(accessGateToggleField(ref, store, playerRef, player, plugin, state, "Gate Enabled", config.enabled(), half, 96, true));
         togglesRow.addChild(spacerX(12));
@@ -1064,14 +1069,14 @@ public final class NexoriMenuV2Page {
         card.addChild(spacerY(12));
 
         GroupBuilder numberRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(96));
-        numberRow.addChild(accessGateInputCard("Max Players", ACCESS_GATE_MAX_PLAYERS_INPUT_ID, Integer.toString(config.maxPlayers()), "80", half, 96));
+        numberRow.addChild(accessGateMaxPlayersCard(ref, store, playerRef, player, plugin, state, config, half, 96));
         numberRow.addChild(spacerX(12));
-        numberRow.addChild(accessGateInputCard("Reserved Priority Slots", ACCESS_GATE_RESERVED_SLOTS_INPUT_ID, Integer.toString(config.reservedPrioritySlots()), "0", half, 96));
+        numberRow.addChild(accessGateReservedSlotsCard(ref, store, playerRef, player, plugin, state, config, half, 96));
         card.addChild(numberRow);
         card.addChild(spacerY(12));
 
         GroupBuilder textRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(96));
-        textRow.addChild(accessGateInputCard("Server Full Message", ACCESS_GATE_FULL_MESSAGE_INPUT_ID, config.fullMessage(), "Server is full. Please try again later.", half, 96));
+        textRow.addChild(accessGateFullMessageCard(ref, store, playerRef, player, plugin, state, config, half, 96));
         textRow.addChild(spacerX(12));
         GroupBuilder addUuidCard = GroupBuilder.group()
             .withLayoutMode("Top")
@@ -1115,6 +1120,253 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
+    private static ReorderableListBuilder buildAccessGateManualConnectionsScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int width = CONTENT_W - 32;
+        int innerWidth = width - 16;
+        NexoriAccessGateConfigDocument config = plugin.getAccessGateService().getConfig();
+        List<ConfiguredPeer> trustedPeers = new ArrayList<>(trustedNetworkPeers(plugin));
+        Map<String, String> configuredDisplayNamesByAddress = new LinkedHashMap<>();
+        for (ConfiguredPeer peer : plugin.getConfiguredPeerService().list()) {
+            if (peer.connectionAddress().isBlank()) {
+                continue;
+            }
+            configuredDisplayNamesByAddress.putIfAbsent(
+                peer.connectionAddress().toLowerCase(Locale.ROOT),
+                peer.displayName().isBlank() ? peer.connectionAddress() : peer.displayName()
+            );
+        }
+        trustedPeers.sort(Comparator.comparing(peer -> configuredDisplayNamesByAddress
+            .getOrDefault(peer.connectionAddress().toLowerCase(Locale.ROOT), peer.connectionAddress())
+            .toLowerCase(Locale.ROOT)));
+
+        int setupHeight = 220;
+        int tableHeight = Math.max(360, viewportHeight - setupHeight - 60);
+        int contentHeight = 16 + setupHeight + 12 + tableHeight + 20;
+
+        ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(16));
+        scroll.addChild(accessGateManualConnectionsSetupCard(ref, store, playerRef, player, plugin, state, config, innerWidth, setupHeight));
+        scroll.addChild(spacerY(12));
+        scroll.addChild(accessGateTrustedServersTable(ref, store, playerRef, player, plugin, state, config, trustedPeers, configuredDisplayNamesByAddress, innerWidth, tableHeight, scrollId + "-trusted-servers"));
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateManualConnectionsSetupCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        int width,
+        int height
+    ) {
+        int innerWidth = width - 32;
+        int half = (innerWidth - 12) / 2;
+
+        GroupBuilder card = card(width, height, PANEL_BG);
+        card.addChild(label("Manual Connections", TITLE, width - 32));
+        card.addChild(spacerY(8));
+        card.addChild(label("Protect this server from direct manual joins. Enable the guard, then select one trusted target server to redirect direct joins.", MUTED, width - 32));
+        card.addChild(spacerY(12));
+
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(96));
+        row.addChild(accessGateToggleField(ref, store, playerRef, player, plugin, state, "Redirect Direct Joins", config.redirectManualConnections(), half, 96, false, true));
+        row.addChild(spacerX(12));
+
+        GroupBuilder targetCard = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(half).setHeight(96))
+            .withPadding(HyUIPadding.all(14))
+            .withBackground(PANEL_ALT_BG);
+        targetCard.addChild(label("Current Redirect Target", SUBTITLE, half - 28));
+        targetCard.addChild(spacerY(8));
+        targetCard.addChild(label(config.manualRedirectAddress().isBlank() ? "Not set" : config.manualRedirectAddress(), MUTED, half - 28));
+        targetCard.addChild(spacerY(10));
+        targetCard.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("CLEAR TARGET")
+                .withAnchor(new HyUIAnchor().setWidth(Math.min(170, half - 28)).setHeight(36))
+                .withDisabled(config.manualRedirectAddress().isBlank())
+                .onClick((ignored, ctx) -> {
+                    try {
+                        saveAccessGateManualRedirectTarget(plugin, config, "");
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Cleared manual redirect target."));
+                    } catch (IOException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Could not clear manual redirect target: " + exception.getMessage()));
+                    }
+                })
+        );
+        row.addChild(targetCard);
+
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateTrustedServersTable(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        @Nonnull List<ConfiguredPeer> trustedPeers,
+        @Nonnull Map<String, String> configuredDisplayNamesByAddress,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int tableWidth = Math.max(560, width / 2);
+        int outerGap = 12;
+        int bodyViewportHeight = height - 64 - 12 - (outerGap * 2);
+        int bodyContentHeight = trustedPeers.isEmpty()
+            ? bodyViewportHeight
+            : 8 + trustedPeers.size() * HOME_SERVER_CARD_H + Math.max(0, trustedPeers.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+
+        GroupBuilder headerWrap = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(64))
+            .withPadding(HyUIPadding.symmetric(0, 0));
+        headerWrap.addChild(spacerX(Math.max(0, ((width - 32) - tableWidth) / 2)));
+
+        GroupBuilder header = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(tableWidth).setHeight(64))
+            .withPadding(HyUIPadding.symmetric(16, 0))
+            .withBackground(PANEL_ALT_BG);
+        int refreshWidth = 120;
+        int leftPadWidth = refreshWidth;
+        int titleWidth = Math.max(120, tableWidth - 32 - leftPadWidth - 12 - refreshWidth);
+        header.addChild(spacerX(leftPadWidth));
+        header.addChild(centeredLabel("Trusted Servers", TITLE, titleWidth, titleWidth, 8));
+        header.addChild(spacerX(12));
+        header.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("REFRESH")
+                .withAnchor(new HyUIAnchor().setWidth(120).setHeight(38))
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Refreshed trusted server list.")
+                ))
+        );
+        headerWrap.addChild(header);
+        container.addChild(headerWrap);
+        container.addChild(spacerY(12));
+
+        GroupBuilder bodyWrap = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(bodyViewportHeight));
+        bodyWrap.addChild(spacerX(Math.max(0, ((width - 32) - tableWidth) / 2)));
+
+        ReorderableListBuilder body = scrollList(tableWidth, bodyViewportHeight, Math.max(bodyViewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (trustedPeers.isEmpty()) {
+            body.addChild(label("No trusted servers in the active trust bundle yet.", MUTED, tableWidth - 16));
+        } else {
+            for (int index = 0; index < trustedPeers.size(); index++) {
+                ConfiguredPeer peer = trustedPeers.get(index);
+                String address = peer.connectionAddress();
+                String displayName = configuredDisplayNamesByAddress.getOrDefault(
+                    address.toLowerCase(Locale.ROOT),
+                    peer.displayName().isBlank() ? address : peer.displayName()
+                );
+                boolean selected = !config.manualRedirectAddress().isBlank()
+                    && config.manualRedirectAddress().equalsIgnoreCase(address);
+                body.addChild(accessGateTrustedServerRow(ref, store, playerRef, player, plugin, state, config, displayName, address, selected, tableWidth - 16, HOME_SERVER_CARD_H));
+                if (index + 1 < trustedPeers.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        bodyWrap.addChild(body);
+        container.addChild(bodyWrap);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateTrustedServerRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        @Nonnull String displayName,
+        @Nonnull String connectionAddress,
+        boolean selected,
+        int width,
+        int height
+    ) {
+        GroupBuilder row = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.all(12))
+            .withBackground(SERVER_CARD_BG);
+
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 180).setHeight(height - 24));
+        identity.addChild(label(displayName, SUBTITLE, width - 196));
+        identity.addChild(spacerY(6));
+        identity.addChild(label(connectionAddress, MUTED, width - 196));
+        row.addChild(identity);
+        row.addChild(spacerX(8));
+        row.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText(selected ? "SELECTED" : "SET TARGET")
+                .withAnchor(new HyUIAnchor().setWidth(160).setHeight(height - 24))
+                .withDisabled(selected)
+                .onClick((ignored, ctx) -> {
+                    try {
+                        saveAccessGateManualRedirectTarget(plugin, config, connectionAddress);
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Manual redirects now target " + displayName + "."));
+                    } catch (IOException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Could not set manual redirect target: " + exception.getMessage()));
+                    }
+                })
+        );
+        return row;
+    }
+
+    private static void saveAccessGateManualRedirectTarget(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        @Nonnull String redirectAddress
+    ) throws IOException {
+        plugin.getAccessGateService().saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            config.enabled(),
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            config.bypassReferralConnections(),
+            config.redirectManualConnections(),
+            redirectAddress,
+            config.bypassPlayerUuids()
+        ));
+    }
+
+    @Nonnull
     private static GroupBuilder accessGateToggleField(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
@@ -1127,6 +1379,37 @@ public final class NexoriMenuV2Page {
         int width,
         int height,
         boolean gateEnabledToggle
+    ) {
+        return accessGateToggleField(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state,
+            labelText,
+            enabled,
+            width,
+            height,
+            gateEnabledToggle,
+            false
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateToggleField(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull String labelText,
+        boolean enabled,
+        int width,
+        int height,
+        boolean gateEnabledToggle,
+        boolean manualRedirectToggle
     ) {
         GroupBuilder card = GroupBuilder.group()
             .withLayoutMode("Top")
@@ -1153,6 +1436,8 @@ public final class NexoriMenuV2Page {
                     try {
                         if (gateEnabledToggle) {
                             plugin.getAccessGateService().setEnabled(!enabled);
+                        } else if (manualRedirectToggle) {
+                            plugin.getAccessGateService().setRedirectManualConnections(!enabled);
                         } else {
                             plugin.getAccessGateService().setBypassReferralConnections(!enabled);
                         }
@@ -1192,7 +1477,11 @@ public final class NexoriMenuV2Page {
             .withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(64))
             .withPadding(HyUIPadding.symmetric(16, 0))
             .withBackground(PANEL_ALT_BG);
-        header.addChild(label("Connected Players", TITLE, width - 200));
+        int refreshWidth = 120;
+        int leftPadWidth = refreshWidth;
+        int titleWidth = Math.max(120, width - 32 - 32 - leftPadWidth - 12 - refreshWidth);
+        header.addChild(spacerX(leftPadWidth));
+        header.addChild(centeredLabel("Connected Players", TITLE, titleWidth, titleWidth, 8));
         header.addChild(spacerX(12));
         header.addChild(
             ButtonBuilder.secondaryTextButton()
@@ -1380,13 +1669,160 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder accessGateInputCard(
+    private static GroupBuilder accessGateMaxPlayersCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        int width,
+        int height
+    ) {
+        return accessGateSavableInputCard(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state,
+            "Max Players",
+            ACCESS_GATE_MAX_PLAYERS_INPUT_ID,
+            Integer.toString(config.maxPlayers()),
+            "80",
+            width,
+            height,
+            (value) -> {
+                Integer maxPlayers = parseInteger(value.trim());
+                if (maxPlayers == null || maxPlayers < 1) {
+                    return "Max Players must be a number greater than 0.";
+                }
+                if (config.reservedPrioritySlots() > maxPlayers) {
+                    return "Max Players cannot be lower than Reserved Priority Slots.";
+                }
+                plugin.getAccessGateService().saveConfig(new NexoriAccessGateConfigDocument(
+                    config.schemaVersion(),
+                    config.enabled(),
+                    maxPlayers,
+                    config.reservedPrioritySlots(),
+                    config.fullMessage(),
+                    config.bypassReferralConnections(),
+                    config.redirectManualConnections(),
+                    config.manualRedirectAddress(),
+                    config.bypassPlayerUuids()
+                ));
+                return "Saved Max Players.";
+            }
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateReservedSlotsCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        int width,
+        int height
+    ) {
+        return accessGateSavableInputCard(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state,
+            "Reserved Priority Slots",
+            ACCESS_GATE_RESERVED_SLOTS_INPUT_ID,
+            Integer.toString(config.reservedPrioritySlots()),
+            "0",
+            width,
+            height,
+            (value) -> {
+                Integer reservedSlots = parseInteger(value.trim());
+                if (reservedSlots == null || reservedSlots < 0) {
+                    return "Reserved Priority Slots must be a number of 0 or more.";
+                }
+                if (reservedSlots > config.maxPlayers()) {
+                    return "Reserved Priority Slots cannot be greater than Max Players.";
+                }
+                plugin.getAccessGateService().saveConfig(new NexoriAccessGateConfigDocument(
+                    config.schemaVersion(),
+                    config.enabled(),
+                    config.maxPlayers(),
+                    reservedSlots,
+                    config.fullMessage(),
+                    config.bypassReferralConnections(),
+                    config.redirectManualConnections(),
+                    config.manualRedirectAddress(),
+                    config.bypassPlayerUuids()
+                ));
+                return "Saved Reserved Priority Slots.";
+            }
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateFullMessageCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull NexoriAccessGateConfigDocument config,
+        int width,
+        int height
+    ) {
+        return accessGateSavableInputCard(
+            ref,
+            store,
+            playerRef,
+            player,
+            plugin,
+            state,
+            "Server Full Message",
+            ACCESS_GATE_FULL_MESSAGE_INPUT_ID,
+            config.fullMessage(),
+            "Server is full. Please try again later.",
+            width,
+            height,
+            (value) -> {
+                plugin.getAccessGateService().saveConfig(new NexoriAccessGateConfigDocument(
+                    config.schemaVersion(),
+                    config.enabled(),
+                    config.maxPlayers(),
+                    config.reservedPrioritySlots(),
+                    value.trim(),
+                    config.bypassReferralConnections(),
+                    config.redirectManualConnections(),
+                    config.manualRedirectAddress(),
+                    config.bypassPlayerUuids()
+                ));
+                return "Saved Server Full Message.";
+            }
+        );
+    }
+
+    @Nonnull
+    private static GroupBuilder accessGateSavableInputCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
         @Nonnull String labelText,
         @Nonnull String fieldId,
         @Nonnull String currentValue,
         @Nonnull String placeholder,
         int width,
-        int height
+        int height,
+        @Nonnull AccessGateInputSaveHandler handler
     ) {
         GroupBuilder card = GroupBuilder.group()
             .withLayoutMode("Top")
@@ -1395,16 +1831,40 @@ public final class NexoriMenuV2Page {
             .withBackground(PANEL_ALT_BG);
         card.addChild(label(labelText, SUBTITLE, width - 28));
         card.addChild(spacerY(10));
-        card.addChild(
+        int saveWidth = Math.min(120, width - 28);
+        int inputWidth = Math.max(160, (width - 28) - saveWidth - 10);
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(HOME_INPUT_FIELD_H));
+        row.addChild(
             TextFieldBuilder.textInput()
                 .withId(fieldId)
                 .withValue(currentValue)
                 .withPlaceholderText(placeholder)
                 .withMaxLength(255)
-                .withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(HOME_INPUT_FIELD_H))
+                .withAnchor(new HyUIAnchor().setWidth(inputWidth).setHeight(HOME_INPUT_FIELD_H))
                 .withBackground("#101926")
         );
+        row.addChild(spacerX(10));
+        row.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText("SAVE")
+                .withAnchor(new HyUIAnchor().setWidth(saveWidth).setHeight(HOME_INPUT_FIELD_H))
+                .onClick((ignored, ctx) -> {
+                    String value = ctx.getValue(fieldId, String.class).orElse(currentValue);
+                    try {
+                        String status = handler.save(value);
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText(status));
+                    } catch (IOException exception) {
+                        open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.ACCESS_GATE).withStatusText("Could not save Access Gate config: " + exception.getMessage()));
+                    }
+                })
+        );
+        card.addChild(row);
         return card;
+    }
+
+    @FunctionalInterface
+    private interface AccessGateInputSaveHandler {
+        @Nonnull String save(@Nonnull String value) throws IOException;
     }
 
     private record AccessGateConnectedPlayer(
@@ -7734,7 +8194,7 @@ public final class NexoriMenuV2Page {
             case TARGETS -> "Targets are now folded into the Portals travel bind workspace.";
             case RULES -> "";
             case QUEUES -> "Configure the lobby, reusable games, and the queues that launch into them.";
-            case ACCESS_GATE -> "Control server join caps, reserved slots, and bypass player access.";
+            case ACCESS_GATE -> "Control server join caps, reserved slots, and bypass player access for the server you are currently on. To configure another server, move to that server first and then open this view there.";
             case OPERATIONS -> "Live runtime, diagnostics, and recovery belong here.";
             case ABOUT -> "Detailed context for what Nexori does and how this workspace is organized.";
         };

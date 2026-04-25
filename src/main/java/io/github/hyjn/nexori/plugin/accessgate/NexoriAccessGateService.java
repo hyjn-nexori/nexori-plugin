@@ -6,6 +6,7 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
+import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 
 import javax.annotation.Nonnull;
@@ -73,6 +74,8 @@ public final class NexoriAccessGateService {
             config.reservedPrioritySlots(),
             config.fullMessage(),
             config.bypassReferralConnections(),
+            config.redirectManualConnections(),
+            config.manualRedirectAddress(),
             config.bypassPlayerUuids()
         ));
     }
@@ -86,6 +89,23 @@ public final class NexoriAccessGateService {
             config.reservedPrioritySlots(),
             config.fullMessage(),
             enabled,
+            config.redirectManualConnections(),
+            config.manualRedirectAddress(),
+            config.bypassPlayerUuids()
+        ));
+    }
+
+    @Nonnull
+    public synchronized NexoriAccessGateConfigDocument setRedirectManualConnections(boolean enabled) throws IOException {
+        return saveConfig(new NexoriAccessGateConfigDocument(
+            config.schemaVersion(),
+            config.enabled(),
+            config.maxPlayers(),
+            config.reservedPrioritySlots(),
+            config.fullMessage(),
+            config.bypassReferralConnections(),
+            enabled,
+            config.manualRedirectAddress(),
             config.bypassPlayerUuids()
         ));
     }
@@ -121,6 +141,8 @@ public final class NexoriAccessGateService {
             config.reservedPrioritySlots(),
             config.fullMessage(),
             config.bypassReferralConnections(),
+            config.redirectManualConnections(),
+            config.manualRedirectAddress(),
             List.copyOf(updatedPlayers)
         ));
     }
@@ -150,6 +172,8 @@ public final class NexoriAccessGateService {
             config.reservedPrioritySlots(),
             config.fullMessage(),
             config.bypassReferralConnections(),
+            config.redirectManualConnections(),
+            config.manualRedirectAddress(),
             List.copyOf(updatedPlayers)
         ));
     }
@@ -169,6 +193,28 @@ public final class NexoriAccessGateService {
         }
 
         NexoriAccessGateConfigDocument currentConfig = config;
+        if (currentConfig.redirectManualConnections() && !event.isReferralConnection()) {
+            if (currentConfig.manualRedirectAddress().isBlank()) {
+                deny(event, playerUuid, "This server only accepts Nexori travel/referral connections.");
+                logger.atWarning().log("NEXORI_ACCESS_GATE manual_redirect_enabled_but_missing_address player=" + event.getUsername());
+                return;
+            }
+            try {
+                ConfiguredPeer redirectPeer = ConfiguredPeer.parse(currentConfig.manualRedirectAddress());
+                event.referToServer(redirectPeer.host(), redirectPeer.port(), new byte[0]);
+                clearTracking(playerUuid);
+                logger.atInfo().log("NEXORI_ACCESS_GATE redirected_manual_join player=" + event.getUsername()
+                    + " redirect=" + redirectPeer.connectionAddress());
+                return;
+            } catch (Exception exception) {
+                deny(event, playerUuid, "This server only accepts Nexori travel/referral connections.");
+                logger.atWarning().withCause(exception).log(
+                    "NEXORI_ACCESS_GATE invalid_manual_redirect_address=" + currentConfig.manualRedirectAddress()
+                );
+                return;
+            }
+        }
+
         int occupancy = pendingSetupConnections.size() + connectedPlayers.size();
         int maxPlayers = Math.max(1, currentConfig.maxPlayers());
         int publicCap = Math.max(0, maxPlayers - currentConfig.reservedPrioritySlots());

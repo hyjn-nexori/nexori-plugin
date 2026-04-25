@@ -14,6 +14,8 @@ public record NexoriAccessGateConfigDocument(
     int reservedPrioritySlots,
     String fullMessage,
     boolean bypassReferralConnections,
+    boolean redirectManualConnections,
+    String manualRedirectAddress,
     List<NexoriAccessGateBypassPlayer> bypassPlayerUuids
 ) {
 
@@ -31,6 +33,8 @@ public record NexoriAccessGateConfigDocument(
             DEFAULT_RESERVED_PRIORITY_SLOTS,
             DEFAULT_FULL_MESSAGE,
             true,
+            false,
+            "",
             List.of()
         );
     }
@@ -40,6 +44,7 @@ public record NexoriAccessGateConfigDocument(
         int normalizedMaxPlayers = Math.max(1, maxPlayers);
         int normalizedReserved = Math.max(0, Math.min(reservedPrioritySlots, normalizedMaxPlayers));
         String normalizedMessage = normalizeRequired(fullMessage, DEFAULT_FULL_MESSAGE);
+        String normalizedRedirectAddress = normalizeOptional(manualRedirectAddress).toLowerCase(Locale.ROOT);
         return new NexoriAccessGateConfigDocument(
             CURRENT_SCHEMA_VERSION,
             enabled,
@@ -47,6 +52,8 @@ public record NexoriAccessGateConfigDocument(
             normalizedReserved,
             normalizedMessage,
             bypassReferralConnections,
+            redirectManualConnections,
+            normalizedRedirectAddress,
             normalizeBypassPlayers(bypassPlayerUuids)
         );
     }
@@ -68,6 +75,14 @@ public record NexoriAccessGateConfigDocument(
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? defaultValue : normalized;
+    }
+
+    @Nonnull
+    private static String normalizeOptional(String rawValue) {
+        if (rawValue == null) {
+            return "";
+        }
+        return rawValue.trim();
     }
 
     @Nonnull
