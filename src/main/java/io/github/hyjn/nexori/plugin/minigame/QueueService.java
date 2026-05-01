@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 
 import javax.annotation.Nonnull;
@@ -15,12 +16,15 @@ public final class QueueService {
 
     private final QueueStore store;
     private final ArenaService arenaService;
+    private final HytaleLogger logger;
     private final Map<String, QueueDefinition> queuesById = new LinkedHashMap<>();
 
-    public QueueService(@Nonnull QueueStore store, @Nonnull ArenaService arenaService) throws IOException {
+    public QueueService(@Nonnull QueueStore store, @Nonnull ArenaService arenaService, @Nonnull HytaleLogger logger) throws IOException {
         this.store = store;
         this.arenaService = arenaService;
+        this.logger = logger;
         for (QueueDefinition queue : store.loadOrCreate()) {
+            warnInvalidMatchmakingMode(queue);
             QueueDefinition normalized = queue.normalized();
             validate(normalized);
             queuesById.put(normalized.queueId(), normalized);
@@ -44,6 +48,7 @@ public final class QueueService {
 
     @Nonnull
     public synchronized QueueDefinition upsert(@Nonnull QueueDefinition definition) throws IOException {
+        warnInvalidMatchmakingMode(definition);
         QueueDefinition normalized = definition.normalized();
         validate(normalized);
         queuesById.put(normalized.queueId(), normalized);
@@ -80,5 +85,19 @@ public final class QueueService {
 
     private void persist() throws IOException {
         store.save(new ArrayList<>(queuesById.values()));
+    }
+
+    private void warnInvalidMatchmakingMode(@Nonnull QueueDefinition definition) {
+        if (!definition.hasInvalidMatchmakingMode()) {
+            return;
+        }
+        String queueId = definition.queueId() == null || definition.queueId().isBlank()
+            ? "<unknown>"
+            : definition.queueId().trim();
+        logger.atWarning().log(
+            "Queue '" + queueId + "' has invalid matchmakingMode '"
+                + definition.matchmakingMode()
+                + "'; falling back to LOCAL_FIFO."
+        );
     }
 }

@@ -16,6 +16,7 @@ public record QueueDefinition(
     int maxPlayers,
     int countdownSeconds,
     String launchTravelProfileId,
+    String matchmakingMode,
     boolean enabled
 ) {
 
@@ -25,6 +26,7 @@ public record QueueDefinition(
         String normalizedDisplayName = normalizeDisplayName(displayName, normalizedQueueId);
         List<String> normalizedArenaIds = normalizeIds(arenaIds);
         String normalizedTravelProfileId = TravelProfileType.KEEP_INVENTORY.id();
+        String normalizedMatchmakingMode = effectiveMatchmakingMode().id();
         return new QueueDefinition(
             normalizedQueueId,
             normalizedDisplayName,
@@ -33,8 +35,21 @@ public record QueueDefinition(
             maxPlayers,
             countdownSeconds,
             normalizedTravelProfileId,
+            normalizedMatchmakingMode,
             enabled
         );
+    }
+
+    @Nonnull
+    public QueueMatchmakingMode effectiveMatchmakingMode() {
+        return QueueMatchmakingMode.tryParse(matchmakingMode)
+            .orElse(QueueMatchmakingMode.defaultMode());
+    }
+
+    public boolean hasInvalidMatchmakingMode() {
+        return matchmakingMode != null
+            && !matchmakingMode.isBlank()
+            && QueueMatchmakingMode.tryParse(matchmakingMode).isEmpty();
     }
 
     @Nonnull

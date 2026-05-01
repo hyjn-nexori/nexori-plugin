@@ -16,9 +16,11 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -241,6 +243,9 @@ public final class QueueCoordinatorService {
      */
     public synchronized void advanceCountdowns(long nowEpochMs) {
         for (QueueDefinition queue : queueService.list()) {
+            if (queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN) {
+                continue;
+            }
             QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
             if (currentState.phase() != QueuePhase.COUNTDOWN) {
                 continue;
@@ -287,6 +292,9 @@ public final class QueueCoordinatorService {
     public synchronized void launchReadyBatches(long nowEpochMs) {
         for (QueueDefinition queue : queueService.list()) {
             if (!queue.enabled()) {
+                continue;
+            }
+            if (queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN) {
                 continue;
             }
 
@@ -353,79 +361,15 @@ public final class QueueCoordinatorService {
             ).normalized();
             stateByQueueId.put(queue.queueId(), readyState);
 
-            ConfiguredPeer destination;
-            try {
-                destination = ConfiguredPeer.parse(arena.get().destinationConnectionAddress());
-            } catch (IllegalArgumentException exception) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, exception.getMessage()));
+            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "");
+            if (dispatch.failedBeforeLaunch()) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, dispatch.errorMessage()));
                 continue;
             }
-
-            PreparedLaunch preparedLaunch;
-            try {
-                preparedLaunch = prepareLaunch(queue, arena.get(), liveReadyMembers, nowEpochMs);
-            } catch (IllegalStateException exception) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, exception.getMessage()));
-                continue;
+            for (LaunchCandidate candidate : dispatch.launched()) {
+                queueIdByPlayerUuid.remove(candidate.member().playerUuid());
             }
-            try {
-                matchSessionService.upsert(preparedLaunch.matchSessionState());
-            } catch (IOException exception) {
-                logger.atWarning().withCause(exception).log("Failed to persist Nexori match session before launch.");
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, "Failed to persist match session state before launch."));
-                continue;
-            }
-            List<LaunchCandidate> launched = new ArrayList<>();
-            String launchError = "";
-            // Launch order is preserved so each player can receive a stable placement index for the match.
-            for (int launchIndex = 0; launchIndex < launchCandidates.size(); launchIndex++) {
-                LaunchCandidate candidate = launchCandidates.get(launchIndex);
-                try {
-                    if (arena.get().usesInstanceTemplate()) {
-                        secureTravelService.travelToServer(
-                                candidate.playerRef(),
-                                destination,
-                                queue.launchTravelProfileId(),
-                                contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
-                        );
-                    } else {
-                        secureTravelService.travel(
-                                candidate.playerRef(),
-                                destination,
-                                arena.get().destinationTargetId(),
-                                "",
-                                queue.launchTravelProfileId(),
-                                contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
-                        );
-                    }
-                    launched.add(candidate);
-                } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
-                    launchError = exception.getMessage();
-                    logger.atWarning().withCause(exception).log(
-                        "Failed to launch Nexori queue "
-                            + queue.queueId()
-                            + " to arena "
-                            + arena.get().arenaId()
-                            + "."
-                    );
-                    break;
-                }
-            }
-
-            if (launchError.isBlank()) {
-                try {
-                    matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
-                        launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
-                        nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
-                        nowEpochMs,
-                        ""
-                    ));
-                } catch (IOException exception) {
-                    logger.atWarning().withCause(exception).log("Failed to finalize Nexori match handoff record after launch.");
-                }
-                for (LaunchCandidate candidate : launched) {
-                    queueIdByPlayerUuid.remove(candidate.member().playerUuid());
-                }
+            if (dispatch.succeeded()) {
                 QueueRuntimeState updated = new QueueRuntimeState(
                     readyState.queueId(),
                     QueuePhase.WAITING,
@@ -442,32 +386,8 @@ public final class QueueCoordinatorService {
                 continue;
             }
 
-            if (launched.isEmpty()) {
-                try {
-                    matchSessionService.remove(preparedLaunch.matchId());
-                } catch (IOException exception) {
-                    logger.atWarning().withCause(exception).log("Failed to remove unused Nexori match session after launch failure.");
-                }
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, launchError));
-                continue;
-            }
-
-            for (LaunchCandidate candidate : launched) {
-                queueIdByPlayerUuid.remove(candidate.member().playerUuid());
-            }
-            try {
-                matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
-                    launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
-                    nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
-                    nowEpochMs,
-                    launchError
-                ));
-            } catch (IOException exception) {
-                logger.atWarning().withCause(exception).log("Failed to finalize partial Nexori match handoff record after launch.");
-            }
-
             List<QueueMemberState> unlaunchedReady = new ArrayList<>();
-            for (int index = launched.size(); index < launchCandidates.size(); index++) {
+            for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
                 unlaunchedReady.add(launchCandidates.get(index).member());
             }
 
@@ -490,7 +410,147 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    public synchronized AssignmentLaunchResult launchBackendAssignment(
+        @Nonnull String assignmentId,
+        @Nonnull String externalMatchId,
+        @Nonnull String rawQueueId,
+        @Nonnull String rawArenaId,
+        @Nonnull List<UUID> playerUuids
+    ) {
+        long nowEpochMs = System.currentTimeMillis();
+        if (assignmentId == null || assignmentId.isBlank()) {
+            return AssignmentLaunchResult.rejected("", "Assignment id cannot be blank.");
+        }
+        if (playerUuids == null || playerUuids.isEmpty()) {
+            return AssignmentLaunchResult.rejected("", "Assignment must include at least one player.");
+        }
+        Set<UUID> uniquePlayerUuids = new LinkedHashSet<>(playerUuids);
+        if (uniquePlayerUuids.size() != playerUuids.size()) {
+            return AssignmentLaunchResult.rejected("", "Assignment includes duplicate players.");
+        }
+
+        QueueDefinition queue = queueService.find(rawQueueId).orElse(null);
+        if (queue == null) {
+            return AssignmentLaunchResult.rejected("", "Queue does not exist.");
+        }
+        if (!queue.enabled()) {
+            return AssignmentLaunchResult.rejected("", "Queue is disabled.");
+        }
+        if (queue.effectiveMatchmakingMode() != QueueMatchmakingMode.BACKEND_DRIVEN) {
+            return AssignmentLaunchResult.rejected("", "Queue is not BACKEND_DRIVEN.");
+        }
+
+        ArenaDefinition arena = arenaService.find(rawArenaId).orElse(null);
+        if (arena == null) {
+            return AssignmentLaunchResult.rejected("", "Arena does not exist.");
+        }
+        if (!arena.enabled()) {
+            return AssignmentLaunchResult.rejected("", "Arena is disabled.");
+        }
+        if (!queue.arenaIds().contains(arena.arenaId())) {
+            return AssignmentLaunchResult.rejected("", "Arena does not belong to the queue.");
+        }
+        if (playerUuids.size() > arena.maxSupportedPlayers()) {
+            return AssignmentLaunchResult.rejected("", "Assignment exceeds arena max supported players.");
+        }
+        try {
+            ConfiguredPeer.parse(arena.destinationConnectionAddress());
+        } catch (IllegalArgumentException exception) {
+            return AssignmentLaunchResult.rejected("", exception.getMessage());
+        }
+
+        QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
+        List<QueueMemberState> assignmentMembers = new ArrayList<>();
+        for (UUID playerUuid : playerUuids) {
+            if (playerUuid == null) {
+                return AssignmentLaunchResult.rejected("", "Assignment includes a null player UUID.");
+            }
+            String queuedQueueId = queueIdByPlayerUuid.get(playerUuid);
+            if (!queue.queueId().equals(queuedQueueId)) {
+                return AssignmentLaunchResult.rejected("", "Player " + playerUuid + " is not in queue " + queue.queueId() + ".");
+            }
+            PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+            if (playerRef == null || !playerRef.isValid()) {
+                return AssignmentLaunchResult.rejected("", "Player " + playerUuid + " is not online.");
+            }
+            QueueMemberState member = findMember(currentState, playerUuid).orElse(null);
+            if (member == null) {
+                return AssignmentLaunchResult.rejected("", "Player " + playerUuid + " is missing from queue runtime state.");
+            }
+            assignmentMembers.add(member);
+        }
+
+        QueueRuntimeState launchingState = new QueueRuntimeState(
+            currentState.queueId(),
+            QueuePhase.READY,
+            removePlayers(currentState.waitingMembers(), playerUuids),
+            List.copyOf(assignmentMembers),
+            0L,
+            nowEpochMs,
+            nowEpochMs,
+            nowEpochMs,
+            ""
+        ).normalized();
+        stateByQueueId.put(queue.queueId(), launchingState);
+
+        List<LaunchCandidate> launchCandidates = new ArrayList<>();
+        for (QueueMemberState member : assignmentMembers) {
+            PlayerRef playerRef = Universe.get().getPlayer(member.playerUuid());
+            if (playerRef == null || !playerRef.isValid()) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(launchingState, nowEpochMs, "Assigned player went offline before launch."));
+                return AssignmentLaunchResult.rejected("", "Assigned player went offline before launch.");
+            }
+            launchCandidates.add(new LaunchCandidate(member, playerRef));
+        }
+
+        DispatchLaunchResult dispatch = dispatchLaunch(queue, arena, launchCandidates, nowEpochMs, externalMatchId);
+        for (LaunchCandidate candidate : dispatch.launched()) {
+            queueIdByPlayerUuid.remove(candidate.member().playerUuid());
+        }
+
+        List<QueueMemberState> unlaunchedReady = new ArrayList<>();
+        for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
+            unlaunchedReady.add(launchCandidates.get(index).member());
+        }
+        List<QueueMemberState> mergedWaiting = new ArrayList<>(launchingState.waitingMembers());
+        mergedWaiting.addAll(unlaunchedReady);
+        QueueRuntimeState updated = new QueueRuntimeState(
+            queue.queueId(),
+            QueuePhase.WAITING,
+            List.copyOf(mergedWaiting),
+            List.of(),
+            0L,
+            0L,
+            nowEpochMs,
+            0L,
+            dispatch.succeeded() ? "" : dispatch.errorMessage()
+        ).normalized();
+        stateByQueueId.put(queue.queueId(), updated);
+
+        if (dispatch.succeeded()) {
+            return AssignmentLaunchResult.launched(dispatch.matchId());
+        }
+        if (dispatch.launched().isEmpty()) {
+            return AssignmentLaunchResult.failed(dispatch.matchId(), dispatch.errorMessage());
+        }
+        return AssignmentLaunchResult.failed(dispatch.matchId(), "Partial launch: " + dispatch.errorMessage());
+    }
+
+    @Nonnull
     private QueueRuntimeState maybeStartCountdown(@Nonnull QueueRuntimeState state, @Nonnull QueueDefinition queue, long nowEpochMs) {
+        if (queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN) {
+            return new QueueRuntimeState(
+                state.queueId(),
+                QueuePhase.WAITING,
+                state.waitingMembers(),
+                state.readyMembers(),
+                0L,
+                state.readyAtEpochMs(),
+                nowEpochMs,
+                state.lastLaunchAttemptAtEpochMs(),
+                state.lastLaunchError()
+            ).normalized();
+        }
         if (state.phase() == QueuePhase.READY || state.hasReadyBatch()) {
             return state;
         }
@@ -559,11 +619,119 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    private DispatchLaunchResult dispatchLaunch(
+        @Nonnull QueueDefinition queue,
+        @Nonnull ArenaDefinition arena,
+        @Nonnull List<LaunchCandidate> launchCandidates,
+        long nowEpochMs,
+        @Nonnull String externalMatchId
+    ) {
+        List<QueueMemberState> readyMembers = launchCandidates.stream()
+            .map(LaunchCandidate::member)
+            .toList();
+
+        ConfiguredPeer destination;
+        try {
+            destination = ConfiguredPeer.parse(arena.destinationConnectionAddress());
+        } catch (IllegalArgumentException exception) {
+            return DispatchLaunchResult.failedBeforeLaunch("", exception.getMessage());
+        }
+
+        PreparedLaunch preparedLaunch;
+        try {
+            preparedLaunch = prepareLaunch(queue, arena, readyMembers, nowEpochMs, externalMatchId);
+        } catch (IllegalStateException exception) {
+            return DispatchLaunchResult.failedBeforeLaunch("", exception.getMessage());
+        }
+        try {
+            matchSessionService.upsert(preparedLaunch.matchSessionState());
+        } catch (IOException exception) {
+            logger.atWarning().withCause(exception).log("Failed to persist Nexori match session before launch.");
+            return DispatchLaunchResult.failedBeforeLaunch(
+                preparedLaunch.matchId(),
+                "Failed to persist match session state before launch."
+            );
+        }
+
+        List<LaunchCandidate> launched = new ArrayList<>();
+        String launchError = "";
+        for (int launchIndex = 0; launchIndex < launchCandidates.size(); launchIndex++) {
+            LaunchCandidate candidate = launchCandidates.get(launchIndex);
+            try {
+                if (arena.usesInstanceTemplate()) {
+                    secureTravelService.travelToServer(
+                        candidate.playerRef(),
+                        destination,
+                        queue.launchTravelProfileId(),
+                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                    );
+                } else {
+                    secureTravelService.travel(
+                        candidate.playerRef(),
+                        destination,
+                        arena.destinationTargetId(),
+                        "",
+                        queue.launchTravelProfileId(),
+                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                    );
+                }
+                launched.add(candidate);
+            } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+                launchError = exception.getMessage();
+                logger.atWarning().withCause(exception).log(
+                    "Failed to launch Nexori queue "
+                        + queue.queueId()
+                        + " to arena "
+                        + arena.arenaId()
+                        + "."
+                );
+                break;
+            }
+        }
+
+        if (launchError.isBlank()) {
+            try {
+                matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
+                    launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                    nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
+                    nowEpochMs,
+                    ""
+                ));
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to finalize Nexori match handoff record after launch.");
+            }
+            return DispatchLaunchResult.succeeded(preparedLaunch.matchId(), launched);
+        }
+
+        if (launched.isEmpty()) {
+            try {
+                matchSessionService.remove(preparedLaunch.matchId());
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to remove unused Nexori match session after launch failure.");
+            }
+            return DispatchLaunchResult.failedBeforeLaunch(preparedLaunch.matchId(), launchError);
+        }
+
+        try {
+            matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
+                launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
+                nowEpochMs,
+                launchError
+            ));
+        } catch (IOException exception) {
+            logger.atWarning().withCause(exception).log("Failed to finalize partial Nexori match handoff record after launch.");
+        }
+        return DispatchLaunchResult.partial(preparedLaunch.matchId(), launched, launchError);
+    }
+
+    @Nonnull
     private PreparedLaunch prepareLaunch(
         @Nonnull QueueDefinition queue,
         @Nonnull ArenaDefinition arena,
         @Nonnull List<QueueMemberState> readyMembers,
-        long nowEpochMs
+        long nowEpochMs,
+        @Nonnull String externalMatchId
     ) {
         if (readyMembers.isEmpty()) {
             throw new IllegalStateException("Cannot build a launch context for an empty ready batch.");
@@ -591,6 +759,9 @@ public final class QueueCoordinatorService {
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
         root.addProperty("launchedAtEpochMs", nowEpochMs);
+        if (externalMatchId != null && !externalMatchId.isBlank()) {
+            root.addProperty("externalMatchId", externalMatchId);
+        }
         if (arena.usesInstanceTemplate()) {
             root.addProperty("serverEntryMode", "default_world_natural_spawn");
         }
@@ -626,6 +797,21 @@ public final class QueueCoordinatorService {
     @Nonnull
     private QueueRuntimeState state(@Nonnull String queueId, long nowEpochMs) {
         return stateByQueueId.computeIfAbsent(QueueDefinition.normalizeId(queueId), ignored -> QueueRuntimeState.empty(queueId, nowEpochMs));
+    }
+
+    @Nonnull
+    private Optional<QueueMemberState> findMember(@Nonnull QueueRuntimeState state, @Nonnull UUID playerUuid) {
+        for (QueueMemberState member : state.waitingMembers()) {
+            if (member.playerUuid().equals(playerUuid)) {
+                return Optional.of(member);
+            }
+        }
+        for (QueueMemberState member : state.readyMembers()) {
+            if (member.playerUuid().equals(playerUuid)) {
+                return Optional.of(member);
+            }
+        }
+        return Optional.empty();
     }
 
     @Nonnull
@@ -699,6 +885,17 @@ public final class QueueCoordinatorService {
         return List.copyOf(filtered);
     }
 
+    @Nonnull
+    private static List<QueueMemberState> removePlayers(@Nonnull List<QueueMemberState> members, @Nonnull List<UUID> playerUuids) {
+        List<QueueMemberState> filtered = new ArrayList<>();
+        for (QueueMemberState member : members) {
+            if (!playerUuids.contains(member.playerUuid())) {
+                filtered.add(member);
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
     private record LaunchCandidate(
         QueueMemberState member,
         PlayerRef playerRef
@@ -710,6 +907,70 @@ public final class QueueCoordinatorService {
         String contextJson,
         MatchSessionState matchSessionState
     ) {
+    }
+
+    private record DispatchLaunchResult(
+        String matchId,
+        List<LaunchCandidate> launched,
+        String errorMessage,
+        boolean failedBeforeLaunch
+    ) {
+
+        @Nonnull
+        private static DispatchLaunchResult succeeded(@Nonnull String matchId, @Nonnull List<LaunchCandidate> launched) {
+            return new DispatchLaunchResult(matchId, List.copyOf(launched), "", false);
+        }
+
+        @Nonnull
+        private static DispatchLaunchResult partial(
+            @Nonnull String matchId,
+            @Nonnull List<LaunchCandidate> launched,
+            @Nonnull String errorMessage
+        ) {
+            return new DispatchLaunchResult(matchId, List.copyOf(launched), normalizeError(errorMessage), false);
+        }
+
+        @Nonnull
+        private static DispatchLaunchResult failedBeforeLaunch(@Nonnull String matchId, @Nonnull String errorMessage) {
+            return new DispatchLaunchResult(matchId, List.of(), normalizeError(errorMessage), true);
+        }
+
+        private boolean succeeded() {
+            return !failedBeforeLaunch && errorMessage.isBlank();
+        }
+    }
+
+    public enum AssignmentLaunchOutcome {
+        LAUNCHED,
+        REJECTED,
+        FAILED
+    }
+
+    public record AssignmentLaunchResult(
+        AssignmentLaunchOutcome outcome,
+        String localMatchId,
+        String reason
+    ) {
+
+        @Nonnull
+        public static AssignmentLaunchResult launched(@Nonnull String localMatchId) {
+            return new AssignmentLaunchResult(AssignmentLaunchOutcome.LAUNCHED, localMatchId, "");
+        }
+
+        @Nonnull
+        public static AssignmentLaunchResult rejected(@Nonnull String localMatchId, @Nonnull String reason) {
+            return new AssignmentLaunchResult(AssignmentLaunchOutcome.REJECTED, localMatchId, normalizeError(reason));
+        }
+
+        @Nonnull
+        public static AssignmentLaunchResult failed(@Nonnull String localMatchId, @Nonnull String reason) {
+            return new AssignmentLaunchResult(AssignmentLaunchOutcome.FAILED, localMatchId, normalizeError(reason));
+        }
+    }
+
+    @Nonnull
+    private static String normalizeError(String rawError) {
+        return rawError == null || rawError.isBlank() ? "Unknown queue launch failure." : rawError.trim();
     }
 
     private record RemovedPlayerResult(

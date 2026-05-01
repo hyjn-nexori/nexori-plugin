@@ -7943,6 +7943,7 @@ public final class NexoriMenuV2Page {
                             maxPlayers,
                             countdown,
                             DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID,
+                            io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode.defaultMode().id(),
                             true
                         ));
                         open(ref, store, playerRef, player, plugin, state.clearedQueueDraft().withStatusText("Saved queue " + saved.displayName() + "."));

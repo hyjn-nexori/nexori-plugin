@@ -9,6 +9,7 @@ import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
 import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
+import io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 
@@ -28,6 +29,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
     private final RequiredArg<Integer> countdownSecondsArg;
     private final RequiredArg<String> launchTravelProfileArg;
     private final OptionalArg<String> displayNameArg;
+    private final OptionalArg<String> matchmakingModeArg;
 
     public NexoriQueueUpsertCommand(@Nonnull NexoriPlugin plugin, @Nonnull QueueService queueService) {
         super("nexoriqueueupsert", "Creates or updates a persisted Nexori queue definition.");
@@ -40,6 +42,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
         this.countdownSecondsArg = withRequiredArg("countdownSeconds", "Countdown seconds.", ArgTypes.INTEGER);
         this.launchTravelProfileArg = withRequiredArg("launchTravelProfile", "Launch travel profile.", ArgTypes.STRING);
         this.displayNameArg = withOptionalArg("displayName", "Optional display name.", ArgTypes.STRING);
+        this.matchmakingModeArg = withOptionalArg("matchmakingMode", "Optional matchmaking mode: LOCAL_FIFO or BACKEND_DRIVEN.", ArgTypes.STRING);
         setPermissionGroups("OP");
     }
 
@@ -53,6 +56,10 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
             String queueId = context.get(queueIdArg);
             String displayName = context.provided(displayNameArg) ? context.get(displayNameArg) : queueId;
             String travelProfileId = TravelProfileType.parse(context.get(launchTravelProfileArg)).id();
+            QueueMatchmakingMode matchmakingMode = context.provided(matchmakingModeArg)
+                ? QueueMatchmakingMode.tryParse(context.get(matchmakingModeArg))
+                    .orElseThrow(() -> new IllegalArgumentException("Use LOCAL_FIFO or BACKEND_DRIVEN for matchmakingMode."))
+                : QueueMatchmakingMode.defaultMode();
             List<String> arenaIds = Arrays.stream(context.get(arenaIdsArg).split(","))
                 .map(String::trim)
                 .filter(value -> !value.isBlank())
@@ -66,6 +73,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
                 context.get(maxPlayersArg),
                 context.get(countdownSecondsArg),
                 travelProfileId,
+                matchmakingMode.id(),
                 true
             ));
             context.sendMessage(Message.raw(
@@ -75,6 +83,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
                     + " max=" + saved.maxPlayers()
                     + " countdown=" + saved.countdownSeconds()
                     + " profile=" + saved.launchTravelProfileId()
+                    + " matchmakingMode=" + saved.effectiveMatchmakingMode().id()
                     + "."
             ));
         } catch (IOException | IllegalArgumentException exception) {
