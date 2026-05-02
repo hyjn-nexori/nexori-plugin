@@ -19,6 +19,9 @@ public record ArenaActiveMatch(
     String instanceTemplateId,
     String instanceWorldName,
     String matchResolutionTriggerId,
+    String assignmentId,
+    String externalMatchId,
+    List<UUID> expectedPlayerUuids,
     int expectedPlayerCount,
     List<UUID> arrivedPlayerUuids,
     List<UUID> activePlayerUuids,
@@ -44,6 +47,9 @@ public record ArenaActiveMatch(
             normalizeInstanceTemplateId(instanceTemplateId),
             normalizeOptional(instanceWorldName),
             normalizeOptional(matchResolutionTriggerId),
+            normalizeOptional(assignmentId),
+            normalizeOptional(externalMatchId),
+            normalizePlayers(expectedPlayerUuids),
             Math.max(expectedPlayerCount, 0),
             normalizePlayers(arrivedPlayerUuids),
             normalizePlayers(activePlayerUuids),
@@ -73,6 +79,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             List.copyOf(arrived),
             List.copyOf(active),
@@ -98,6 +107,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             rawInstanceWorldName,
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -127,6 +139,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -154,6 +169,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -181,6 +199,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -207,6 +228,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             normalizedExpected,
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -232,6 +256,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             activePlayerUuids(),
@@ -267,6 +294,9 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
             expectedPlayerCount(),
             arrivedPlayerUuids(),
             List.copyOf(active),
@@ -281,6 +311,14 @@ public record ArenaActiveMatch(
 
     public boolean hasPlayer(@Nonnull UUID playerUuid) {
         return activePlayerUuids().contains(playerUuid);
+    }
+
+    public boolean hasExpectedPlayerList() {
+        return !expectedPlayerUuids().isEmpty();
+    }
+
+    public boolean expectsPlayer(@Nonnull UUID playerUuid) {
+        return !hasExpectedPlayerList() || expectedPlayerUuids().contains(playerUuid);
     }
 
     public boolean isPlayerEliminated(@Nonnull UUID playerUuid) {

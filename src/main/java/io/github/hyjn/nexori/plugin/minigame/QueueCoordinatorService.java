@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
@@ -361,7 +362,7 @@ public final class QueueCoordinatorService {
             ).normalized();
             stateByQueueId.put(queue.queueId(), readyState);
 
-            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "");
+            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "", "");
             if (dispatch.failedBeforeLaunch()) {
                 stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, dispatch.errorMessage()));
                 continue;
@@ -503,7 +504,7 @@ public final class QueueCoordinatorService {
             launchCandidates.add(new LaunchCandidate(member, playerRef));
         }
 
-        DispatchLaunchResult dispatch = dispatchLaunch(queue, arena, launchCandidates, nowEpochMs, externalMatchId);
+        DispatchLaunchResult dispatch = dispatchLaunch(queue, arena, launchCandidates, nowEpochMs, assignmentId, externalMatchId);
         for (LaunchCandidate candidate : dispatch.launched()) {
             queueIdByPlayerUuid.remove(candidate.member().playerUuid());
         }
@@ -624,6 +625,7 @@ public final class QueueCoordinatorService {
         @Nonnull ArenaDefinition arena,
         @Nonnull List<LaunchCandidate> launchCandidates,
         long nowEpochMs,
+        @Nonnull String assignmentId,
         @Nonnull String externalMatchId
     ) {
         List<QueueMemberState> readyMembers = launchCandidates.stream()
@@ -639,7 +641,7 @@ public final class QueueCoordinatorService {
 
         PreparedLaunch preparedLaunch;
         try {
-            preparedLaunch = prepareLaunch(queue, arena, readyMembers, nowEpochMs, externalMatchId);
+            preparedLaunch = prepareLaunch(queue, arena, readyMembers, nowEpochMs, assignmentId, externalMatchId);
         } catch (IllegalStateException exception) {
             return DispatchLaunchResult.failedBeforeLaunch("", exception.getMessage());
         }
@@ -731,6 +733,7 @@ public final class QueueCoordinatorService {
         @Nonnull ArenaDefinition arena,
         @Nonnull List<QueueMemberState> readyMembers,
         long nowEpochMs,
+        @Nonnull String assignmentId,
         @Nonnull String externalMatchId
     ) {
         if (readyMembers.isEmpty()) {
@@ -758,7 +761,15 @@ public final class QueueCoordinatorService {
         root.addProperty("instanceTemplateId", arena.instanceTemplateId());
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
+        JsonArray expectedPlayerUuids = new JsonArray();
+        for (QueueMemberState member : readyMembers) {
+            expectedPlayerUuids.add(member.playerUuid().toString());
+        }
+        root.add("expectedPlayerUuids", expectedPlayerUuids);
         root.addProperty("launchedAtEpochMs", nowEpochMs);
+        if (assignmentId != null && !assignmentId.isBlank()) {
+            root.addProperty("assignmentId", assignmentId);
+        }
         if (externalMatchId != null && !externalMatchId.isBlank()) {
             root.addProperty("externalMatchId", externalMatchId);
         }

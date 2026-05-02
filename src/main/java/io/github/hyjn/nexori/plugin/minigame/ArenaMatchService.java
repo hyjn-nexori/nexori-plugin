@@ -1,6 +1,8 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -462,9 +464,34 @@ public final class ArenaMatchService {
     }
 
     private void handleLaunchArrival(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
-        LaunchContext launch = LaunchContext.from(context);
+        LaunchContext launch;
+        try {
+            launch = LaunchContext.from(context);
+        } catch (IllegalArgumentException exception) {
+            logger.atWarning().withCause(exception).log(
+                "Rejected Nexori minigame launch arrival for player "
+                    + playerRef.getUuid()
+                    + ": invalid launch context."
+            );
+            return;
+        }
         long now = System.currentTimeMillis();
         ArenaActiveMatch existing = matchesById.get(launch.matchId());
+        if (!launch.expectedPlayerUuids().isEmpty() && !launch.expectedPlayerUuids().contains(playerRef.getUuid())) {
+            logRejectedLaunchArrival(playerRef.getUuid(), launch.matchId(), "player is not in expectedPlayerUuids");
+            return;
+        }
+        if (existing != null) {
+            Optional<String> inconsistency = findLaunchContextInconsistency(existing, launch);
+            if (inconsistency.isPresent()) {
+                logRejectedLaunchArrival(playerRef.getUuid(), launch.matchId(), inconsistency.get());
+                return;
+            }
+            if (!existing.expectsPlayer(playerRef.getUuid())) {
+                logRejectedLaunchArrival(playerRef.getUuid(), launch.matchId(), "player is not in stored expectedPlayerUuids");
+                return;
+            }
+        }
         String instanceWorldName = launch.usesInstanceTemplate()
             ? ArenaInstanceRuntime.buildInstanceWorldName(launch.matchId())
             : "";
@@ -480,6 +507,9 @@ public final class ArenaMatchService {
                 launch.instanceTemplateId(),
                 instanceWorldName,
                 launch.matchResolutionTriggerId(),
+                launch.assignmentId(),
+                launch.externalMatchId(),
+                launch.expectedPlayerUuids(),
                 launch.expectedPlayerCount(),
                 List.of(playerRef.getUuid()),
                 List.of(playerRef.getUuid()),
@@ -512,6 +542,43 @@ public final class ArenaMatchService {
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
         ));
+    }
+
+    @Nonnull
+    private Optional<String> findLaunchContextInconsistency(
+        @Nonnull ArenaActiveMatch existing,
+        @Nonnull LaunchContext launch
+    ) {
+        if (!existing.queueId().equals(launch.queueId())) {
+            return Optional.of("queueId mismatch");
+        }
+        if (!existing.arenaId().equals(launch.arenaId())) {
+            return Optional.of("arenaId mismatch");
+        }
+        if (optionalIdentityMismatch(existing.externalMatchId(), launch.externalMatchId())) {
+            return Optional.of("externalMatchId mismatch");
+        }
+        if (optionalIdentityMismatch(existing.assignmentId(), launch.assignmentId())) {
+            return Optional.of("assignmentId mismatch");
+        }
+        if (!existing.expectedPlayerUuids().isEmpty()
+            && !launch.expectedPlayerUuids().isEmpty()
+            && !samePlayers(existing.expectedPlayerUuids(), launch.expectedPlayerUuids())) {
+            return Optional.of("expectedPlayerUuids mismatch");
+        }
+        return Optional.empty();
+    }
+
+    private void logRejectedLaunchArrival(@Nonnull UUID playerUuid, @Nonnull String matchId, @Nonnull String reason) {
+        logger.atWarning().log(
+            "Rejected Nexori minigame launch arrival for player "
+                + playerUuid
+                + ": inconsistent launch context for match "
+                + matchId
+                + ". "
+                + reason
+                + "."
+        );
     }
 
     private void rememberPendingInstanceSpawnTeleport(
@@ -924,6 +991,12 @@ public final class ArenaMatchService {
         root.addProperty("queueId", match.queueId());
         root.addProperty("originLobbyId", match.originLobbyId());
         root.addProperty("sourceArenaId", match.arenaId());
+        if (!match.assignmentId().isBlank()) {
+            root.addProperty("assignmentId", match.assignmentId());
+        }
+        if (!match.externalMatchId().isBlank()) {
+            root.addProperty("externalMatchId", match.externalMatchId());
+        }
         root.addProperty("returnReason", returnReason);
         root.addProperty("returnedAtEpochMs", nowEpochMs);
         return GSON.toJson(root);
@@ -947,6 +1020,46 @@ public final class ArenaMatchService {
             throw new IllegalArgumentException("Missing required minigame context field '" + key + "'.");
         }
         return normalizeRequired(root.get(key).getAsString(), "Minigame context field '" + key + "' cannot be blank.");
+    }
+
+    @Nonnull
+    private static List<UUID> readExpectedPlayerUuids(@Nonnull JsonObject root) {
+        if (!root.has("expectedPlayerUuids")) {
+            return List.of();
+        }
+        if (!root.get("expectedPlayerUuids").isJsonArray()) {
+            throw new IllegalArgumentException("Minigame context field 'expectedPlayerUuids' must be an array.");
+        }
+        JsonArray array = root.getAsJsonArray("expectedPlayerUuids");
+        List<UUID> playerUuids = new ArrayList<>();
+        for (JsonElement element : array) {
+            if (element == null || element.isJsonNull()) {
+                continue;
+            }
+            String rawUuid = normalizeOptional(element.getAsString(), "");
+            if (rawUuid.isBlank()) {
+                continue;
+            }
+            try {
+                playerUuids.add(UUID.fromString(rawUuid));
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException("Minigame context field 'expectedPlayerUuids' contains invalid UUID '" + rawUuid + "'.", exception);
+            }
+        }
+        return List.copyOf(playerUuids);
+    }
+
+    private static boolean optionalIdentityMismatch(String left, String right) {
+        String normalizedLeft = normalizeOptional(left, "");
+        String normalizedRight = normalizeOptional(right, "");
+        if (normalizedLeft.isBlank() && normalizedRight.isBlank()) {
+            return false;
+        }
+        return !normalizedLeft.equals(normalizedRight);
+    }
+
+    private static boolean samePlayers(@Nonnull List<UUID> left, @Nonnull List<UUID> right) {
+        return new HashSet<>(left).equals(new HashSet<>(right));
     }
 
     @Nonnull
@@ -1019,6 +1132,9 @@ public final class ArenaMatchService {
         String launchTravelProfileId,
         String instanceTemplateId,
         String matchResolutionTriggerId,
+        String assignmentId,
+        String externalMatchId,
+        List<UUID> expectedPlayerUuids,
         int expectedPlayerCount
     ) {
 
@@ -1043,6 +1159,13 @@ public final class ArenaMatchService {
                 root.has("matchResolutionTriggerId")
                     ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
                     : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
+                root.has("assignmentId")
+                    ? normalizeOptional(root.get("assignmentId").getAsString(), "")
+                    : "",
+                root.has("externalMatchId")
+                    ? normalizeOptional(root.get("externalMatchId").getAsString(), "")
+                    : "",
+                readExpectedPlayerUuids(root),
                 root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0
             );
         }
