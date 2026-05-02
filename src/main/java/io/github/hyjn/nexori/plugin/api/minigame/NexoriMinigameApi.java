@@ -35,6 +35,18 @@ public interface NexoriMinigameApi {
     );
 
     /**
+     * Returns the complete player set a rules mod must include when submitting a match result.
+     */
+    @Nonnull
+    Optional<NexoriMatchResultRequirements> findMatchResultRequirements(@Nonnull String matchId);
+
+    /**
+     * Completes one match locally and optionally queues a backend result report when configured.
+     */
+    @Nonnull
+    NexoriSubmitMatchResultResult submitMatchResult(@Nonnull NexoriSubmitMatchResultRequest request);
+
+    /**
      * Returns the state of Nexori's initial player placement phase for one active match.
      */
     @Nonnull

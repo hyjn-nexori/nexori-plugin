@@ -45,6 +45,7 @@ import io.github.hyjn.nexori.plugin.binding.TriggerBindingKind;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateConfigDocument;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateBypassPlayer;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfig;
+import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
 import io.github.hyjn.nexori.plugin.backend.BackendSyncService;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
@@ -8489,13 +8490,18 @@ public final class NexoriMenuV2Page {
             .withPadding(HyUIPadding.all(14))
             .withBackground(PANEL_ALT_BG);
 
-        String health = plugin.getBackendSyncService().healthState().status();
-        String message = plugin.getBackendSyncService().healthState().lastMessage();
-        String healthLine = config.enabled()
-            ? "Health: " + health + (message.isBlank() ? "" : " - " + message)
-            : "Health: DISABLED - no heartbeat will be sent until Backend Sync is enabled.";
+        String syncHealth = plugin.getBackendSyncService().healthState().status();
+        String syncMessage = plugin.getBackendSyncService().healthState().lastMessage();
+        String resultHealth = plugin.getBackendResultReportingService().healthState().status();
+        String resultMessage = plugin.getBackendResultReportingService().healthState().lastMessage();
+        String syncLine = config.enabled()
+            ? "Sync: " + syncHealth + (syncMessage.isBlank() ? "" : " - " + syncMessage)
+            : "Sync: DISABLED";
+        String resultLine = config.resultReportingEnabled()
+            ? "Results: " + resultHealth + (resultMessage.isBlank() ? "" : " - " + resultMessage)
+            : "Results: DISABLED";
 
-        terminal.addChild(label("Sync Terminal", SUBTITLE, width - 28));
+        terminal.addChild(label("Backend Terminal", SUBTITLE, width - 28));
         terminal.addChild(spacerY(6));
 
         int headerWidth = width - 28;
@@ -8504,7 +8510,7 @@ public final class NexoriMenuV2Page {
         int refreshButtonRightInsetPx = 40;
         int healthLabelWidth = Math.max(220, headerWidth - refreshButtonWidth - refreshButtonGapPx - refreshButtonRightInsetPx);
         GroupBuilder header = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(headerWidth).setHeight(34));
-        header.addChild(label(healthLine + " Newest first.", MUTED, healthLabelWidth));
+        header.addChild(label(syncLine + " | " + resultLine + " | Newest first.", MUTED, healthLabelWidth));
         header.addChild(spacerX(refreshButtonGapPx));
         header.addChild(
             ButtonBuilder.smallSecondaryTextButton()
@@ -8519,7 +8525,7 @@ public final class NexoriMenuV2Page {
                         ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(config.region()).trim(),
                         ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(Long.toString(config.requestTimeoutMs())).trim()
                     ));
-                    open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Refreshed backend sync terminal."));
+                    open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Refreshed backend terminal."));
                 })
         );
         terminal.addChild(header);
@@ -8527,17 +8533,17 @@ public final class NexoriMenuV2Page {
 
         int bodyWidth = width - 28;
         int bodyHeight = Math.max(96, height - 86);
-        List<BackendSyncService.BackendSyncLogEntry> entries = plugin.getBackendSyncService().recentSyncLogEntries();
+        List<BackendTerminalEntry> entries = backendTerminalEntries(plugin);
         int rowHeight = 50;
         int bodyContentHeight = entries.isEmpty() ? bodyHeight : 8 + entries.size() * (rowHeight + 6) + 8;
         ReorderableListBuilder body = scrollList(bodyWidth, bodyHeight, Math.max(bodyHeight, bodyContentHeight), scrollId, true);
         body.addChild(spacerY(8));
         if (entries.isEmpty()) {
-            body.addChild(label("No sync requests recorded yet. Once enabled, completed POST /nexori/sync attempts will appear here.", MUTED, bodyWidth - 16));
+            body.addChild(label("No backend requests recorded yet. Completed POST /nexori/sync and POST /nexori/results attempts will appear here.", MUTED, bodyWidth - 16));
         } else {
             int index = 0;
-            for (BackendSyncService.BackendSyncLogEntry entry : entries) {
-                body.addChild(backendSyncTerminalRow(entry, index, bodyWidth - 16, rowHeight));
+            for (BackendTerminalEntry entry : entries) {
+                body.addChild(backendTerminalRow(entry, index, bodyWidth - 16, rowHeight));
                 body.addChild(spacerY(6));
                 index++;
             }
@@ -8547,8 +8553,51 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder backendSyncTerminalRow(
-        @Nonnull BackendSyncService.BackendSyncLogEntry entry,
+    private static List<BackendTerminalEntry> backendTerminalEntries(@Nonnull NexoriPlugin plugin) {
+        List<BackendTerminalEntry> entries = new ArrayList<>();
+        for (BackendSyncService.BackendSyncLogEntry entry : plugin.getBackendSyncService().recentSyncLogEntries()) {
+            String syncId = entry.syncId().isBlank() ? "-" : shortRequestId(entry.syncId());
+            String detail = "SYNC  " + entry.method() + " " + entry.path()
+                + "  seq=" + entry.sequence()
+                + "  syncId=" + syncId
+                + "  assignments=" + entry.assignmentCount()
+                + "  acked=" + entry.acknowledgedAckCount();
+            if (!entry.outcome().isBlank() && !"OK".equalsIgnoreCase(entry.outcome())) {
+                detail = detail + "  " + entry.outcome();
+            }
+            entries.add(new BackendTerminalEntry(
+                entry.completedAtEpochMs(),
+                entry.statusCode(),
+                detail
+            ));
+        }
+        for (BackendResultReportingService.BackendResultLogEntry entry : plugin.getBackendResultReportingService().recentResultLogEntries()) {
+            String resultId = entry.resultId().isBlank() ? "-" : shortRequestId(entry.resultId());
+            String detail = "RESULT  " + entry.method() + " " + entry.path()
+                + "  resultId=" + resultId
+                + "  players=" + entry.playerCount();
+            if (!entry.backendStatus().isBlank()) {
+                detail = detail + "  backend=" + entry.backendStatus();
+            }
+            if (!entry.outcome().isBlank()
+                && !"OK".equalsIgnoreCase(entry.outcome())
+                && !"ACCEPTED".equalsIgnoreCase(entry.outcome())
+                && !"DUPLICATE".equalsIgnoreCase(entry.outcome())) {
+                detail = detail + "  " + entry.outcome();
+            }
+            entries.add(new BackendTerminalEntry(
+                entry.completedAtEpochMs(),
+                entry.statusCode(),
+                detail
+            ));
+        }
+        entries.sort(Comparator.comparingLong(BackendTerminalEntry::completedAtEpochMs).reversed());
+        return entries.size() <= 80 ? List.copyOf(entries) : List.copyOf(entries.subList(0, 80));
+    }
+
+    @Nonnull
+    private static GroupBuilder backendTerminalRow(
+        @Nonnull BackendTerminalEntry entry,
         int index,
         int width,
         int height
@@ -8571,16 +8620,7 @@ public final class NexoriMenuV2Page {
         row.addChild(backendSyncStatusPill(entry.statusCode(), 90, 32));
         row.addChild(spacerX(10));
 
-        String syncId = entry.syncId().isBlank() ? "-" : shortSyncId(entry.syncId());
-        String detail = entry.method() + " " + entry.path()
-            + "  seq=" + entry.sequence()
-            + "  syncId=" + syncId
-            + "  assignments=" + entry.assignmentCount()
-            + "  acked=" + entry.acknowledgedAckCount();
-        if (!entry.outcome().isBlank() && !"OK".equalsIgnoreCase(entry.outcome())) {
-            detail = detail + "  " + entry.outcome();
-        }
-        row.addChild(centeredTerminalText(detail, INFO, Math.max(320, rowWidth - 360), 32));
+        row.addChild(centeredTerminalText(entry.detail(), INFO, Math.max(320, rowWidth - 360), 32));
         row.addChild(spacerX(10));
         row.addChild(centeredTerminalText(SYNC_TIME_FORMAT.format(Instant.ofEpochMilli(entry.completedAtEpochMs())), MUTED, 220, 32));
 
@@ -8639,8 +8679,15 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static String shortSyncId(@Nonnull String syncId) {
-        return syncId.length() <= 8 ? syncId : syncId.substring(0, 8);
+    private static String shortRequestId(@Nonnull String requestId) {
+        return requestId.length() <= 8 ? requestId : requestId.substring(0, 8);
+    }
+
+    private record BackendTerminalEntry(
+        long completedAtEpochMs,
+        int statusCode,
+        String detail
+    ) {
     }
 
     private static void saveBackendConfig(
@@ -8674,7 +8721,9 @@ public final class NexoriMenuV2Page {
                 token,
                 syncIntervalMs,
                 rawRegion,
-                requestTimeoutMs
+                requestTimeoutMs,
+                current.resultReportingEnabled(),
+                current.resultRetryIntervalMs()
             ).normalized();
             if (updated.enabled() && (updated.baseUrl().isBlank() || updated.serverToken().isBlank())) {
                 open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Backend sync needs Base URL and API Key before it can be enabled."));
@@ -8682,6 +8731,7 @@ public final class NexoriMenuV2Page {
             }
             plugin.getBackendMatchmakingConfigStore().save(updated);
             plugin.getBackendSyncService().updateConfig(updated);
+            plugin.getBackendResultReportingService().updateConfig(updated);
             BACKEND_CONFIG_DRAFTS.remove(playerRef.getUuid());
             open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Saved backend matchmaking config and applied it live."));
         } catch (NumberFormatException exception) {

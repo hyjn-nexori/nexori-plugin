@@ -28,6 +28,9 @@ public record ArenaActiveMatch(
     List<UUID> eliminatedPlayerUuids,
     Map<UUID, Long> pendingReturnAtEpochMsByPlayerUuid,
     String winnerPlayerUuid,
+    long completedAtEpochMs,
+    long resultSubmittedAtEpochMs,
+    String resultPayloadHash,
     long createdAtEpochMs,
     long lastUpdatedAtEpochMs,
     String lastError
@@ -56,6 +59,9 @@ public record ArenaActiveMatch(
             normalizePlayers(eliminatedPlayerUuids),
             normalizePendingReturns(pendingReturnAtEpochMsByPlayerUuid),
             normalizeOptional(winnerPlayerUuid),
+            Math.max(0L, completedAtEpochMs),
+            Math.max(0L, resultSubmittedAtEpochMs),
+            normalizeOptional(resultPayloadHash),
             createdAtEpochMs <= 0L ? now : createdAtEpochMs,
             lastUpdatedAtEpochMs <= 0L ? now : lastUpdatedAtEpochMs,
             normalizeOptional(lastError)
@@ -88,6 +94,9 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -116,6 +125,9 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -148,6 +160,9 @@ public record ArenaActiveMatch(
             List.copyOf(eliminated),
             pendingReturns,
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -178,6 +193,9 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturns,
             playerUuid.toString(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -208,6 +226,9 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturns,
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -237,6 +258,9 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -265,9 +289,43 @@ public record ArenaActiveMatch(
             eliminatedPlayerUuids(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             rawLastError
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withSubmittedResult(long completedAtEpochMs, long submittedAtEpochMs, @Nonnull String payloadHash) {
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            matchResolutionTriggerId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            winnerPlayerUuid(),
+            completedAtEpochMs,
+            submittedAtEpochMs,
+            payloadHash,
+            createdAtEpochMs(),
+            submittedAtEpochMs,
+            lastError()
         ).normalized();
     }
 
@@ -303,6 +361,9 @@ public record ArenaActiveMatch(
             List.copyOf(eliminated),
             pendingReturns,
             winner,
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
             createdAtEpochMs(),
             nowEpochMs,
             lastError()
@@ -331,6 +392,14 @@ public record ArenaActiveMatch(
 
     public boolean hasWinner() {
         return !winnerPlayerUuid().isBlank();
+    }
+
+    public boolean hasCompleted() {
+        return completedAtEpochMs() > 0L;
+    }
+
+    public boolean hasSubmittedResult() {
+        return resultSubmittedAtEpochMs() > 0L;
     }
 
     public boolean usesInstanceTemplate() {

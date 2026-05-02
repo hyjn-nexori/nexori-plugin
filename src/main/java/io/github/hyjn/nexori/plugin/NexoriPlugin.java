@@ -13,6 +13,9 @@ import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
 import io.github.hyjn.nexori.plugin.backend.BackendAssignmentStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfig;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfigStore;
+import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
+import io.github.hyjn.nexori.plugin.backend.BackendResultReportingTickSystem;
+import io.github.hyjn.nexori.plugin.backend.BackendResultStore;
 import io.github.hyjn.nexori.plugin.backend.BackendSyncService;
 import io.github.hyjn.nexori.plugin.backend.BackendSyncTickSystem;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
@@ -186,6 +189,7 @@ public class NexoriPlugin extends JavaPlugin {
     private NexoriAccessGateService accessGateService;
     private BackendMatchmakingConfigStore backendMatchmakingConfigStore;
     private BackendSyncService backendSyncService;
+    private BackendResultReportingService backendResultReportingService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -403,6 +407,9 @@ public class NexoriPlugin extends JavaPlugin {
             BackendAssignmentStore backendAssignmentStore = new BackendAssignmentStore(
                 this.getDataDirectory().resolve("state").resolve("backend-assignments.json")
             );
+            BackendResultStore backendResultStore = new BackendResultStore(
+                this.getDataDirectory().resolve("state").resolve("backend-results.json")
+            );
             this.backendSyncService = new BackendSyncService(
                 this.getLogger(),
                 backendMatchmakingConfig,
@@ -415,6 +422,12 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaService,
                 this.arenaMatchService
             );
+            this.backendResultReportingService = new BackendResultReportingService(
+                this.getLogger(),
+                backendMatchmakingConfig,
+                backendResultStore,
+                this.localIdentity
+            );
             this.nexoriStatusHudService = new NexoriStatusHudService(
                 this.queueCoordinatorService,
                 this.arenaMatchService,
@@ -424,7 +437,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 new PortalWorldLabelSource(this.portalInstanceService)
             );
-            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService);
+            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.backendResultReportingService);
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
             this.portalInteractionService = new NexoriPortalInteractionService(
@@ -568,6 +581,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
             this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
             this.getEntityStoreRegistry().registerSystem(new BackendSyncTickSystem(this.backendSyncService));
+            this.getEntityStoreRegistry().registerSystem(new BackendResultReportingTickSystem(this.backendResultReportingService));
             this.getEntityStoreRegistry().registerSystem(new NexoriStatusHudTickSystem(this.nexoriStatusHudService));
             this.getEntityStoreRegistry().registerSystem(new WorldLabelTickSystem(this.worldLabelService));
 
@@ -761,6 +775,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public BackendSyncService getBackendSyncService() {
         return backendSyncService;
+    }
+
+    public BackendResultReportingService getBackendResultReportingService() {
+        return backendResultReportingService;
     }
 
     /**
