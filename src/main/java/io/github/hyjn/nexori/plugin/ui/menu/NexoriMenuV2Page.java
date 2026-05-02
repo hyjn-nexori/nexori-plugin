@@ -138,6 +138,7 @@ public final class NexoriMenuV2Page {
     private static final String BACKEND_SYNC_INTERVAL_INPUT_ID = "nexori-v2-backend-sync-interval";
     private static final String BACKEND_REGION_INPUT_ID = "nexori-v2-backend-region";
     private static final String BACKEND_TIMEOUT_INPUT_ID = "nexori-v2-backend-timeout";
+    private static final String BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID = "nexori-v2-backend-result-retry-interval";
     private static final String DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID = "keep_inventory";
     private static final int DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS = 9999;
     private static final String NEW_RULE_GROUP_ID = "__new__";
@@ -178,6 +179,7 @@ public final class NexoriMenuV2Page {
     private static final HyUIStyle BAD_CENTER = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#ffd7dc").setWrap(true).setAlignment(Alignment.Center);
     private static final HyUIStyle INFO_CENTER = new HyUIStyle().setFontSize(13).setRenderBold(true).setTextColor("#d7ecff").setWrap(true).setAlignment(Alignment.Center);
     private static final Map<UUID, BackendConfigDraft> BACKEND_CONFIG_DRAFTS = new ConcurrentHashMap<>();
+    private static final Map<UUID, BackendWorkspaceTab> BACKEND_WORKSPACE_TABS = new ConcurrentHashMap<>();
     private static final Map<UUID, QueueMatchmakingMode> QUEUE_MODE_DRAFTS = new ConcurrentHashMap<>();
 
     private NexoriMenuV2Page() {
@@ -325,10 +327,15 @@ public final class NexoriMenuV2Page {
             panel.addChild(spacerY(12));
             panel.addChild(accessGateTabs(ref, store, playerRef, player, plugin, state));
         }
+        if (state.selectedView() == NexoriMenuV2View.BACKEND) {
+            panel.addChild(spacerY(12));
+            panel.addChild(backendTabs(ref, store, playerRef, player, plugin, state));
+        }
         panel.addChild(spacerY(12));
         int viewportHeight = CONTENT_H - ((state.selectedView() == NexoriMenuV2View.PORTALS
             || state.selectedView() == NexoriMenuV2View.QUEUES
-            || state.selectedView() == NexoriMenuV2View.ACCESS_GATE) ? 158 : 104);
+            || state.selectedView() == NexoriMenuV2View.ACCESS_GATE
+            || state.selectedView() == NexoriMenuV2View.BACKEND) ? 158 : 104);
         panel.addChild(buildContentScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight));
         return panel;
     }
@@ -349,7 +356,8 @@ public final class NexoriMenuV2Page {
             + (state.selectedView() == NexoriMenuV2View.PORTALS ? "-" + state.selectedPortalTab().name().toLowerCase() : "")
             + (state.selectedView() == NexoriMenuV2View.QUEUES ? "-" + state.selectedMinigameTab().name().toLowerCase() : "")
             + (state.selectedView() == NexoriMenuV2View.RULES ? "-" + state.selectedRulesTab().name().toLowerCase() : "")
-            + (state.selectedView() == NexoriMenuV2View.ACCESS_GATE ? "-" + state.selectedAccessGateTab().name().toLowerCase() : "");
+            + (state.selectedView() == NexoriMenuV2View.ACCESS_GATE ? "-" + state.selectedAccessGateTab().name().toLowerCase() : "")
+            + (state.selectedView() == NexoriMenuV2View.BACKEND ? "-" + currentBackendTab(playerRef).name().toLowerCase() : "");
         return switch (state.selectedView()) {
             case HOME -> buildHomeScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case ABOUT -> buildAboutScroll(viewportHeight, scrollId);
@@ -504,6 +512,41 @@ public final class NexoriMenuV2Page {
                     plugin,
                     state.withSelectedRulesTab(tab).withStatusText("")
                 ));
+            row.addChild(button);
+            if (index + 1 < tabs.length) {
+                row.addChild(spacerX(gap));
+            }
+        }
+        return row;
+    }
+
+    @Nonnull
+    private static GroupBuilder backendTabs(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state
+    ) {
+        int tabWidth = 180;
+        int gap = 8;
+        BackendWorkspaceTab[] tabs = BackendWorkspaceTab.values();
+        int totalWidth = tabs.length * tabWidth + Math.max(0, tabs.length - 1) * gap;
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(CONTENT_W - 32).setHeight(42));
+        row.addChild(spacerX(Math.max(0, ((CONTENT_W - 32) - totalWidth) / 2)));
+        BackendWorkspaceTab current = currentBackendTab(playerRef);
+        for (int index = 0; index < tabs.length; index++) {
+            BackendWorkspaceTab tab = tabs[index];
+            ButtonBuilder button = ButtonBuilder.secondaryTextButton()
+                .withText(tab.label())
+                .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
+                .withDisabled(current == tab)
+                .onClick((ignored, ctx) -> {
+                    preserveBackendDraftFromInputs(playerRef, plugin, ctx);
+                    BACKEND_WORKSPACE_TABS.put(playerRef.getUuid(), tab);
+                    open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText(""));
+                });
             row.addChild(button);
             if (index + 1 < tabs.length) {
                 row.addChild(spacerX(gap));
@@ -8296,13 +8339,17 @@ public final class NexoriMenuV2Page {
     ) {
         int width = CONTENT_W - 32;
         int innerWidth = width - 16;
-        int setupHeight = 840;
+        BackendWorkspaceTab tab = currentBackendTab(playerRef);
+        int setupHeight = tab == BackendWorkspaceTab.TERMINAL ? 625 : 840;
         int contentHeight = 16 + setupHeight + 20;
         ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
         scroll.addChild(spacerY(16));
         try {
             BackendMatchmakingConfig config = plugin.getBackendMatchmakingConfigStore().loadOrCreate();
-            scroll.addChild(backendConfigCard(ref, store, playerRef, player, plugin, state, config, innerWidth, setupHeight, scrollId + "-sync-terminal"));
+            switch (tab) {
+                case CONFIG -> scroll.addChild(backendConfigCard(ref, store, playerRef, player, plugin, state, config, innerWidth, setupHeight));
+                case TERMINAL -> scroll.addChild(backendTerminalCard(ref, store, playerRef, player, plugin, state, config, innerWidth, setupHeight, scrollId + "-terminal"));
+            }
         } catch (IOException exception) {
             GroupBuilder card = card(innerWidth, 150, PANEL_BG);
             card.addChild(label("Backend Matchmaking", TITLE, innerWidth - 32));
@@ -8323,28 +8370,28 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriMenuV2State state,
         @Nonnull BackendMatchmakingConfig config,
         int width,
-        int height,
-        @Nonnull String terminalScrollId
+        int height
     ) {
         BackendConfigDraft draft = backendDraft(playerRef);
         boolean enabled = draft != null && draft.enabled() != null ? draft.enabled() : config.enabled();
+        boolean resultReportingEnabled = draft != null && draft.resultReportingEnabled() != null ? draft.resultReportingEnabled() : config.resultReportingEnabled();
         String baseUrl = draft != null && draft.baseUrl() != null ? draft.baseUrl() : config.baseUrl();
         String tokenValue = draft != null && draft.serverToken() != null ? draft.serverToken() : "";
         String syncInterval = draft != null && draft.syncIntervalMs() != null ? draft.syncIntervalMs() : Long.toString(config.syncIntervalMs());
         String region = draft != null && draft.region() != null ? draft.region() : config.region();
         String timeout = draft != null && draft.requestTimeoutMs() != null ? draft.requestTimeoutMs() : Long.toString(config.requestTimeoutMs());
+        String resultRetryInterval = draft != null && draft.resultRetryIntervalMs() != null ? draft.resultRetryIntervalMs() : Long.toString(config.resultRetryIntervalMs());
         String tokenPlaceholder = config.maskedToken().isBlank() ? "Paste API key / server token" : "Paste new API key / server token";
 
         int innerWidth = width - 32;
         int thirdWidth = (innerWidth - 24) / 3;
-        String effectiveUrl = baseUrl.isBlank() ? "<not set>" : baseUrl + (baseUrl.endsWith("/") ? "nexori/sync" : "/nexori/sync");
 
         GroupBuilder card = card(width, height, PANEL_BG);
-        card.addChild(label("Backend Matchmaking Setup", TITLE, width - 32));
+        card.addChild(label("Backend Setup", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("This controls the authenticated POST /nexori/sync heartbeat for BACKEND_DRIVEN queues. LOCAL_FIFO queues continue to work standalone and do not need this backend.", MUTED, width - 32));
+        card.addChild(label("Configure the shared backend origin and Bearer token used by POST /nexori/sync for BACKEND_DRIVEN queues and POST /nexori/results for completed match reports.", MUTED, width - 32));
         card.addChild(spacerY(4));
-        card.addChild(label("Save writes config/backend-matchmaking.json and applies it to the live heartbeat service.", MUTED, width - 32));
+        card.addChild(label("Save writes config/backend-matchmaking.json and applies it to the live backend services. LOCAL_FIFO queues continue to work standalone.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(HOME_INPUT_FIELD_H));
@@ -8352,7 +8399,7 @@ public final class NexoriMenuV2Page {
             ButtonBuilder.textButton()
                 .withText("SAVE CHANGES")
                 .withAnchor(new HyUIAnchor().setWidth(160).setHeight(HOME_INPUT_FIELD_H))
-                .onClick((ignored, ctx) -> saveBackendConfig(ref, store, playerRef, player, plugin, state, config, enabled, baseUrl, syncInterval, region, timeout, ctx))
+                .onClick((ignored, ctx) -> saveBackendConfig(ref, store, playerRef, player, plugin, state, config, enabled, resultReportingEnabled, baseUrl, syncInterval, region, timeout, resultRetryInterval, ctx))
         );
         actionRow.addChild(spacerX(10));
         actionRow.addChild(
@@ -8369,9 +8416,9 @@ public final class NexoriMenuV2Page {
 
         int backendFieldHeight = 146;
         GroupBuilder rowOne = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(backendFieldHeight));
-        rowOne.addChild(backendToggleField(ref, store, playerRef, player, plugin, state, enabled, config, thirdWidth, backendFieldHeight));
+        rowOne.addChild(backendSyncToggleField(ref, store, playerRef, player, plugin, state, enabled, resultReportingEnabled, config, thirdWidth, backendFieldHeight));
         rowOne.addChild(spacerX(12));
-        rowOne.addChild(backendInputCard("Base URL", "Backend HTTP origin. Nexori posts heartbeat data to <baseUrl>/nexori/sync.", BACKEND_BASE_URL_INPUT_ID, baseUrl, "http://127.0.0.1:8000", "Endpoint: " + effectiveUrl, thirdWidth, backendFieldHeight, 255));
+        rowOne.addChild(backendInputCard("Base URL", "Backend HTTP origin shared by sync and result reporting endpoints.", BACKEND_BASE_URL_INPUT_ID, baseUrl, "http://127.0.0.1:8000", "Current: " + (config.baseUrl().isBlank() ? "<blank>" : config.baseUrl()), thirdWidth, backendFieldHeight, 255));
         rowOne.addChild(spacerX(12));
         rowOne.addChild(backendInputCard("API Key / Server Token", "Sent as Authorization: Bearer <token>. Existing token is masked and never printed. Leave blank to keep the current token.", BACKEND_SERVER_TOKEN_INPUT_ID, tokenValue, tokenPlaceholder, "Current: " + (config.maskedToken().isBlank() ? "NOT SET" : config.maskedToken()), thirdWidth, backendFieldHeight, 255));
         card.addChild(rowOne);
@@ -8380,17 +8427,22 @@ public final class NexoriMenuV2Page {
         GroupBuilder rowTwo = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(backendFieldHeight));
         rowTwo.addChild(backendInputCard("Sync Interval Ms", "Global throttle. One server process sends at most one sync per interval.", BACKEND_SYNC_INTERVAL_INPUT_ID, syncInterval, "1000", "Current: " + config.syncIntervalMs() + " ms", thirdWidth, backendFieldHeight, 16));
         rowTwo.addChild(spacerX(12));
-        rowTwo.addChild(backendInputCard("Region", "Manual routing hint for your backend. Leave blank if this server has no region label yet.", BACKEND_REGION_INPUT_ID, region, "us-east", "Current: " + (config.region().isBlank() ? "<blank>" : config.region()), thirdWidth, backendFieldHeight, 64));
+        rowTwo.addChild(backendResultToggleField(ref, store, playerRef, player, plugin, state, enabled, resultReportingEnabled, config, thirdWidth, backendFieldHeight));
         rowTwo.addChild(spacerX(12));
-        rowTwo.addChild(backendInputCard("Request Timeout Ms", "HTTP timeout before Nexori marks the heartbeat failed and backs off.", BACKEND_TIMEOUT_INPUT_ID, timeout, "3000", "Current: " + config.requestTimeoutMs() + " ms", thirdWidth, backendFieldHeight, 16));
+        rowTwo.addChild(backendInputCard("Result Retry Interval Ms", "Delay before retrying failed POST /nexori/results attempts.", BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID, resultRetryInterval, "5000", "Current: " + config.resultRetryIntervalMs() + " ms", thirdWidth, backendFieldHeight, 16));
         card.addChild(rowTwo);
         card.addChild(spacerY(12));
-        card.addChild(backendSyncTerminal(ref, store, playerRef, player, plugin, state, config, enabled, innerWidth, 308, terminalScrollId));
+
+        GroupBuilder rowThree = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(backendFieldHeight));
+        rowThree.addChild(backendInputCard("Region", "Manual routing hint for your backend. Leave blank if this server has no region label yet.", BACKEND_REGION_INPUT_ID, region, "us-east", "Current: " + (config.region().isBlank() ? "<blank>" : config.region()), thirdWidth, backendFieldHeight, 64));
+        rowThree.addChild(spacerX(12));
+        rowThree.addChild(backendInputCard("Request Timeout Ms", "HTTP timeout before Nexori marks sync or result reporting failed and backs off.", BACKEND_TIMEOUT_INPUT_ID, timeout, "3000", "Current: " + config.requestTimeoutMs() + " ms", thirdWidth, backendFieldHeight, 16));
+        card.addChild(rowThree);
         return card;
     }
 
     @Nonnull
-    private static GroupBuilder backendToggleField(
+    private static GroupBuilder backendSyncToggleField(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
@@ -8398,6 +8450,7 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state,
         boolean enabled,
+        boolean resultReportingEnabled,
         @Nonnull BackendMatchmakingConfig config,
         int width,
         int height
@@ -8420,11 +8473,13 @@ public final class NexoriMenuV2Page {
                 .onClick((ignored, ctx) -> {
                     BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(
                         !enabled,
+                        resultReportingEnabled,
                         ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(config.baseUrl()).trim(),
                         ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).orElse("").trim(),
                         ctx.getValue(BACKEND_SYNC_INTERVAL_INPUT_ID, String.class).orElse(Long.toString(config.syncIntervalMs())).trim(),
                         ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(config.region()).trim(),
-                        ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(Long.toString(config.requestTimeoutMs())).trim()
+                        ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(Long.toString(config.requestTimeoutMs())).trim(),
+                        ctx.getValue(BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID, String.class).orElse(Long.toString(config.resultRetryIntervalMs())).trim()
                     ));
                     open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Backend sync draft is now " + (!enabled ? "enabled" : "disabled") + ". Save changes to apply."));
                 })
@@ -8432,6 +8487,55 @@ public final class NexoriMenuV2Page {
         card.addChild(row);
         card.addChild(spacerY(6));
         card.addChild(label("Current: " + (config.enabled() ? "ENABLED" : "DISABLED"), INFO, width - 28));
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder backendResultToggleField(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        boolean enabled,
+        boolean resultReportingEnabled,
+        @Nonnull BackendMatchmakingConfig config,
+        int width,
+        int height
+    ) {
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.all(14))
+            .withBackground(PANEL_ALT_BG);
+        card.addChild(label("Result Reporting", SUBTITLE, width - 28));
+        card.addChild(spacerY(4));
+        card.addChild(label("Allows rules mods to send completed match results to POST /nexori/results.", MUTED, width - 28));
+        card.addChild(spacerY(8));
+
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(42));
+        row.addChild(
+            ButtonBuilder.secondaryTextButton()
+                .withText(resultReportingEnabled ? "TURN OFF" : "TURN ON")
+                .withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(42))
+                .onClick((ignored, ctx) -> {
+                    BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(
+                        enabled,
+                        !resultReportingEnabled,
+                        ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(config.baseUrl()).trim(),
+                        ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).orElse("").trim(),
+                        ctx.getValue(BACKEND_SYNC_INTERVAL_INPUT_ID, String.class).orElse(Long.toString(config.syncIntervalMs())).trim(),
+                        ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(config.region()).trim(),
+                        ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(Long.toString(config.requestTimeoutMs())).trim(),
+                        ctx.getValue(BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID, String.class).orElse(Long.toString(config.resultRetryIntervalMs())).trim()
+                    ));
+                    open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Result reporting draft is now " + (!resultReportingEnabled ? "enabled" : "disabled") + ". Save changes to apply."));
+                })
+        );
+        card.addChild(row);
+        card.addChild(spacerY(6));
+        card.addChild(label("Current: " + (config.resultReportingEnabled() ? "ENABLED" : "DISABLED"), INFO, width - 28));
         return card;
     }
 
@@ -8471,7 +8575,7 @@ public final class NexoriMenuV2Page {
     }
 
     @Nonnull
-    private static GroupBuilder backendSyncTerminal(
+    private static GroupBuilder backendTerminalCard(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         @Nonnull PlayerRef playerRef,
@@ -8479,7 +8583,6 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriPlugin plugin,
         @Nonnull NexoriMenuV2State state,
         @Nonnull BackendMatchmakingConfig config,
-        boolean enabled,
         int width,
         int height,
         @Nonnull String scrollId
@@ -8517,14 +8620,6 @@ public final class NexoriMenuV2Page {
                 .withText("REFRESH TERMINAL")
                 .withAnchor(new HyUIAnchor().setWidth(refreshButtonWidth).setHeight(32))
                 .onClick((ignored, ctx) -> {
-                    BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(
-                        enabled,
-                        ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(config.baseUrl()).trim(),
-                        ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).orElse("").trim(),
-                        ctx.getValue(BACKEND_SYNC_INTERVAL_INPUT_ID, String.class).orElse(Long.toString(config.syncIntervalMs())).trim(),
-                        ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(config.region()).trim(),
-                        ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(Long.toString(config.requestTimeoutMs())).trim()
-                    ));
                     open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Refreshed backend terminal."));
                 })
         );
@@ -8699,10 +8794,12 @@ public final class NexoriMenuV2Page {
         @Nonnull NexoriMenuV2State state,
         @Nonnull BackendMatchmakingConfig current,
         boolean enabled,
+        boolean resultReportingEnabled,
         @Nonnull String baseUrl,
         @Nonnull String syncInterval,
         @Nonnull String region,
         @Nonnull String timeout,
+        @Nonnull String resultRetryInterval,
         @Nonnull au.ellie.hyui.events.UIContext ctx
     ) {
         String rawBaseUrl = ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(baseUrl).trim();
@@ -8710,9 +8807,11 @@ public final class NexoriMenuV2Page {
         String rawSyncInterval = ctx.getValue(BACKEND_SYNC_INTERVAL_INPUT_ID, String.class).orElse(syncInterval).trim();
         String rawRegion = ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(region).trim();
         String rawTimeout = ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(timeout).trim();
+        String rawResultRetryInterval = ctx.getValue(BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID, String.class).orElse(resultRetryInterval).trim();
         try {
             long syncIntervalMs = Long.parseLong(rawSyncInterval);
             long requestTimeoutMs = Long.parseLong(rawTimeout);
+            long resultRetryIntervalMs = Long.parseLong(rawResultRetryInterval);
             String token = rawToken.isBlank() ? current.serverToken() : rawToken;
             BackendMatchmakingConfig updated = new BackendMatchmakingConfig(
                 BackendMatchmakingConfig.CURRENT_SCHEMA_VERSION,
@@ -8722,25 +8821,45 @@ public final class NexoriMenuV2Page {
                 syncIntervalMs,
                 rawRegion,
                 requestTimeoutMs,
-                current.resultReportingEnabled(),
-                current.resultRetryIntervalMs()
+                resultReportingEnabled,
+                resultRetryIntervalMs
             ).normalized();
-            if (updated.enabled() && (updated.baseUrl().isBlank() || updated.serverToken().isBlank())) {
-                open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Backend sync needs Base URL and API Key before it can be enabled."));
-                return;
-            }
             plugin.getBackendMatchmakingConfigStore().save(updated);
             plugin.getBackendSyncService().updateConfig(updated);
             plugin.getBackendResultReportingService().updateConfig(updated);
             BACKEND_CONFIG_DRAFTS.remove(playerRef.getUuid());
             open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Saved backend matchmaking config and applied it live."));
         } catch (NumberFormatException exception) {
-            BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(enabled, rawBaseUrl, rawToken, rawSyncInterval, rawRegion, rawTimeout));
-            open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Sync interval and request timeout must be whole numbers."));
+            BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(enabled, resultReportingEnabled, rawBaseUrl, rawToken, rawSyncInterval, rawRegion, rawTimeout, rawResultRetryInterval));
+            open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Sync interval, request timeout, and result retry interval must be whole numbers."));
         } catch (IOException | IllegalArgumentException exception) {
-            BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(enabled, rawBaseUrl, rawToken, rawSyncInterval, rawRegion, rawTimeout));
+            BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(enabled, resultReportingEnabled, rawBaseUrl, rawToken, rawSyncInterval, rawRegion, rawTimeout, rawResultRetryInterval));
             open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Could not save backend config: " + exception.getMessage()));
         }
+    }
+
+    private static void preserveBackendDraftFromInputs(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull au.ellie.hyui.events.UIContext ctx
+    ) {
+        BackendMatchmakingConfig config = plugin.getBackendSyncService().config();
+        BackendConfigDraft current = backendDraft(playerRef);
+        if (current == null
+            && ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).isEmpty()
+            && ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).isEmpty()) {
+            return;
+        }
+        BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(
+            current != null && current.enabled() != null ? current.enabled() : config.enabled(),
+            current != null && current.resultReportingEnabled() != null ? current.resultReportingEnabled() : config.resultReportingEnabled(),
+            ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(current != null && current.baseUrl() != null ? current.baseUrl() : config.baseUrl()).trim(),
+            ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).orElse(current != null && current.serverToken() != null ? current.serverToken() : "").trim(),
+            ctx.getValue(BACKEND_SYNC_INTERVAL_INPUT_ID, String.class).orElse(current != null && current.syncIntervalMs() != null ? current.syncIntervalMs() : Long.toString(config.syncIntervalMs())).trim(),
+            ctx.getValue(BACKEND_REGION_INPUT_ID, String.class).orElse(current != null && current.region() != null ? current.region() : config.region()).trim(),
+            ctx.getValue(BACKEND_TIMEOUT_INPUT_ID, String.class).orElse(current != null && current.requestTimeoutMs() != null ? current.requestTimeoutMs() : Long.toString(config.requestTimeoutMs())).trim(),
+            ctx.getValue(BACKEND_RESULT_RETRY_INTERVAL_INPUT_ID, String.class).orElse(current != null && current.resultRetryIntervalMs() != null ? current.resultRetryIntervalMs() : Long.toString(config.resultRetryIntervalMs())).trim()
+        ));
     }
 
     @Nonnull
@@ -8765,6 +8884,11 @@ public final class NexoriMenuV2Page {
 
     private static BackendConfigDraft backendDraft(@Nonnull PlayerRef playerRef) {
         return BACKEND_CONFIG_DRAFTS.get(playerRef.getUuid());
+    }
+
+    @Nonnull
+    private static BackendWorkspaceTab currentBackendTab(@Nonnull PlayerRef playerRef) {
+        return BACKEND_WORKSPACE_TABS.getOrDefault(playerRef.getUuid(), BackendWorkspaceTab.CONFIG);
     }
 
     @Nonnull
@@ -8804,7 +8928,7 @@ public final class NexoriMenuV2Page {
             case TARGETS -> "Targets are now folded into the Portals travel bind workspace.";
             case RULES -> "";
             case QUEUES -> "Configure the lobby, reusable games, and the queues that launch into them.";
-            case BACKEND -> "Configure the external matchmaking heartbeat used by BACKEND_DRIVEN queues.";
+            case BACKEND -> "Configure backend sync, result reporting, request health, and endpoint reference details.";
             case ACCESS_GATE -> "Control server join caps, reserved slots, and bypass player access for the server you are currently on. To configure another server, move to that server first and then open this view there.";
             case OPERATIONS -> "Live runtime, diagnostics, and recovery belong here.";
             case ABOUT -> "Detailed context for what Nexori does and how this workspace is organized.";
@@ -8818,7 +8942,7 @@ public final class NexoriMenuV2Page {
             case TARGETS -> "Targets are now grouped inside the travel bind workspace.";
             case RULES -> "Rules keep their own mental model: define policies once, then attach servers under them.";
             case QUEUES -> "This view owns the clean product flow: mark the lobby, create games, then create queues.";
-            case BACKEND -> "Backend config sends one authenticated heartbeat from this server process to your external matchmaking service.";
+            case BACKEND -> "Backend config can send authenticated matchmaking sync requests and event-driven match result reports.";
             case ACCESS_GATE -> "";
             case OPERATIONS -> "Operations will show active queues, active matches, handoffs, diagnostics, and repair flows.";
             case HOME, ABOUT -> "";
@@ -9130,12 +9254,40 @@ public final class NexoriMenuV2Page {
 
     private record BackendConfigDraft(
         Boolean enabled,
+        Boolean resultReportingEnabled,
         String baseUrl,
         String serverToken,
         String syncIntervalMs,
         String region,
-        String requestTimeoutMs
+        String requestTimeoutMs,
+        String resultRetryIntervalMs
     ) {
+        private BackendConfigDraft(
+            Boolean enabled,
+            String baseUrl,
+            String serverToken,
+            String syncIntervalMs,
+            String region,
+            String requestTimeoutMs
+        ) {
+            this(enabled, null, baseUrl, serverToken, syncIntervalMs, region, requestTimeoutMs, null);
+        }
+    }
+
+    private enum BackendWorkspaceTab {
+        CONFIG("CONFIG"),
+        TERMINAL("TERMINAL");
+
+        private final String label;
+
+        BackendWorkspaceTab(@Nonnull String label) {
+            this.label = label;
+        }
+
+        @Nonnull
+        public String label() {
+            return label;
+        }
     }
 
     private enum TravelBindColumnMode {
