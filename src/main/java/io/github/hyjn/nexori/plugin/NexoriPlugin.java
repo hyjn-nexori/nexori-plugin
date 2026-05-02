@@ -184,6 +184,7 @@ public class NexoriPlugin extends JavaPlugin {
     private NexoriStatusHudService nexoriStatusHudService;
     private WorldLabelService worldLabelService;
     private NexoriAccessGateService accessGateService;
+    private BackendMatchmakingConfigStore backendMatchmakingConfigStore;
     private BackendSyncService backendSyncService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
@@ -395,9 +396,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaService,
                 this.instanceSpawnSlotService
             );
-            BackendMatchmakingConfig backendMatchmakingConfig = new BackendMatchmakingConfigStore(
+            this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
-            ).loadOrCreate();
+            );
+            BackendMatchmakingConfig backendMatchmakingConfig = this.backendMatchmakingConfigStore.loadOrCreate();
             BackendAssignmentStore backendAssignmentStore = new BackendAssignmentStore(
                 this.getDataDirectory().resolve("state").resolve("backend-assignments.json")
             );
@@ -751,6 +753,14 @@ public class NexoriPlugin extends JavaPlugin {
 
     public NexoriAccessGateService getAccessGateService() {
         return accessGateService;
+    }
+
+    public BackendMatchmakingConfigStore getBackendMatchmakingConfigStore() {
+        return backendMatchmakingConfigStore;
+    }
+
+    public BackendSyncService getBackendSyncService() {
+        return backendSyncService;
     }
 
     /**

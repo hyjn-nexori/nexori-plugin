@@ -30,7 +30,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,9 +51,10 @@ public final class BackendSyncService {
     private static final long AUTH_BACKOFF_MS = 30_000L;
     private static final long ERROR_BACKOFF_MS = 5_000L;
     private static final long STALE_SAFETY_WINDOW_MS = 1_000L;
+    private static final int MAX_SYNC_LOG_ENTRIES = 80;
 
     private final HytaleLogger logger;
-    private final BackendMatchmakingConfig config;
+    private BackendMatchmakingConfig config;
     private final BackendAssignmentStore assignmentStore;
     private final ServerIdentity localIdentity;
     private final LocalConnectionAddressService localConnectionAddressService;
@@ -60,10 +63,11 @@ public final class BackendSyncService {
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaService arenaService;
     private final ArenaMatchService arenaMatchService;
-    private final HttpClient httpClient;
+    private HttpClient httpClient;
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendSyncHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Set<String> staleSyncIds = new HashSet<>();
+    private final Deque<BackendSyncLogEntry> syncLogEntries = new ArrayDeque<>();
 
     private BackendSyncHealthState healthState = BackendSyncHealthState.healthy(0L);
     private long lastSyncAttemptAtEpochMs;
@@ -106,9 +110,30 @@ public final class BackendSyncService {
         maybeStartSync(nowEpochMs);
     }
 
+    public synchronized void updateConfig(@Nonnull BackendMatchmakingConfig updatedConfig) {
+        this.config = updatedConfig.normalized();
+        this.httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
+            .build();
+        if (!this.config.enabled()) {
+            this.healthState = BackendSyncHealthState.healthy(System.currentTimeMillis());
+        }
+        this.nextSyncAllowedAtEpochMs = Math.min(this.nextSyncAllowedAtEpochMs, System.currentTimeMillis());
+    }
+
+    @Nonnull
+    public synchronized BackendMatchmakingConfig config() {
+        return config;
+    }
+
     @Nonnull
     public synchronized BackendSyncHealthState healthState() {
         return healthState;
+    }
+
+    @Nonnull
+    public synchronized List<BackendSyncLogEntry> recentSyncLogEntries() {
+        return List.copyOf(syncLogEntries);
     }
 
     private void maybeStartSync(long nowEpochMs) {
@@ -237,6 +262,7 @@ public final class BackendSyncService {
             return;
         }
         String staleSyncId = inFlightSyncId;
+        long staleSequence = inFlightSequence;
         staleSyncIds.add(staleSyncId);
         requestInFlight = false;
         inFlightSyncId = "";
@@ -251,9 +277,20 @@ public final class BackendSyncService {
             nowEpochMs + ERROR_BACKOFF_MS
         );
         nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, healthState.nextAttemptAtEpochMs());
+        recordSyncLogEntry(
+            BackendSyncHttpResult.failure(
+                staleSyncId,
+                staleSequence,
+                0,
+                "IN_FLIGHT_STALE",
+                "Backend sync request exceeded timeout safety window."
+            ),
+            nowEpochMs
+        );
     }
 
     private void handleHttpResult(@Nonnull BackendSyncHttpResult result, long nowEpochMs) {
+        recordSyncLogEntry(result, nowEpochMs);
         if (result.isAuthFailure()) {
             healthState = BackendSyncHealthState.failed("AUTH_FAILED", 401, "HTTP", "Backend sync auth failed.", nowEpochMs, nowEpochMs + AUTH_BACKOFF_MS);
             nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, healthState.nextAttemptAtEpochMs());
@@ -292,6 +329,43 @@ public final class BackendSyncService {
         }
         processAssignments(response.assignments(), nowEpochMs);
         healthState = BackendSyncHealthState.healthy(nowEpochMs);
+    }
+
+    private void recordSyncLogEntry(@Nonnull BackendSyncHttpResult result, long nowEpochMs) {
+        BackendSyncResponsePayload response = result.response();
+        int assignmentCount = response == null || response.assignments() == null ? 0 : response.assignments().size();
+        int acknowledgedAckCount = response == null || response.acknowledgedAssignmentAckIds() == null
+            ? 0
+            : response.acknowledgedAssignmentAckIds().size();
+        String outcome;
+        if (result.hasResponse()) {
+            outcome = "OK";
+        } else if (result.isAuthFailure()) {
+            outcome = "AUTH_FAILED";
+        } else if (result.isForbidden()) {
+            outcome = "AUTH_FORBIDDEN";
+        } else if (result.statusCode() > 0) {
+            outcome = "HTTP_ERROR";
+        } else {
+            outcome = normalize(result.errorClass()).isBlank() ? "FAILED" : normalize(result.errorClass());
+        }
+
+        syncLogEntries.addFirst(new BackendSyncLogEntry(
+            nowEpochMs,
+            "POST",
+            "/nexori/sync",
+            normalize(result.syncId()),
+            result.sequence(),
+            result.statusCode(),
+            outcome,
+            normalize(result.errorClass()),
+            normalize(result.message()),
+            assignmentCount,
+            acknowledgedAckCount
+        ));
+        while (syncLogEntries.size() > MAX_SYNC_LOG_ENTRIES) {
+            syncLogEntries.removeLast();
+        }
     }
 
     private void processAssignments(List<BackendAssignmentPayload> assignments, long nowEpochMs) {
@@ -560,5 +634,20 @@ public final class BackendSyncService {
     @Nonnull
     private static String normalize(String rawValue) {
         return rawValue == null || rawValue.isBlank() ? "" : rawValue.trim();
+    }
+
+    public record BackendSyncLogEntry(
+        long completedAtEpochMs,
+        String method,
+        String path,
+        String syncId,
+        long sequence,
+        int statusCode,
+        String outcome,
+        String errorClass,
+        String message,
+        int assignmentCount,
+        int acknowledgedAckCount
+    ) {
     }
 }

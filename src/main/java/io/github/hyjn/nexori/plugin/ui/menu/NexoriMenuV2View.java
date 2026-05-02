@@ -6,6 +6,7 @@ public enum NexoriMenuV2View {
     TARGETS("Targets"),
     RULES("Rules"),
     QUEUES("Minigames"),
+    BACKEND("Backend"),
     ACCESS_GATE("Access Gate"),
     OPERATIONS("Operations"),
     ABOUT("ABOUT NEXORI");
