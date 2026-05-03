@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.backend.payload;
 
+import com.google.gson.JsonObject;
+
 import java.util.List;
 import java.util.Map;
 
@@ -13,9 +15,11 @@ public record BackendResultPayload(
     String assignmentId,
     String queueId,
     String arenaId,
+    String rulesEngineId,
     List<BackendResultPlayerPayload> players,
     String reason,
     Map<String, String> metadata,
+    JsonObject customData,
     long endedAtEpochMs
 ) {
 }

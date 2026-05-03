@@ -65,6 +65,12 @@ public final class ArenaMatchService {
     public static final int MAX_RESULT_METADATA_KEY_LENGTH = 64;
     public static final int MAX_RESULT_METADATA_VALUE_LENGTH = 512;
     public static final int MAX_RESULT_PLAYER_REASON_LENGTH = 256;
+    public static final int MAX_CUSTOM_DATA_BYTES = 32_768;
+    public static final int MAX_CUSTOM_DATA_DEPTH = 8;
+    public static final int MAX_CUSTOM_DATA_PROPERTIES = 256;
+    public static final int MAX_CUSTOM_DATA_ARRAY_LENGTH = 128;
+    public static final int MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH = 64;
+    public static final int MAX_CUSTOM_DATA_STRING_LENGTH = 1024;
 
     private final HytaleLogger logger;
     private final SecureTravelService secureTravelService;
@@ -376,6 +382,18 @@ public final class ArenaMatchService {
     }
 
     /**
+     * Returns the public runtime snapshot for an active match.
+     */
+    @Nonnull
+    public synchronized Optional<ActiveMatchInfo> findActiveMatchInfo(@Nonnull String rawMatchId) {
+        ArenaActiveMatch match = find(rawMatchId).orElse(null);
+        if (match == null) {
+            return Optional.empty();
+        }
+        return Optional.of(toActiveMatchInfo(match));
+    }
+
+    /**
      * Returns the runtime placement state for an active match.
      */
     @Nonnull
@@ -418,6 +436,15 @@ public final class ArenaMatchService {
     }
 
     /**
+     * Returns the rules engine id for an active match.
+     */
+    @Nonnull
+    public synchronized Optional<String> findRulesEngineId(@Nonnull String rawMatchId) {
+        return find(rawMatchId)
+            .map(ArenaActiveMatch::rulesEngineId);
+    }
+
+    /**
      * Returns the exact player set a rules mod must include in submitMatchResult.
      */
     @Nonnull
@@ -436,6 +463,135 @@ public final class ArenaMatchService {
             match.activePlayerUuids(),
             match.eliminatedPlayerUuids()
         ));
+    }
+
+    /**
+     * Stores or replaces one player's accumulated outcome without returning the player or reporting results.
+     */
+    @Nonnull
+    public synchronized SetPlayerOutcomeResult setPlayerOutcome(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid,
+        @Nonnull ArenaPlayerResolutionOutcome outcome,
+        @Nonnull String backendOutcome,
+        @Nonnull String rawReason
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetPlayerOutcomeResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetPlayerOutcomeResult.matchAlreadyCompleted(match, playerUuid);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return SetPlayerOutcomeResult.playerMissing(match, playerUuid);
+        }
+        if (outcome == null) {
+            return SetPlayerOutcomeResult.invalidOutcome(match, playerUuid, "Outcome cannot be null.");
+        }
+        String reason = normalizeOptional(rawReason);
+        if (reason.length() > MAX_RESULT_PLAYER_REASON_LENGTH) {
+            return SetPlayerOutcomeResult.invalidReason(
+                match,
+                playerUuid,
+                "Player result reason exceeds " + MAX_RESULT_PLAYER_REASON_LENGTH + " characters."
+            );
+        }
+        long now = System.currentTimeMillis();
+        ArenaActiveMatch updated = match.withPlayerOutcome(playerUuid, outcome, normalizeOptional(backendOutcome, outcome.name()), reason, now);
+        matchesById.put(updated.matchId(), updated);
+        return SetPlayerOutcomeResult.updated(updated, playerUuid, outcome);
+    }
+
+    /**
+     * Stores logical spectator state for one player without changing outcome or transport.
+     */
+    @Nonnull
+    public synchronized SetPlayerSpectatorResult setPlayerSpectator(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid,
+        boolean spectator,
+        @Nonnull String rawReason
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetPlayerSpectatorResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetPlayerSpectatorResult.matchAlreadyCompleted(match, playerUuid, spectator);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return SetPlayerSpectatorResult.playerMissing(match, playerUuid, spectator);
+        }
+        String reason = normalizeOptional(rawReason);
+        if (reason.length() > MAX_RESULT_PLAYER_REASON_LENGTH) {
+            return SetPlayerSpectatorResult.invalidReason(
+                match,
+                playerUuid,
+                spectator,
+                "Spectator reason exceeds " + MAX_RESULT_PLAYER_REASON_LENGTH + " characters."
+            );
+        }
+        long now = System.currentTimeMillis();
+        ArenaActiveMatch updated = match.withSpectatorPlayer(playerUuid, spectator, now);
+        if (!reason.isBlank()) {
+            updated = updated.withLastError(reason, now);
+        }
+        matchesById.put(updated.matchId(), updated);
+        return SetPlayerSpectatorResult.updated(updated, playerUuid, spectator);
+    }
+
+    /**
+     * Schedules one player's return without changing outcome or completing the match.
+     */
+    @Nonnull
+    public synchronized ReturnPlayerResult returnPlayerToLobby(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid,
+        int delaySeconds,
+        @Nonnull String rawReason
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return ReturnPlayerResult.matchMissing(matchId);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return ReturnPlayerResult.playerMissing(match, playerUuid);
+        }
+        if (delaySeconds < 0) {
+            return ReturnPlayerResult.invalidDelay(match, playerUuid, "return delay cannot be negative.");
+        }
+        String reason = normalizeOptional(rawReason);
+        if (reason.length() > MAX_RESULT_PLAYER_REASON_LENGTH) {
+            return ReturnPlayerResult.invalidReason(
+                match,
+                playerUuid,
+                "Return reason exceeds " + MAX_RESULT_PLAYER_REASON_LENGTH + " characters."
+            );
+        }
+        long now = System.currentTimeMillis();
+        long returnAtEpochMs = now + (Math.max(delaySeconds, 0) * 1000L);
+        ArenaActiveMatch updated = match.withPendingReturn(playerUuid, returnAtEpochMs, now);
+        if (!reason.isBlank()) {
+            updated = updated.withLastError(reason, now);
+        }
+        matchesById.put(updated.matchId(), updated);
+        return ReturnPlayerResult.scheduled(updated, playerUuid, returnAtEpochMs);
+    }
+
+    /**
+     * Completes a match using accumulated outcomes, without moving players.
+     */
+    @Nonnull
+    public synchronized SubmitMatchResult submitFinalMatchResult(
+        @Nonnull String rawMatchId,
+        @Nonnull String rawReason,
+        JsonObject rawCustomData
+    ) {
+        return submitFinalMatchResult(rawMatchId, rawReason, Map.of(), rawCustomData);
     }
 
     /**
@@ -460,35 +616,97 @@ public final class ArenaMatchService {
             return SubmitMatchResult.invalid(match, validation.message());
         }
 
-        String payloadHash = hashSubmittedResult(match, validation.players(), validation.metadata(), validation.reason(), returnDelaySeconds);
+        if (match.hasSubmittedResult()) {
+            String payloadHash = hashFinalSubmittedResult(
+                match,
+                validation.players(),
+                validation.metadata(),
+                validation.reason(),
+                metadataToJson(validation.metadata())
+            );
+            boolean samePayload = match.resultPayloadHash().equals(payloadHash);
+            return SubmitMatchResult.alreadySubmitted(match, payloadHash, !samePayload);
+        }
+        if (match.hasCompleted()) {
+            return SubmitMatchResult.invalid(match, "Match result was already submitted.");
+        }
+
+        long now = System.currentTimeMillis();
+        ArenaActiveMatch updated = match;
+        for (SubmitMatchPlayerResult playerResult : validation.players()) {
+            updated = updated.withPlayerOutcome(
+                playerResult.playerUuid(),
+                playerResult.runtimeOutcome(),
+                playerResult.backendOutcome(),
+                playerResult.reason(),
+                now
+            );
+        }
+        matchesById.put(updated.matchId(), updated);
+        SubmitMatchResult result = submitFinalMatchResult(updated.matchId(), validation.reason(), validation.metadata(), metadataToJson(validation.metadata()));
+        if (result.outcome() != SubmitMatchOutcome.ACCEPTED) {
+            return result;
+        }
+
+        long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
+        ArenaActiveMatch returned = result.activeMatch();
+        for (SubmitMatchPlayerResult playerResult : validation.players()) {
+            returned = returned.withPendingReturn(playerResult.playerUuid(), now + delayMillis, now);
+        }
+        matchesById.put(returned.matchId(), returned);
+        return SubmitMatchResult.accepted(
+            returned,
+            result.players(),
+            result.metadata(),
+            result.customData(),
+            result.reason(),
+            result.resultPayloadHash(),
+            result.endedAtEpochMs()
+        );
+    }
+
+    @Nonnull
+    private SubmitMatchResult submitFinalMatchResult(
+        @Nonnull String rawMatchId,
+        @Nonnull String rawReason,
+        @Nonnull Map<String, String> metadata,
+        JsonObject rawCustomData
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SubmitMatchResult.matchMissing(matchId);
+        }
+
+        FinalValidationResult validation = validateFinalMatchResult(match, rawReason, metadata, rawCustomData);
+        if (!validation.valid()) {
+            return SubmitMatchResult.invalid(match, validation.message());
+        }
+
+        String payloadHash = hashFinalSubmittedResult(match, validation.players(), validation.metadata(), validation.reason(), validation.customData());
         if (match.hasSubmittedResult()) {
             boolean samePayload = match.resultPayloadHash().equals(payloadHash);
             return SubmitMatchResult.alreadySubmitted(match, payloadHash, !samePayload);
         }
+        if (match.hasCompleted()) {
+            return SubmitMatchResult.invalid(match, "Match result was already submitted.");
+        }
 
         long now = System.currentTimeMillis();
-        long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
-        ArenaActiveMatch updated = match;
-        boolean firstWinnerApplied = false;
-        // Temporary V1B limitation: backend payloads may contain multiple WIN outcomes for team modes,
-        // but the current arena runtime only exposes one winnerPlayerUuid. We keep the full result for
-        // backend reporting and use the first WIN locally until winnerPlayerUuids/winningTeamId exists.
-        for (SubmitMatchPlayerResult playerResult : validation.players()) {
-            if (playerResult.runtimeOutcome() == ArenaPlayerResolutionOutcome.WIN && !firstWinnerApplied) {
-                updated = markPlayerWinInternal(updated, playerResult.playerUuid(), playerResult.reason(), now)
-                    .withPendingReturn(playerResult.playerUuid(), now + delayMillis, now);
-                firstWinnerApplied = true;
-                continue;
-            }
-            updated = markPlayerLossInternal(updated, playerResult.playerUuid(), playerResult.reason(), now)
-                .withPendingReturn(playerResult.playerUuid(), now + delayMillis, now);
-        }
+        ArenaActiveMatch updated = match.withSubmittedResult(now, now, payloadHash);
         if (!validation.reason().isBlank()) {
             updated = updated.withLastError(validation.reason(), now);
         }
-        updated = updated.withSubmittedResult(now, now, payloadHash);
         matchesById.put(updated.matchId(), updated);
-        return SubmitMatchResult.accepted(updated, validation.players(), validation.metadata(), validation.reason(), payloadHash, now);
+        return SubmitMatchResult.accepted(
+            updated,
+            validation.players(),
+            validation.metadata(),
+            validation.customData(),
+            validation.reason(),
+            payloadHash,
+            now
+        );
     }
 
     /**
@@ -514,12 +732,11 @@ public final class ArenaMatchService {
         long now = System.currentTimeMillis();
         long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
         String reason = normalizeOptional(rawReason, outcome.name().toLowerCase());
-        ArenaActiveMatch updated = switch (outcome) {
-            case WIN -> markPlayerWinInternal(match, playerUuid, reason, now)
-                .withPendingReturn(playerUuid, now + delayMillis, now);
-            case LOSS -> markPlayerLossInternal(match, playerUuid, reason, now)
-                .withPendingReturn(playerUuid, now + delayMillis, now);
-        };
+        ArenaActiveMatch updated = match.withPlayerOutcome(playerUuid, outcome, outcome.name(), reason, now)
+            .withPendingReturn(playerUuid, now + delayMillis, now);
+        if (!reason.isBlank()) {
+            updated = updated.withLastError(reason, now);
+        }
         matchesById.put(updated.matchId(), updated);
         return ResolvePlayerResult.updated(updated, playerUuid, outcome);
     }
@@ -615,6 +832,59 @@ public final class ArenaMatchService {
     }
 
     @Nonnull
+    private FinalValidationResult validateFinalMatchResult(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull String rawReason,
+        @Nonnull Map<String, String> rawMetadata,
+        JsonObject rawCustomData
+    ) {
+        String reason = normalizeOptional(rawReason);
+        if (reason.length() > MAX_RESULT_REASON_LENGTH) {
+            return FinalValidationResult.invalid("Result reason exceeds " + MAX_RESULT_REASON_LENGTH + " characters.");
+        }
+        MetadataValidationResult metadataResult = normalizeResultMetadata(rawMetadata);
+        if (!metadataResult.valid()) {
+            return FinalValidationResult.invalid(metadataResult.message());
+        }
+        CustomDataValidationResult customDataResult = normalizeCustomData(rawCustomData);
+        if (!customDataResult.valid()) {
+            return FinalValidationResult.invalid(customDataResult.message());
+        }
+
+        List<UUID> requiredPlayers = buildRequiredResultPlayerUuids(match);
+        if (requiredPlayers.isEmpty()) {
+            return FinalValidationResult.invalid("Match has no required players to resolve.");
+        }
+        LinkedHashSet<UUID> requiredSet = new LinkedHashSet<>(requiredPlayers);
+        List<SubmitMatchPlayerResult> orderedPlayers = new ArrayList<>();
+        boolean hasWinner = false;
+        for (UUID requiredPlayer : requiredSet) {
+            ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(requiredPlayer);
+            if (outcome == null || outcome.outcome() == null) {
+                return FinalValidationResult.invalid("Result is missing required player outcome " + requiredPlayer + ".");
+            }
+            if (outcome.outcome() == ArenaPlayerResolutionOutcome.WIN) {
+                hasWinner = true;
+            }
+            orderedPlayers.add(new SubmitMatchPlayerResult(
+                requiredPlayer,
+                outcome.outcome(),
+                normalizeOptional(outcome.backendOutcome(), outcome.outcome().name()),
+                normalizeOptional(outcome.reason())
+            ));
+        }
+        for (UUID submittedPlayer : match.playerOutcomeByUuid().keySet()) {
+            if (!requiredSet.contains(submittedPlayer)) {
+                return FinalValidationResult.invalid("Result contains unexpected player outcome " + submittedPlayer + ".");
+            }
+        }
+        if (!hasWinner) {
+            return FinalValidationResult.invalid("Final match result must include at least one WIN outcome.");
+        }
+        return FinalValidationResult.valid(orderedPlayers, metadataResult.metadata(), reason, customDataResult.customData());
+    }
+
+    @Nonnull
     private MetadataValidationResult normalizeResultMetadata(@Nonnull Map<String, String> rawMetadata) {
         if (rawMetadata == null || rawMetadata.isEmpty()) {
             return MetadataValidationResult.valid(Map.of());
@@ -642,6 +912,108 @@ public final class ArenaMatchService {
             .sorted(Map.Entry.comparingByKey())
             .forEach(entry -> sorted.put(entry.getKey(), entry.getValue()));
         return MetadataValidationResult.valid(Map.copyOf(sorted));
+    }
+
+    @Nonnull
+    private CustomDataValidationResult normalizeCustomData(JsonObject rawCustomData) {
+        JsonObject customData = rawCustomData == null ? new JsonObject() : rawCustomData;
+        CustomDataCounter counter = new CustomDataCounter();
+        String validationError = validateCustomDataElement(customData, 1, counter, true);
+        if (!validationError.isBlank()) {
+            return CustomDataValidationResult.invalid(validationError);
+        }
+        JsonObject canonical = canonicalizeJsonObject(customData);
+        int bytes = GSON.toJson(canonical).getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > MAX_CUSTOM_DATA_BYTES) {
+            return CustomDataValidationResult.invalid("customData exceeds " + MAX_CUSTOM_DATA_BYTES + " UTF-8 bytes.");
+        }
+        return CustomDataValidationResult.valid(canonical);
+    }
+
+    @Nonnull
+    private String validateCustomDataElement(
+        JsonElement element,
+        int depth,
+        @Nonnull CustomDataCounter counter,
+        boolean root
+    ) {
+        if (depth > MAX_CUSTOM_DATA_DEPTH) {
+            return "customData exceeds max depth " + MAX_CUSTOM_DATA_DEPTH + ".";
+        }
+        if (element == null || element.isJsonNull()) {
+            return "";
+        }
+        if (root && !element.isJsonObject()) {
+            return "customData root must be a JSON object.";
+        }
+        if (element.isJsonObject()) {
+            JsonObject object = element.getAsJsonObject();
+            for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+                String key = normalizeOptional(entry.getKey());
+                if (key.isBlank()) {
+                    return "customData property names cannot be blank.";
+                }
+                if (key.length() > MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH) {
+                    return "customData property name exceeds " + MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH + " characters.";
+                }
+                counter.properties++;
+                if (counter.properties > MAX_CUSTOM_DATA_PROPERTIES) {
+                    return "customData cannot contain more than " + MAX_CUSTOM_DATA_PROPERTIES + " properties.";
+                }
+                String childError = validateCustomDataElement(entry.getValue(), depth + 1, counter, false);
+                if (!childError.isBlank()) {
+                    return childError;
+                }
+            }
+            return "";
+        }
+        if (element.isJsonArray()) {
+            JsonArray array = element.getAsJsonArray();
+            if (array.size() > MAX_CUSTOM_DATA_ARRAY_LENGTH) {
+                return "customData arrays cannot contain more than " + MAX_CUSTOM_DATA_ARRAY_LENGTH + " elements.";
+            }
+            for (JsonElement child : array) {
+                String childError = validateCustomDataElement(child, depth + 1, counter, false);
+                if (!childError.isBlank()) {
+                    return childError;
+                }
+            }
+            return "";
+        }
+        if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+            String value = element.getAsString();
+            if (value != null && value.length() > MAX_CUSTOM_DATA_STRING_LENGTH) {
+                return "customData string value exceeds " + MAX_CUSTOM_DATA_STRING_LENGTH + " characters.";
+            }
+        }
+        return "";
+    }
+
+    @Nonnull
+    private JsonObject canonicalizeJsonObject(@Nonnull JsonObject object) {
+        JsonObject canonical = new JsonObject();
+        object.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> canonical.add(entry.getKey().trim(), canonicalizeJsonElement(entry.getValue())));
+        return canonical;
+    }
+
+    @Nonnull
+    private JsonElement canonicalizeJsonElement(JsonElement element) {
+        if (element == null || element.isJsonNull()) {
+            return com.google.gson.JsonNull.INSTANCE;
+        }
+        if (element.isJsonObject()) {
+            return canonicalizeJsonObject(element.getAsJsonObject());
+        }
+        if (element.isJsonArray()) {
+            JsonArray array = new JsonArray();
+            for (JsonElement child : element.getAsJsonArray()) {
+                array.add(canonicalizeJsonElement(child));
+            }
+            return array;
+        }
+        return element.deepCopy();
     }
 
     @Nonnull
@@ -703,6 +1075,96 @@ public final class ArenaMatchService {
         }
     }
 
+    @Nonnull
+    private String hashFinalSubmittedResult(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull List<SubmitMatchPlayerResult> playerResults,
+        @Nonnull Map<String, String> metadata,
+        @Nonnull String reason,
+        @Nonnull JsonObject customData
+    ) {
+        StringBuilder canonical = new StringBuilder();
+        canonical.append("matchId=").append(match.matchId()).append('\n');
+        canonical.append("queueId=").append(match.queueId()).append('\n');
+        canonical.append("arenaId=").append(match.arenaId()).append('\n');
+        canonical.append("assignmentId=").append(match.assignmentId()).append('\n');
+        canonical.append("externalMatchId=").append(match.externalMatchId()).append('\n');
+        canonical.append("rulesEngineId=").append(match.rulesEngineId()).append('\n');
+        canonical.append("reason=").append(reason).append('\n');
+        playerResults.stream()
+            .sorted(Comparator.comparing(result -> result.playerUuid().toString()))
+            .forEach(result -> canonical
+                .append("player=")
+                .append(result.playerUuid())
+                .append('|')
+                .append(result.backendOutcome())
+                .append('|')
+                .append(result.reason())
+                .append('\n'));
+        metadata.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> canonical
+                .append("metadata=")
+                .append(entry.getKey())
+                .append('|')
+                .append(entry.getValue())
+                .append('\n'));
+        canonical.append("customData=").append(GSON.toJson(customData)).append('\n');
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte value : hash) {
+                hex.append(String.format("%02x", value));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable.", exception);
+        }
+    }
+
+    @Nonnull
+    private ActiveMatchInfo toActiveMatchInfo(@Nonnull ArenaActiveMatch match) {
+        List<PlayerOutcomeState> outcomes = new ArrayList<>();
+        for (ArenaActiveMatch.ArenaPlayerOutcomeState outcome : match.canonicalPlayerOutcomes()) {
+            outcomes.add(new PlayerOutcomeState(
+                outcome.playerUuid(),
+                outcome.outcome(),
+                outcome.backendOutcome(),
+                outcome.reason(),
+                outcome.updatedAtEpochMs()
+            ));
+        }
+        return new ActiveMatchInfo(
+            match.matchId(),
+            match.queueId(),
+            match.arenaId(),
+            match.assignmentId(),
+            match.externalMatchId(),
+            match.rulesEngineId(),
+            match.matchResolutionTriggerId(),
+            match.expectedPlayerUuids(),
+            match.arrivedPlayerUuids(),
+            match.activePlayerUuids(),
+            match.eliminatedPlayerUuids(),
+            match.spectatorPlayerUuids(),
+            buildRequiredResultPlayerUuids(match),
+            List.copyOf(outcomes),
+            match.expectedPlayerCount(),
+            match.completedAtEpochMs(),
+            match.resultSubmittedAtEpochMs()
+        );
+    }
+
+    @Nonnull
+    private JsonObject metadataToJson(@Nonnull Map<String, String> metadata) {
+        JsonObject root = new JsonObject();
+        metadata.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> root.addProperty(entry.getKey(), entry.getValue()));
+        return root;
+    }
+
     private void handleLaunchArrival(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
         LaunchContext launch;
         try {
@@ -747,6 +1209,7 @@ public final class ArenaMatchService {
                 launch.instanceTemplateId(),
                 instanceWorldName,
                 launch.matchResolutionTriggerId(),
+                launch.rulesEngineId(),
                 launch.assignmentId(),
                 launch.externalMatchId(),
                 launch.expectedPlayerUuids(),
@@ -754,6 +1217,8 @@ public final class ArenaMatchService {
                 List.of(playerRef.getUuid()),
                 List.of(playerRef.getUuid()),
                 List.of(),
+                List.of(),
+                Map.of(),
                 Map.of(),
                 "",
                 0L,
@@ -803,6 +1268,9 @@ public final class ArenaMatchService {
         }
         if (optionalIdentityMismatch(existing.assignmentId(), launch.assignmentId())) {
             return Optional.of("assignmentId mismatch");
+        }
+        if (optionalIdentityMismatch(existing.rulesEngineId(), launch.rulesEngineId())) {
+            return Optional.of("rulesEngineId mismatch");
         }
         if (!existing.expectedPlayerUuids().isEmpty()
             && !launch.expectedPlayerUuids().isEmpty()
@@ -1380,6 +1848,7 @@ public final class ArenaMatchService {
         String launchTravelProfileId,
         String instanceTemplateId,
         String matchResolutionTriggerId,
+        String rulesEngineId,
         String assignmentId,
         String externalMatchId,
         List<UUID> expectedPlayerUuids,
@@ -1407,6 +1876,9 @@ public final class ArenaMatchService {
                 root.has("matchResolutionTriggerId")
                     ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
                     : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
+                root.has("rulesEngineId")
+                    ? ArenaDefinition.normalizeRulesEngineId(root.get("rulesEngineId").getAsString())
+                    : "",
                 root.has("assignmentId")
                     ? normalizeOptional(root.get("assignmentId").getAsString(), "")
                     : "",
@@ -1453,6 +1925,145 @@ public final class ArenaMatchService {
         UPDATED,
         MATCH_MISSING,
         PLAYER_MISSING
+    }
+
+    public enum SetPlayerOutcomeOutcome {
+        UPDATED,
+        MATCH_MISSING,
+        PLAYER_MISSING,
+        MATCH_ALREADY_COMPLETED,
+        INVALID_OUTCOME,
+        INVALID_REASON
+    }
+
+    public record SetPlayerOutcomeResult(
+        SetPlayerOutcomeOutcome outcome,
+        String matchId,
+        UUID playerUuid,
+        ArenaPlayerResolutionOutcome playerOutcome,
+        String message,
+        ArenaActiveMatch activeMatch
+    ) {
+
+        @Nonnull
+        public static SetPlayerOutcomeResult updated(
+            @Nonnull ArenaActiveMatch activeMatch,
+            @Nonnull UUID playerUuid,
+            @Nonnull ArenaPlayerResolutionOutcome playerOutcome
+        ) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.UPDATED, activeMatch.matchId(), playerUuid, playerOutcome, "", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerOutcomeResult matchMissing(@Nonnull String matchId) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.MATCH_MISSING, matchId, null, null, "Match is not active.", null);
+        }
+
+        @Nonnull
+        public static SetPlayerOutcomeResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.PLAYER_MISSING, activeMatch.matchId(), playerUuid, null, "Player is not part of the active match.", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerOutcomeResult matchAlreadyCompleted(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.MATCH_ALREADY_COMPLETED, activeMatch.matchId(), playerUuid, null, "Match result was already submitted.", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerOutcomeResult invalidOutcome(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, @Nonnull String message) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.INVALID_OUTCOME, activeMatch.matchId(), playerUuid, null, message, activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerOutcomeResult invalidReason(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, @Nonnull String message) {
+            return new SetPlayerOutcomeResult(SetPlayerOutcomeOutcome.INVALID_REASON, activeMatch.matchId(), playerUuid, null, message, activeMatch);
+        }
+    }
+
+    public enum SetPlayerSpectatorOutcome {
+        UPDATED,
+        MATCH_MISSING,
+        PLAYER_MISSING,
+        MATCH_ALREADY_COMPLETED,
+        INVALID_REASON
+    }
+
+    public record SetPlayerSpectatorResult(
+        SetPlayerSpectatorOutcome outcome,
+        String matchId,
+        UUID playerUuid,
+        boolean spectator,
+        String message,
+        ArenaActiveMatch activeMatch
+    ) {
+
+        @Nonnull
+        public static SetPlayerSpectatorResult updated(@Nonnull ArenaActiveMatch activeMatch, @Nonnull UUID playerUuid, boolean spectator) {
+            return new SetPlayerSpectatorResult(SetPlayerSpectatorOutcome.UPDATED, activeMatch.matchId(), playerUuid, spectator, "", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerSpectatorResult matchMissing(@Nonnull String matchId) {
+            return new SetPlayerSpectatorResult(SetPlayerSpectatorOutcome.MATCH_MISSING, matchId, null, false, "Match is not active.", null);
+        }
+
+        @Nonnull
+        public static SetPlayerSpectatorResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, boolean spectator) {
+            return new SetPlayerSpectatorResult(SetPlayerSpectatorOutcome.PLAYER_MISSING, activeMatch.matchId(), playerUuid, spectator, "Player is not part of the active match.", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerSpectatorResult matchAlreadyCompleted(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, boolean spectator) {
+            return new SetPlayerSpectatorResult(SetPlayerSpectatorOutcome.MATCH_ALREADY_COMPLETED, activeMatch.matchId(), playerUuid, spectator, "Match result was already submitted.", activeMatch);
+        }
+
+        @Nonnull
+        public static SetPlayerSpectatorResult invalidReason(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, boolean spectator, @Nonnull String message) {
+            return new SetPlayerSpectatorResult(SetPlayerSpectatorOutcome.INVALID_REASON, activeMatch.matchId(), playerUuid, spectator, message, activeMatch);
+        }
+    }
+
+    public enum ReturnPlayerOutcome {
+        SCHEDULED,
+        MATCH_MISSING,
+        PLAYER_MISSING,
+        INVALID_DELAY,
+        INVALID_REASON
+    }
+
+    public record ReturnPlayerResult(
+        ReturnPlayerOutcome outcome,
+        String matchId,
+        UUID playerUuid,
+        long returnAtEpochMs,
+        String message,
+        ArenaActiveMatch activeMatch
+    ) {
+
+        @Nonnull
+        public static ReturnPlayerResult scheduled(@Nonnull ArenaActiveMatch activeMatch, @Nonnull UUID playerUuid, long returnAtEpochMs) {
+            return new ReturnPlayerResult(ReturnPlayerOutcome.SCHEDULED, activeMatch.matchId(), playerUuid, returnAtEpochMs, "", activeMatch);
+        }
+
+        @Nonnull
+        public static ReturnPlayerResult matchMissing(@Nonnull String matchId) {
+            return new ReturnPlayerResult(ReturnPlayerOutcome.MATCH_MISSING, matchId, null, 0L, "Match is not active.", null);
+        }
+
+        @Nonnull
+        public static ReturnPlayerResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid) {
+            return new ReturnPlayerResult(ReturnPlayerOutcome.PLAYER_MISSING, activeMatch.matchId(), playerUuid, 0L, "Player is not part of the active match.", activeMatch);
+        }
+
+        @Nonnull
+        public static ReturnPlayerResult invalidDelay(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, @Nonnull String message) {
+            return new ReturnPlayerResult(ReturnPlayerOutcome.INVALID_DELAY, activeMatch.matchId(), playerUuid, 0L, message, activeMatch);
+        }
+
+        @Nonnull
+        public static ReturnPlayerResult invalidReason(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, @Nonnull String message) {
+            return new ReturnPlayerResult(ReturnPlayerOutcome.INVALID_REASON, activeMatch.matchId(), playerUuid, 0L, message, activeMatch);
+        }
     }
 
     public record ResolvePlayerResult(
@@ -1504,6 +2115,7 @@ public final class ArenaMatchService {
         ArenaActiveMatch activeMatch,
         List<SubmitMatchPlayerResult> players,
         Map<String, String> metadata,
+        JsonObject customData,
         String reason,
         String resultPayloadHash,
         long endedAtEpochMs,
@@ -1516,6 +2128,7 @@ public final class ArenaMatchService {
             @Nonnull ArenaActiveMatch activeMatch,
             @Nonnull List<SubmitMatchPlayerResult> players,
             @Nonnull Map<String, String> metadata,
+            @Nonnull JsonObject customData,
             @Nonnull String reason,
             @Nonnull String resultPayloadHash,
             long endedAtEpochMs
@@ -1526,6 +2139,7 @@ public final class ArenaMatchService {
                 activeMatch,
                 List.copyOf(players),
                 Map.copyOf(metadata),
+                customData.deepCopy(),
                 reason,
                 resultPayloadHash,
                 endedAtEpochMs,
@@ -1546,6 +2160,7 @@ public final class ArenaMatchService {
                 activeMatch,
                 List.of(),
                 Map.of(),
+                new JsonObject(),
                 "",
                 resultPayloadHash,
                 activeMatch.completedAtEpochMs(),
@@ -1562,6 +2177,7 @@ public final class ArenaMatchService {
                 null,
                 List.of(),
                 Map.of(),
+                new JsonObject(),
                 "",
                 "",
                 0L,
@@ -1578,6 +2194,7 @@ public final class ArenaMatchService {
                 activeMatch,
                 List.of(),
                 Map.of(),
+                new JsonObject(),
                 "",
                 "",
                 0L,
@@ -1596,6 +2213,36 @@ public final class ArenaMatchService {
         List<UUID> arrivedPlayerUuids,
         List<UUID> activePlayerUuids,
         List<UUID> eliminatedPlayerUuids
+    ) {
+    }
+
+    public record ActiveMatchInfo(
+        String matchId,
+        String queueId,
+        String arenaId,
+        String assignmentId,
+        String externalMatchId,
+        String rulesEngineId,
+        String matchResolutionTriggerId,
+        List<UUID> expectedPlayerUuids,
+        List<UUID> arrivedPlayerUuids,
+        List<UUID> activePlayerUuids,
+        List<UUID> eliminatedPlayerUuids,
+        List<UUID> spectatorPlayerUuids,
+        List<UUID> requiredResultPlayerUuids,
+        List<PlayerOutcomeState> playerOutcomes,
+        int expectedPlayerCount,
+        long completedAtEpochMs,
+        long resultSubmittedAtEpochMs
+    ) {
+    }
+
+    public record PlayerOutcomeState(
+        UUID playerUuid,
+        ArenaPlayerResolutionOutcome outcome,
+        String backendOutcome,
+        String reason,
+        long updatedAtEpochMs
     ) {
     }
 
@@ -1621,6 +2268,30 @@ public final class ArenaMatchService {
         }
     }
 
+    private record FinalValidationResult(
+        boolean valid,
+        List<SubmitMatchPlayerResult> players,
+        Map<String, String> metadata,
+        String reason,
+        JsonObject customData,
+        String message
+    ) {
+        @Nonnull
+        private static FinalValidationResult valid(
+            @Nonnull List<SubmitMatchPlayerResult> players,
+            @Nonnull Map<String, String> metadata,
+            @Nonnull String reason,
+            @Nonnull JsonObject customData
+        ) {
+            return new FinalValidationResult(true, List.copyOf(players), Map.copyOf(metadata), reason, customData.deepCopy(), "");
+        }
+
+        @Nonnull
+        private static FinalValidationResult invalid(@Nonnull String message) {
+            return new FinalValidationResult(false, List.of(), Map.of(), "", new JsonObject(), normalizeOptional(message, "Invalid final match result."));
+        }
+    }
+
     private record MetadataValidationResult(
         boolean valid,
         Map<String, String> metadata,
@@ -1635,6 +2306,26 @@ public final class ArenaMatchService {
         private static MetadataValidationResult invalid(@Nonnull String message) {
             return new MetadataValidationResult(false, Map.of(), normalizeOptional(message, "Invalid result metadata."));
         }
+    }
+
+    private record CustomDataValidationResult(
+        boolean valid,
+        JsonObject customData,
+        String message
+    ) {
+        @Nonnull
+        private static CustomDataValidationResult valid(@Nonnull JsonObject customData) {
+            return new CustomDataValidationResult(true, customData.deepCopy(), "");
+        }
+
+        @Nonnull
+        private static CustomDataValidationResult invalid(@Nonnull String message) {
+            return new CustomDataValidationResult(false, new JsonObject(), normalizeOptional(message, "Invalid customData."));
+        }
+    }
+
+    private static final class CustomDataCounter {
+        private int properties;
     }
 
     public record ReturnHudState(

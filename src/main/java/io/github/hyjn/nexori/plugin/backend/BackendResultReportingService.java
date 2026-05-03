@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -102,6 +103,7 @@ public final class BackendResultReportingService {
         @Nonnull ArenaActiveMatch match,
         @Nonnull List<ArenaMatchService.SubmitMatchPlayerResult> players,
         @Nonnull Map<String, String> metadata,
+        @Nonnull JsonObject customData,
         @Nonnull String reason,
         @Nonnull String payloadHash,
         long endedAtEpochMs
@@ -125,9 +127,11 @@ public final class BackendResultReportingService {
             match.assignmentId(),
             match.queueId(),
             match.arenaId(),
+            match.rulesEngineId(),
             toStorePlayers(players),
             reason,
             metadata,
+            customData.deepCopy(),
             payloadHash,
             BackendResultStore.BackendResultStatus.PENDING.name(),
             0,
@@ -435,9 +439,11 @@ public final class BackendResultReportingService {
             result.assignmentId(),
             result.queueId(),
             result.arenaId(),
+            result.rulesEngineId(),
             List.copyOf(players),
             result.reason(),
             result.metadata(),
+            result.customData() == null ? new JsonObject() : result.customData().deepCopy(),
             result.endedAtEpochMs()
         );
     }

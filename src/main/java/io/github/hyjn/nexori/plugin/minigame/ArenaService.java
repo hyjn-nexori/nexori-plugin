@@ -84,6 +84,7 @@ public final class ArenaService {
             normalized.destinationTargetId(),
             normalized.instanceTemplateId(),
             normalized.matchResolutionTriggerId(),
+            normalized.rulesEngineId(),
             normalized.maxSupportedPlayers(),
             normalized.enabled()
         );

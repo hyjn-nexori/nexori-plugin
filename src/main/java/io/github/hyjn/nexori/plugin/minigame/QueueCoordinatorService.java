@@ -760,6 +760,7 @@ public final class QueueCoordinatorService {
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
         root.addProperty("instanceTemplateId", arena.instanceTemplateId());
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
+        root.addProperty("rulesEngineId", arena.rulesEngineId());
         root.addProperty("expectedPlayerCount", readyMembers.size());
         JsonArray expectedPlayerUuids = new JsonArray();
         for (QueueMemberState member : readyMembers) {

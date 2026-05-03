@@ -25,6 +25,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
     private final OptionalArg<String> displayNameArg;
     private final OptionalArg<String> instanceTemplateIdArg;
     private final OptionalArg<String> resolutionTriggerIdArg;
+    private final OptionalArg<String> rulesEngineIdArg;
 
     public NexoriArenaUpsertCommand(@Nonnull NexoriPlugin plugin, @Nonnull ArenaService arenaService) {
         super("nexoriarenaupsert", "Creates or updates a persisted Nexori arena definition.");
@@ -43,6 +44,11 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
         this.resolutionTriggerIdArg = withOptionalArg(
             "resolutionTriggerId",
             "Optional automatic arena resolution trigger id. Defaults to 'none'; use 'last_player_alive' to enable built-in auto resolution.",
+            ArgTypes.STRING
+        );
+        this.rulesEngineIdArg = withOptionalArg(
+            "rulesEngineId",
+            "Optional external rules engine id for manual/custom matches.",
             ArgTypes.STRING
         );
         setPermissionGroups("OP");
@@ -71,6 +77,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                     resolutionTriggerId = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID;
                 }
             }
+            String rulesEngineId = context.provided(rulesEngineIdArg) ? context.get(rulesEngineIdArg) : "";
             ArenaDefinition saved = arenaService.upsert(new ArenaDefinition(
                 arenaId,
                 displayName,
@@ -78,6 +85,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                 context.get(targetIdArg),
                 instanceTemplateId,
                 resolutionTriggerId,
+                rulesEngineId,
                 context.get(maxPlayersArg),
                 true
             ));
@@ -89,6 +97,7 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                     + " trigger=" + (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(saved.matchResolutionTriggerId())
                         ? "manual"
                         : saved.matchResolutionTriggerId())
+                    + " rulesEngineId=" + (saved.rulesEngineId().isBlank() ? "<blank>" : saved.rulesEngineId())
                     + " maxPlayers=" + saved.maxSupportedPlayers()
                     + "."
             ));

@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -325,9 +326,11 @@ public final class BackendResultStore {
         String assignmentId,
         String queueId,
         String arenaId,
+        String rulesEngineId,
         List<BackendResultPlayerRecord> players,
         String reason,
         Map<String, String> metadata,
+        JsonObject customData,
         String payloadHash,
         String status,
         int attemptCount,
@@ -352,9 +355,11 @@ public final class BackendResultStore {
                 normalize(assignmentId),
                 normalize(queueId),
                 normalize(arenaId),
+                normalize(rulesEngineId),
                 normalizePlayers(players),
                 normalize(reason),
                 normalizeMetadata(metadata),
+                customData == null ? new JsonObject() : customData.deepCopy(),
                 normalize(payloadHash),
                 normalizedStatus,
                 Math.max(0, attemptCount),
@@ -379,9 +384,11 @@ public final class BackendResultStore {
                 assignmentId,
                 queueId,
                 arenaId,
+                rulesEngineId,
                 players,
                 reason,
                 metadata,
+                customData == null ? new JsonObject() : customData.deepCopy(),
                 payloadHash,
                 status,
                 attemptCount + 1,
@@ -415,9 +422,11 @@ public final class BackendResultStore {
                 assignmentId,
                 queueId,
                 arenaId,
+                rulesEngineId,
                 players,
                 reason,
                 metadata,
+                customData == null ? new JsonObject() : customData.deepCopy(),
                 payloadHash,
                 nextStatus,
                 attemptCount,

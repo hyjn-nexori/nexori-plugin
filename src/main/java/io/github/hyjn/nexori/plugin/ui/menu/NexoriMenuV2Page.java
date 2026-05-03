@@ -123,6 +123,7 @@ public final class NexoriMenuV2Page {
     private static final String HOME_DISPLAY_NAME_INPUT_ID = "nexori-v2-home-display-name";
     private static final String HOME_SERVER_ADDRESS_INPUT_ID = "nexori-v2-home-server-address";
     private static final String DESTINATION_DISPLAY_NAME_INPUT_ID = "nexori-v2-destination-display-name";
+    private static final String DESTINATION_RULES_ENGINE_INPUT_ID = "nexori-v2-destination-rules-engine";
     private static final String QUEUE_DISPLAY_NAME_INPUT_ID = "nexori-v2-queue-display-name";
     private static final String QUEUE_MIN_PLAYERS_INPUT_ID = "nexori-v2-queue-min-players";
     private static final String QUEUE_MAX_PLAYERS_INPUT_ID = "nexori-v2-queue-max-players";
@@ -616,7 +617,8 @@ public final class NexoriMenuV2Page {
         List<String> instanceIds = buildInstanceTemplateIds();
         List<InstanceSpawnSlotDefinition> slots = plugin.getInstanceSpawnSlotService().list();
 
-        int setupHeight = 156;
+        boolean manualResolution = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(state.pendingDestinationTriggerId());
+        int setupHeight = manualResolution ? 228 : 156;
         int selectorViewportHeight = 300;
         int selectorHeight = 72 + 12 + selectorViewportHeight + 24;
         int savedViewportHeight = 300;
@@ -7160,6 +7162,10 @@ public final class NexoriMenuV2Page {
         String selectedTrigger = "last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
                 ? "Last Player Alive"
                 : "Manual";
+        boolean manualResolution = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(state.pendingDestinationTriggerId());
+        String rulesEngineValue = state.pendingDestinationRulesEngineId().isBlank()
+            ? (editing == null ? "" : editing.rulesEngineId())
+            : state.pendingDestinationRulesEngineId();
 
         boolean canSave = !state.pendingDestinationConnectionAddress().isBlank()
                 && !state.pendingDestinationInstanceTemplateId().isBlank();
@@ -7173,6 +7179,10 @@ public final class NexoriMenuV2Page {
         GroupBuilder topRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
         topRow.addChild(inputField("Display Name", DESTINATION_DISPLAY_NAME_INPUT_ID, displayValue, "New Game", 280));
         topRow.addChild(spacerX(12));
+        if (manualResolution) {
+            topRow.addChild(inputField("Rules Engine ID", DESTINATION_RULES_ENGINE_INPUT_ID, rulesEngineValue, "skywars", 260));
+            topRow.addChild(spacerX(12));
+        }
         GroupBuilder actions = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_BLOCK_H));
         actions.addChild(spacerY(HOME_ACTION_BUTTON_TOP));
         GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_FIELD_H));
@@ -7183,6 +7193,9 @@ public final class NexoriMenuV2Page {
                         .withAnchor(new HyUIAnchor().setWidth(190).setHeight(HOME_INPUT_FIELD_H))
                         .onClick((ignored, ctx) -> {
                             String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
+                            String rulesEngineId = manualResolution
+                                ? ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim()
+                                : "";
                             try {
                                 String destinationId = editing == null ? deriveId(displayName, "destination") : editing.arenaId();
                                 ArenaDefinition saved = plugin.getArenaService().upsert(new ArenaDefinition(
@@ -7192,12 +7205,13 @@ public final class NexoriMenuV2Page {
                                         "",
                                         state.pendingDestinationInstanceTemplateId(),
                                         state.pendingDestinationTriggerId(),
+                                        rulesEngineId,
                                         DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
                                         true
                                 ));
                                 open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
                             } catch (IOException | IllegalArgumentException exception) {
-                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
+                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), rulesEngineId, state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
                             }
                         })
         );
@@ -7863,7 +7877,7 @@ public final class NexoriMenuV2Page {
                 .onClick((ignored, ctx) -> open(
                     ref, store, playerRef, player, plugin,
                     state.withEditingDestinationId(destination.arenaId())
-                        .withDestinationDraft(destination.displayName(), destination.destinationConnectionAddress(), destination.destinationTargetId(), destination.instanceTemplateId(), destination.matchResolutionTriggerId(), Integer.toString(DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS))
+                        .withDestinationDraft(destination.displayName(), destination.destinationConnectionAddress(), destination.destinationTargetId(), destination.instanceTemplateId(), destination.matchResolutionTriggerId(), destination.rulesEngineId(), Integer.toString(DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS))
                         .withStatusText("Editing game " + destination.displayName() + ".")
                 ))
         );

@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import javax.annotation.Nonnull;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -19,6 +20,7 @@ public record ArenaActiveMatch(
     String instanceTemplateId,
     String instanceWorldName,
     String matchResolutionTriggerId,
+    String rulesEngineId,
     String assignmentId,
     String externalMatchId,
     List<UUID> expectedPlayerUuids,
@@ -26,6 +28,8 @@ public record ArenaActiveMatch(
     List<UUID> arrivedPlayerUuids,
     List<UUID> activePlayerUuids,
     List<UUID> eliminatedPlayerUuids,
+    List<UUID> spectatorPlayerUuids,
+    Map<UUID, ArenaPlayerOutcomeState> playerOutcomeByUuid,
     Map<UUID, Long> pendingReturnAtEpochMsByPlayerUuid,
     String winnerPlayerUuid,
     long completedAtEpochMs,
@@ -35,6 +39,65 @@ public record ArenaActiveMatch(
     long lastUpdatedAtEpochMs,
     String lastError
 ) {
+
+    public ArenaActiveMatch(
+        String matchId,
+        String queueId,
+        String arenaId,
+        String originLobbyId,
+        String returnConnectionAddress,
+        String returnFallbackTargetId,
+        String launchTravelProfileId,
+        String instanceTemplateId,
+        String instanceWorldName,
+        String matchResolutionTriggerId,
+        String assignmentId,
+        String externalMatchId,
+        List<UUID> expectedPlayerUuids,
+        int expectedPlayerCount,
+        List<UUID> arrivedPlayerUuids,
+        List<UUID> activePlayerUuids,
+        List<UUID> eliminatedPlayerUuids,
+        Map<UUID, Long> pendingReturnAtEpochMsByPlayerUuid,
+        String winnerPlayerUuid,
+        long completedAtEpochMs,
+        long resultSubmittedAtEpochMs,
+        String resultPayloadHash,
+        long createdAtEpochMs,
+        long lastUpdatedAtEpochMs,
+        String lastError
+    ) {
+        this(
+            matchId,
+            queueId,
+            arenaId,
+            originLobbyId,
+            returnConnectionAddress,
+            returnFallbackTargetId,
+            launchTravelProfileId,
+            instanceTemplateId,
+            instanceWorldName,
+            matchResolutionTriggerId,
+            "",
+            assignmentId,
+            externalMatchId,
+            expectedPlayerUuids,
+            expectedPlayerCount,
+            arrivedPlayerUuids,
+            activePlayerUuids,
+            eliminatedPlayerUuids,
+            List.of(),
+            Map.of(),
+            pendingReturnAtEpochMsByPlayerUuid,
+            winnerPlayerUuid,
+            completedAtEpochMs,
+            resultSubmittedAtEpochMs,
+            resultPayloadHash,
+            createdAtEpochMs,
+            lastUpdatedAtEpochMs,
+            lastError
+        );
+    }
 
     @Nonnull
     public ArenaActiveMatch normalized() {
@@ -50,6 +113,7 @@ public record ArenaActiveMatch(
             normalizeInstanceTemplateId(instanceTemplateId),
             normalizeOptional(instanceWorldName),
             normalizeOptional(matchResolutionTriggerId),
+            ArenaDefinition.normalizeRulesEngineId(rulesEngineId),
             normalizeOptional(assignmentId),
             normalizeOptional(externalMatchId),
             normalizePlayers(expectedPlayerUuids),
@@ -57,6 +121,8 @@ public record ArenaActiveMatch(
             normalizePlayers(arrivedPlayerUuids),
             normalizePlayers(activePlayerUuids),
             normalizePlayers(eliminatedPlayerUuids),
+            normalizePlayers(spectatorPlayerUuids),
+            normalizePlayerOutcomes(playerOutcomeByUuid),
             normalizePendingReturns(pendingReturnAtEpochMsByPlayerUuid),
             normalizeOptional(winnerPlayerUuid),
             Math.max(0L, completedAtEpochMs),
@@ -74,33 +140,20 @@ public record ArenaActiveMatch(
         arrived.add(playerUuid);
         LinkedHashSet<UUID> active = new LinkedHashSet<>(activePlayerUuids());
         active.add(playerUuid);
-        return new ArenaActiveMatch(
-            matchId(),
-            queueId(),
-            arenaId(),
-            originLobbyId(),
-            returnConnectionAddress(),
-            returnFallbackTargetId(),
-            launchTravelProfileId(),
-            instanceTemplateId(),
-            instanceWorldName(),
-            matchResolutionTriggerId(),
-            assignmentId(),
-            externalMatchId(),
-            expectedPlayerUuids(),
-            expectedPlayerCount(),
+        return copy(
             List.copyOf(arrived),
             List.copyOf(active),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
-            createdAtEpochMs(),
             nowEpochMs,
             lastError()
-        ).normalized();
+        );
     }
 
     @Nonnull
@@ -116,6 +169,7 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             rawInstanceWorldName,
             matchResolutionTriggerId(),
+            rulesEngineId(),
             assignmentId(),
             externalMatchId(),
             expectedPlayerUuids(),
@@ -123,6 +177,8 @@ public record ArenaActiveMatch(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
@@ -140,99 +196,139 @@ public record ArenaActiveMatch(
         eliminated.add(playerUuid);
         LinkedHashMap<UUID, Long> pendingReturns = new LinkedHashMap<>(pendingReturnAtEpochMsByPlayerUuid());
         pendingReturns.put(playerUuid, returnAtEpochMs);
-        return new ArenaActiveMatch(
-            matchId(),
-            queueId(),
-            arenaId(),
-            originLobbyId(),
-            returnConnectionAddress(),
-            returnFallbackTargetId(),
-            launchTravelProfileId(),
-            instanceTemplateId(),
-            instanceWorldName(),
-            matchResolutionTriggerId(),
-            assignmentId(),
-            externalMatchId(),
-            expectedPlayerUuids(),
-            expectedPlayerCount(),
+        LinkedHashMap<UUID, ArenaPlayerOutcomeState> outcomes = new LinkedHashMap<>(playerOutcomeByUuid());
+        outcomes.put(playerUuid, new ArenaPlayerOutcomeState(
+            playerUuid,
+            ArenaPlayerResolutionOutcome.LOSS,
+            ArenaPlayerResolutionOutcome.LOSS.name(),
+            "eliminated",
+            nowEpochMs
+        ));
+        return copy(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             List.copyOf(eliminated),
+            spectatorPlayerUuids(),
+            outcomes,
             pendingReturns,
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
-            createdAtEpochMs(),
             nowEpochMs,
             lastError()
-        ).normalized();
+        );
     }
 
     @Nonnull
     public ArenaActiveMatch withWinner(@Nonnull UUID playerUuid, long returnAtEpochMs, long nowEpochMs) {
         LinkedHashMap<UUID, Long> pendingReturns = new LinkedHashMap<>(pendingReturnAtEpochMsByPlayerUuid());
         pendingReturns.put(playerUuid, returnAtEpochMs);
-        return new ArenaActiveMatch(
-            matchId(),
-            queueId(),
-            arenaId(),
-            originLobbyId(),
-            returnConnectionAddress(),
-            returnFallbackTargetId(),
-            launchTravelProfileId(),
-            instanceTemplateId(),
-            instanceWorldName(),
-            matchResolutionTriggerId(),
-            assignmentId(),
-            externalMatchId(),
-            expectedPlayerUuids(),
-            expectedPlayerCount(),
+        LinkedHashSet<UUID> eliminated = new LinkedHashSet<>(eliminatedPlayerUuids());
+        eliminated.remove(playerUuid);
+        LinkedHashMap<UUID, ArenaPlayerOutcomeState> outcomes = new LinkedHashMap<>(playerOutcomeByUuid());
+        outcomes.put(playerUuid, new ArenaPlayerOutcomeState(
+            playerUuid,
+            ArenaPlayerResolutionOutcome.WIN,
+            ArenaPlayerResolutionOutcome.WIN.name(),
+            "winner",
+            nowEpochMs
+        ));
+        return copy(
             arrivedPlayerUuids(),
             activePlayerUuids(),
-            eliminatedPlayerUuids(),
+            List.copyOf(eliminated),
+            spectatorPlayerUuids(),
+            outcomes,
             pendingReturns,
             playerUuid.toString(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
-            createdAtEpochMs(),
             nowEpochMs,
             lastError()
-        ).normalized();
+        );
     }
 
     @Nonnull
     public ArenaActiveMatch withPendingReturn(@Nonnull UUID playerUuid, long returnAtEpochMs, long nowEpochMs) {
         LinkedHashMap<UUID, Long> pendingReturns = new LinkedHashMap<>(pendingReturnAtEpochMsByPlayerUuid());
         pendingReturns.put(playerUuid, returnAtEpochMs);
-        return new ArenaActiveMatch(
-            matchId(),
-            queueId(),
-            arenaId(),
-            originLobbyId(),
-            returnConnectionAddress(),
-            returnFallbackTargetId(),
-            launchTravelProfileId(),
-            instanceTemplateId(),
-            instanceWorldName(),
-            matchResolutionTriggerId(),
-            assignmentId(),
-            externalMatchId(),
-            expectedPlayerUuids(),
-            expectedPlayerCount(),
+        return copy(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturns,
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
-            createdAtEpochMs(),
             nowEpochMs,
             lastError()
-        ).normalized();
+        );
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withPlayerOutcome(
+        @Nonnull UUID playerUuid,
+        @Nonnull ArenaPlayerResolutionOutcome outcome,
+        @Nonnull String backendOutcome,
+        @Nonnull String reason,
+        long nowEpochMs
+    ) {
+        LinkedHashSet<UUID> eliminated = new LinkedHashSet<>(eliminatedPlayerUuids());
+        String winner = winnerPlayerUuid();
+        if (outcome == ArenaPlayerResolutionOutcome.WIN) {
+            eliminated.remove(playerUuid);
+            winner = playerUuid.toString();
+        } else {
+            eliminated.add(playerUuid);
+            if (winner.equalsIgnoreCase(playerUuid.toString())) {
+                winner = "";
+            }
+        }
+        LinkedHashMap<UUID, ArenaPlayerOutcomeState> outcomes = new LinkedHashMap<>(playerOutcomeByUuid());
+        outcomes.put(playerUuid, new ArenaPlayerOutcomeState(playerUuid, outcome, backendOutcome, reason, nowEpochMs));
+        return copy(
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            List.copyOf(eliminated),
+            spectatorPlayerUuids(),
+            outcomes,
+            pendingReturnAtEpochMsByPlayerUuid(),
+            winner,
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withSpectatorPlayer(@Nonnull UUID playerUuid, boolean spectator, long nowEpochMs) {
+        LinkedHashSet<UUID> spectators = new LinkedHashSet<>(spectatorPlayerUuids());
+        if (spectator) {
+            spectators.add(playerUuid);
+        } else {
+            spectators.remove(playerUuid);
+        }
+        return copy(
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            List.copyOf(spectators),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
     }
 
     @Nonnull
@@ -249,6 +345,7 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            rulesEngineId(),
             assignmentId(),
             externalMatchId(),
             expectedPlayerUuids(),
@@ -256,6 +353,8 @@ public record ArenaActiveMatch(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
@@ -280,6 +379,7 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            rulesEngineId(),
             assignmentId(),
             externalMatchId(),
             expectedPlayerUuids(),
@@ -287,6 +387,8 @@ public record ArenaActiveMatch(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
@@ -311,6 +413,7 @@ public record ArenaActiveMatch(
             instanceTemplateId(),
             instanceWorldName(),
             matchResolutionTriggerId(),
+            rulesEngineId(),
             assignmentId(),
             externalMatchId(),
             expectedPlayerUuids(),
@@ -318,6 +421,8 @@ public record ArenaActiveMatch(
             arrivedPlayerUuids(),
             activePlayerUuids(),
             eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
             winnerPlayerUuid(),
             completedAtEpochMs,
@@ -335,43 +440,36 @@ public record ArenaActiveMatch(
         active.remove(playerUuid);
         LinkedHashSet<UUID> eliminated = new LinkedHashSet<>(eliminatedPlayerUuids());
         eliminated.remove(playerUuid);
+        LinkedHashSet<UUID> spectators = new LinkedHashSet<>(spectatorPlayerUuids());
+        spectators.remove(playerUuid);
         LinkedHashMap<UUID, Long> pendingReturns = new LinkedHashMap<>(pendingReturnAtEpochMsByPlayerUuid());
         pendingReturns.remove(playerUuid);
         String winner = winnerPlayerUuid();
         if (winner.equalsIgnoreCase(playerUuid.toString())) {
             winner = "";
         }
-        return new ArenaActiveMatch(
-            matchId(),
-            queueId(),
-            arenaId(),
-            originLobbyId(),
-            returnConnectionAddress(),
-            returnFallbackTargetId(),
-            launchTravelProfileId(),
-            instanceTemplateId(),
-            instanceWorldName(),
-            matchResolutionTriggerId(),
-            assignmentId(),
-            externalMatchId(),
-            expectedPlayerUuids(),
-            expectedPlayerCount(),
+        return copy(
             arrivedPlayerUuids(),
             List.copyOf(active),
             List.copyOf(eliminated),
+            List.copyOf(spectators),
+            playerOutcomeByUuid(),
             pendingReturns,
             winner,
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
-            createdAtEpochMs(),
             nowEpochMs,
             lastError()
-        ).normalized();
+        );
     }
 
     public boolean hasPlayer(@Nonnull UUID playerUuid) {
-        return activePlayerUuids().contains(playerUuid);
+        return activePlayerUuids().contains(playerUuid)
+            || eliminatedPlayerUuids().contains(playerUuid)
+            || spectatorPlayerUuids().contains(playerUuid)
+            || arrivedPlayerUuids().contains(playerUuid)
+            || expectedPlayerUuids().contains(playerUuid);
     }
 
     public boolean hasExpectedPlayerList() {
@@ -414,7 +512,15 @@ public record ArenaActiveMatch(
     public List<UUID> alivePlayerUuids() {
         LinkedHashSet<UUID> alive = new LinkedHashSet<>(activePlayerUuids());
         alive.removeAll(eliminatedPlayerUuids());
+        alive.removeAll(spectatorPlayerUuids());
         return List.copyOf(alive);
+    }
+
+    @Nonnull
+    public List<ArenaPlayerOutcomeState> canonicalPlayerOutcomes() {
+        return playerOutcomeByUuid().values().stream()
+            .sorted(Comparator.comparing(state -> state.playerUuid().toString()))
+            .toList();
     }
 
     @Nonnull
@@ -429,7 +535,56 @@ public record ArenaActiveMatch(
     }
 
     public boolean isEmpty() {
-        return activePlayerUuids().isEmpty() && pendingReturnAtEpochMsByPlayerUuid().isEmpty();
+        return activePlayerUuids().isEmpty()
+            && pendingReturnAtEpochMsByPlayerUuid().isEmpty()
+            && spectatorPlayerUuids().isEmpty();
+    }
+
+    @Nonnull
+    private ArenaActiveMatch copy(
+        @Nonnull List<UUID> arrived,
+        @Nonnull List<UUID> active,
+        @Nonnull List<UUID> eliminated,
+        @Nonnull List<UUID> spectators,
+        @Nonnull Map<UUID, ArenaPlayerOutcomeState> outcomes,
+        @Nonnull Map<UUID, Long> pendingReturns,
+        @Nonnull String winner,
+        long completedAt,
+        long resultSubmittedAt,
+        @Nonnull String payloadHash,
+        long nowEpochMs,
+        @Nonnull String error
+    ) {
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            matchResolutionTriggerId(),
+            rulesEngineId(),
+            assignmentId(),
+            externalMatchId(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrived,
+            active,
+            eliminated,
+            spectators,
+            outcomes,
+            pendingReturns,
+            winner,
+            completedAt,
+            resultSubmittedAt,
+            payloadHash,
+            createdAtEpochMs(),
+            nowEpochMs,
+            error
+        ).normalized();
     }
 
     @Nonnull
@@ -444,6 +599,24 @@ public record ArenaActiveMatch(
             }
         }
         return List.copyOf(new ArrayList<>(players));
+    }
+
+    @Nonnull
+    private static Map<UUID, ArenaPlayerOutcomeState> normalizePlayerOutcomes(Map<UUID, ArenaPlayerOutcomeState> rawOutcomes) {
+        if (rawOutcomes == null || rawOutcomes.isEmpty()) {
+            return Map.of();
+        }
+        LinkedHashMap<UUID, ArenaPlayerOutcomeState> normalized = new LinkedHashMap<>();
+        rawOutcomes.entrySet().stream()
+            .filter(entry -> entry.getKey() != null && entry.getValue() != null)
+            .sorted(Map.Entry.comparingByKey(Comparator.comparing(UUID::toString)))
+            .forEach(entry -> {
+                ArenaPlayerOutcomeState state = entry.getValue().normalized(entry.getKey());
+                if (state.playerUuid() != null && state.outcome() != null) {
+                    normalized.put(state.playerUuid(), state);
+                }
+            });
+        return Map.copyOf(normalized);
     }
 
     @Nonnull
@@ -485,5 +658,35 @@ public record ArenaActiveMatch(
             return ArenaDefinition.NO_INSTANCE_TEMPLATE_ID;
         }
         return normalized;
+    }
+
+    public record ArenaPlayerOutcomeState(
+        UUID playerUuid,
+        ArenaPlayerResolutionOutcome outcome,
+        String backendOutcome,
+        String reason,
+        long updatedAtEpochMs
+    ) {
+
+        @Nonnull
+        private ArenaPlayerOutcomeState normalized(@Nonnull UUID fallbackPlayerUuid) {
+            UUID normalizedPlayerUuid = playerUuid == null ? fallbackPlayerUuid : playerUuid;
+            return new ArenaPlayerOutcomeState(
+                normalizedPlayerUuid,
+                outcome,
+                normalizeOptional(backendOutcome, outcome == null ? "" : outcome.name()),
+                normalizeOptional(reason),
+                Math.max(0L, updatedAtEpochMs)
+            );
+        }
+    }
+
+    @Nonnull
+    private static String normalizeOptional(String rawValue, @Nonnull String defaultValue) {
+        if (rawValue == null) {
+            return defaultValue;
+        }
+        String normalized = rawValue.trim();
+        return normalized.isBlank() ? defaultValue : normalized;
     }
 }
