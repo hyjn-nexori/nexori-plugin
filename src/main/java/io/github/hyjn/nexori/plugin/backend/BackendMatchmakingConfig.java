@@ -4,7 +4,7 @@ import javax.annotation.Nonnull;
 
 public record BackendMatchmakingConfig(
     int schemaVersion,
-    boolean enabled,
+    boolean syncEnabled,
     String baseUrl,
     String serverToken,
     long syncIntervalMs,
@@ -38,7 +38,7 @@ public record BackendMatchmakingConfig(
     public BackendMatchmakingConfig normalized() {
         return new BackendMatchmakingConfig(
             CURRENT_SCHEMA_VERSION,
-            enabled,
+            syncEnabled,
             normalizeOptional(baseUrl),
             normalizeOptional(serverToken),
             syncIntervalMs <= 0L ? DEFAULT_SYNC_INTERVAL_MS : syncIntervalMs,
@@ -55,7 +55,7 @@ public record BackendMatchmakingConfig(
 
     public boolean isSyncUsable() {
         BackendMatchmakingConfig normalized = normalized();
-        return !normalized.enabled() || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
+        return !normalized.syncEnabled() || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
     }
 
     public boolean isResultReportingUsable() {

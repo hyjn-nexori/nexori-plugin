@@ -8406,7 +8406,7 @@ public final class NexoriMenuV2Page {
         int height
     ) {
         BackendConfigDraft draft = backendDraft(playerRef);
-        boolean enabled = draft != null && draft.enabled() != null ? draft.enabled() : config.enabled();
+        boolean enabled = draft != null && draft.enabled() != null ? draft.enabled() : config.syncEnabled();
         boolean resultReportingEnabled = draft != null && draft.resultReportingEnabled() != null ? draft.resultReportingEnabled() : config.resultReportingEnabled();
         String baseUrl = draft != null && draft.baseUrl() != null ? draft.baseUrl() : config.baseUrl();
         String tokenValue = draft != null && draft.serverToken() != null ? draft.serverToken() : "";
@@ -8519,7 +8519,7 @@ public final class NexoriMenuV2Page {
         );
         card.addChild(row);
         card.addChild(spacerY(6));
-        card.addChild(label("Current: " + (config.enabled() ? "ENABLED" : "DISABLED"), INFO, width - 28));
+        card.addChild(label("Current: " + (config.syncEnabled() ? "ENABLED" : "DISABLED"), INFO, width - 28));
         return card;
     }
 
@@ -8630,7 +8630,7 @@ public final class NexoriMenuV2Page {
         String syncMessage = plugin.getBackendSyncService().healthState().lastMessage();
         String resultHealth = plugin.getBackendResultReportingService().healthState().status();
         String resultMessage = plugin.getBackendResultReportingService().healthState().lastMessage();
-        String syncLine = config.enabled()
+        String syncLine = config.syncEnabled()
             ? "Sync: " + syncHealth + (syncMessage.isBlank() ? "" : " - " + syncMessage)
             : "Sync: DISABLED";
         String resultLine = config.resultReportingEnabled()
@@ -8884,7 +8884,7 @@ public final class NexoriMenuV2Page {
             return;
         }
         BACKEND_CONFIG_DRAFTS.put(playerRef.getUuid(), new BackendConfigDraft(
-            current != null && current.enabled() != null ? current.enabled() : config.enabled(),
+            current != null && current.enabled() != null ? current.enabled() : config.syncEnabled(),
             current != null && current.resultReportingEnabled() != null ? current.resultReportingEnabled() : config.resultReportingEnabled(),
             ctx.getValue(BACKEND_BASE_URL_INPUT_ID, String.class).orElse(current != null && current.baseUrl() != null ? current.baseUrl() : config.baseUrl()).trim(),
             ctx.getValue(BACKEND_SERVER_TOKEN_INPUT_ID, String.class).orElse(current != null && current.serverToken() != null ? current.serverToken() : "").trim(),
@@ -8903,7 +8903,7 @@ public final class NexoriMenuV2Page {
         String status = plugin.getBackendSyncService().healthState().status();
         String detail = plugin.getBackendSyncService().healthState().lastMessage();
         if (detail.isBlank()) {
-            detail = config.enabled() ? "No heartbeat error recorded." : "Backend sync is disabled. BACKEND_DRIVEN queues will wait until it is enabled and usable.";
+            detail = config.syncEnabled() ? "No heartbeat error recorded." : "Backend sync is disabled. BACKEND_DRIVEN queues will wait until it is enabled and usable.";
         }
         card.addChild(label(detail, MUTED, width - 32));
         card.addChild(spacerY(12));

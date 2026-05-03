@@ -2,6 +2,9 @@ package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -36,7 +39,7 @@ public final class BackendMatchmakingConfigStore {
             save(defaults);
             return defaults;
         }
-        BackendMatchmakingConfig config = GSON.fromJson(json, BackendMatchmakingConfig.class);
+        BackendMatchmakingConfig config = readConfig(json);
         if (config == null) {
             BackendMatchmakingConfig defaults = BackendMatchmakingConfig.defaults();
             save(defaults);
@@ -58,6 +61,42 @@ public final class BackendMatchmakingConfigStore {
             Files.writeString(file, json, StandardCharsets.UTF_8);
             Files.deleteIfExists(tmp);
         }
+    }
+
+    private BackendMatchmakingConfig readConfig(@Nonnull String json) {
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        return new BackendMatchmakingConfig(
+            intValue(root, "schemaVersion", BackendMatchmakingConfig.CURRENT_SCHEMA_VERSION),
+            booleanValue(root, "syncEnabled", false),
+            stringValue(root, "baseUrl", ""),
+            stringValue(root, "serverToken", ""),
+            longValue(root, "syncIntervalMs", 0L),
+            stringValue(root, "region", ""),
+            longValue(root, "requestTimeoutMs", 0L),
+            booleanValue(root, "resultReportingEnabled", false),
+            longValue(root, "resultRetryIntervalMs", 0L)
+        );
+    }
+
+    private static boolean booleanValue(@Nonnull JsonObject root, @Nonnull String key, boolean defaultValue) {
+        JsonElement element = root.get(key);
+        return element == null || element.isJsonNull() ? defaultValue : element.getAsBoolean();
+    }
+
+    private static int intValue(@Nonnull JsonObject root, @Nonnull String key, int defaultValue) {
+        JsonElement element = root.get(key);
+        return element == null || element.isJsonNull() ? defaultValue : element.getAsInt();
+    }
+
+    private static long longValue(@Nonnull JsonObject root, @Nonnull String key, long defaultValue) {
+        JsonElement element = root.get(key);
+        return element == null || element.isJsonNull() ? defaultValue : element.getAsLong();
+    }
+
+    @Nonnull
+    private static String stringValue(@Nonnull JsonObject root, @Nonnull String key, @Nonnull String defaultValue) {
+        JsonElement element = root.get(key);
+        return element == null || element.isJsonNull() ? defaultValue : element.getAsString();
     }
 
     private void ensureParent() throws IOException {

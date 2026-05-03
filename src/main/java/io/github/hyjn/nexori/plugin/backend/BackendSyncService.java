@@ -115,7 +115,7 @@ public final class BackendSyncService {
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
             .build();
-        if (!this.config.enabled()) {
+        if (!this.config.syncEnabled()) {
             this.healthState = BackendSyncHealthState.healthy(System.currentTimeMillis());
         }
         this.nextSyncAllowedAtEpochMs = Math.min(this.nextSyncAllowedAtEpochMs, System.currentTimeMillis());
@@ -137,7 +137,7 @@ public final class BackendSyncService {
     }
 
     private void maybeStartSync(long nowEpochMs) {
-        if (!config.enabled()) {
+        if (!config.syncEnabled()) {
             return;
         }
         if (!config.isUsable()) {
