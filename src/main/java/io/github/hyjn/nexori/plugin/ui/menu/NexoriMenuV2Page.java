@@ -7196,6 +7196,25 @@ public final class NexoriMenuV2Page {
                             String rulesEngineId = manualResolution
                                 ? ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim()
                                 : "";
+                            if (manualResolution && rulesEngineId.isBlank()) {
+                                open(
+                                    ref,
+                                    store,
+                                    playerRef,
+                                    player,
+                                    plugin,
+                                    state.withDestinationDraft(
+                                        displayName,
+                                        state.pendingDestinationConnectionAddress(),
+                                        "",
+                                        state.pendingDestinationInstanceTemplateId(),
+                                        state.pendingDestinationTriggerId(),
+                                        rulesEngineId,
+                                        state.pendingDestinationMaxPlayers()
+                                    ).withStatusText("Rules Engine ID is required for Manual games. Example: skywars, bedwars, capture_the_zone.")
+                                );
+                                return;
+                            }
                             try {
                                 String destinationId = editing == null ? deriveId(displayName, "destination") : editing.arenaId();
                                 ArenaDefinition saved = plugin.getArenaService().upsert(new ArenaDefinition(
