@@ -21,6 +21,7 @@ import io.github.hyjn.nexori.plugin.backend.BackendSyncTickSystem;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingStore;
 import io.github.hyjn.nexori.plugin.binding.PortalBindingSyncService;
+import io.github.hyjn.nexori.plugin.catalogsync.NetworkCatalogSyncService;
 import io.github.hyjn.nexori.plugin.command.NexoriCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriArenaListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriArenaUpsertCommand;
@@ -151,6 +152,7 @@ public class NexoriPlugin extends JavaPlugin {
     private DiscoveredDestinationTargetCacheService discoveredDestinationTargetCacheService;
     private TriggerBindingService triggerBindingService;
     private PortalBindingSyncService portalBindingSyncService;
+    private NetworkCatalogSyncService networkCatalogSyncService;
     private PortalInstanceService portalInstanceService;
     private SecureReferralService secureReferralService;
     private InventoryTransferService inventoryTransferService;
@@ -365,6 +367,14 @@ public class NexoriPlugin extends JavaPlugin {
                 this.triggerBindingService,
                 this.secureReferralService
             );
+            this.networkCatalogSyncService = new NetworkCatalogSyncService(
+                this.getLogger(),
+                this.localIdentity,
+                this.trustBundleStore,
+                this.secureReferralService,
+                this.arenaService,
+                this.queueService
+            );
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
@@ -440,6 +450,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.serverPolicySyncService.responseHandler());
             this.secureReferralService.registerHandler(this.portalBindingSyncService.applyRequestHandler());
             this.secureReferralService.registerHandler(this.portalBindingSyncService.responseHandler());
+            this.secureReferralService.registerHandler(this.networkCatalogSyncService.applyRequestHandler());
+            this.secureReferralService.registerHandler(this.networkCatalogSyncService.resultHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestRequestHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestResponseHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.chunkRequestHandler());
@@ -540,6 +552,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoverySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.portalBindingSyncService::handlePlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.networkCatalogSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             // Entity systems keep portals, queues, match state, HUDs, and labels updated during world ticks.
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
@@ -651,6 +664,10 @@ public class NexoriPlugin extends JavaPlugin {
         return portalBindingSyncService;
     }
 
+    public NetworkCatalogSyncService getNetworkCatalogSyncService() {
+        return networkCatalogSyncService;
+    }
+
     public PortalInstanceService getPortalInstanceService() {
         return portalInstanceService;
     }
@@ -681,6 +698,10 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiagnosticsService getDiagnosticsService() {
         return diagnosticsService;
+    }
+
+    public TrustBundleStore getTrustBundleStore() {
+        return trustBundleStore;
     }
 
     public DiagnosticsCollectService getDiagnosticsCollectService() {

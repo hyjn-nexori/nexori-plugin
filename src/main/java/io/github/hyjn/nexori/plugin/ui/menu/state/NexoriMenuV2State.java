@@ -1,5 +1,6 @@
 package io.github.hyjn.nexori.plugin.ui.menu.state;
 
+import io.github.hyjn.nexori.plugin.catalogsync.CatalogSyncEntityType;
 import io.github.hyjn.nexori.plugin.ui.menu.NexoriMenuV2View;
 
 import javax.annotation.Nonnull;
@@ -44,7 +45,11 @@ public record NexoriMenuV2State(
     String pendingQueueCountdownSeconds,
     String selectedTargetServerConnectionAddress,
     String selectedRuleGroupId,
-    String pendingRuleGroupName
+    String pendingRuleGroupName,
+    CatalogSyncEntityType selectedCatalogSyncEntityType,
+    String selectedCatalogSyncEntityId,
+    String selectedCatalogSyncTargetConnectionAddress,
+    String pendingCatalogSyncConfirmationKey
 ) {
 
     @Nonnull
@@ -89,7 +94,11 @@ public record NexoriMenuV2State(
             pendingQueueCountdownSeconds == null || pendingQueueCountdownSeconds.isBlank() ? "15" : pendingQueueCountdownSeconds.trim(),
             selectedTargetServerConnectionAddress == null ? "" : selectedTargetServerConnectionAddress.trim().toLowerCase(),
             selectedRuleGroupId == null ? "" : selectedRuleGroupId.trim().toLowerCase(),
-            pendingRuleGroupName == null ? "" : pendingRuleGroupName.trim()
+            pendingRuleGroupName == null ? "" : pendingRuleGroupName.trim(),
+            selectedCatalogSyncEntityType == null ? CatalogSyncEntityType.GAME : selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId == null ? "" : selectedCatalogSyncEntityId.trim().toLowerCase(),
+            selectedCatalogSyncTargetConnectionAddress == null ? "" : selectedCatalogSyncTargetConnectionAddress.trim().toLowerCase(),
+            pendingCatalogSyncConfirmationKey == null ? "" : pendingCatalogSyncConfirmationKey.trim()
         );
     }
 
@@ -135,6 +144,10 @@ public record NexoriMenuV2State(
             "15",
             "",
             "",
+            "",
+            CatalogSyncEntityType.GAME,
+            "",
+            "",
             ""
         ).normalized();
     }
@@ -157,6 +170,202 @@ public record NexoriMenuV2State(
     @Nonnull
     public NexoriMenuV2State withSelectedMinigameTab(@Nonnull MinigameWorkspaceTab tab) {
         return copy(selectedView, selectedPortalTab, tab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, editingDestinationId, pendingDestinationDisplayName, pendingDestinationConnectionAddress, pendingDestinationTargetId, pendingDestinationInstanceTemplateId, pendingDestinationTriggerId, pendingDestinationMaxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withCatalogSyncSelection(@Nonnull CatalogSyncEntityType entityType, @Nonnull String entityId) {
+        return copy(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedTargetServerConnectionAddress,
+            selectedRulesTab,
+            selectedAccessGateTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName,
+            entityType,
+            entityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            ""
+        );
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withCatalogSyncTargetConnectionAddress(@Nonnull String connectionAddress) {
+        return copy(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedTargetServerConnectionAddress,
+            selectedRulesTab,
+            selectedAccessGateTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            connectionAddress,
+            ""
+        );
+    }
+
+    @Nonnull
+    public NexoriMenuV2State withPendingCatalogSyncConfirmationKey(@Nonnull String confirmationKey) {
+        return copy(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedTargetServerConnectionAddress,
+            selectedRulesTab,
+            selectedAccessGateTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            confirmationKey
+        );
+    }
+
+    @Nonnull
+    public NexoriMenuV2State clearedCatalogSyncConfirmation() {
+        return copy(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedTargetServerConnectionAddress,
+            selectedRulesTab,
+            selectedAccessGateTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            ""
+        );
     }
 
     @Nonnull
@@ -361,7 +570,101 @@ public record NexoriMenuV2State(
             selectedRulesTab,
             selectedAccessGateTab,
             selectedRuleGroupId,
-            pendingRuleGroupName
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            pendingCatalogSyncConfirmationKey
+        );
+    }
+
+    @Nonnull
+    private NexoriMenuV2State copy(
+        NexoriMenuV2View selectedView,
+        PortalWorkspaceTab selectedPortalTab,
+        MinigameWorkspaceTab selectedMinigameTab,
+        String selectedTravelProfileId,
+        String statusText,
+        String pendingServerDisplayName,
+        String pendingServerAddress,
+        String editingServerAddress,
+        String selectedTravelInConnectionAddress,
+        String selectedTravelInPortalId,
+        String selectedTravelInTargetId,
+        String selectedTravelInDisplayName,
+        String selectedTravelOutConnectionAddress,
+        String selectedTravelOutPortalId,
+        String selectedTravelOutTargetId,
+        String selectedTravelOutDisplayName,
+        String selectedQueuePortalConnectionAddress,
+        String selectedQueuePortalId,
+        String selectedQueuePortalDisplayName,
+        String selectedQueueBindingQueueId,
+        String selectedQueueBindingQueueDisplayName,
+        String editingDestinationId,
+        String pendingDestinationDisplayName,
+        String pendingDestinationConnectionAddress,
+        String pendingDestinationTargetId,
+        String pendingDestinationInstanceTemplateId,
+        String pendingDestinationTriggerId,
+        String pendingDestinationMaxPlayers,
+        String editingQueueId,
+        String pendingQueueDisplayName,
+        String pendingQueueDestinationId,
+        String pendingQueueMinPlayers,
+        String pendingQueueMaxPlayers,
+        String pendingQueueCountdownSeconds,
+        String selectedTargetServerConnectionAddress,
+        RulesWorkspaceTab selectedRulesTab,
+        AccessGateWorkspaceTab selectedAccessGateTab,
+        String selectedRuleGroupId,
+        String pendingRuleGroupName
+    ) {
+        return copy(
+            selectedView,
+            selectedPortalTab,
+            selectedMinigameTab,
+            selectedTravelProfileId,
+            statusText,
+            pendingServerDisplayName,
+            pendingServerAddress,
+            editingServerAddress,
+            selectedTravelInConnectionAddress,
+            selectedTravelInPortalId,
+            selectedTravelInTargetId,
+            selectedTravelInDisplayName,
+            selectedTravelOutConnectionAddress,
+            selectedTravelOutPortalId,
+            selectedTravelOutTargetId,
+            selectedTravelOutDisplayName,
+            selectedQueuePortalConnectionAddress,
+            selectedQueuePortalId,
+            selectedQueuePortalDisplayName,
+            selectedQueueBindingQueueId,
+            selectedQueueBindingQueueDisplayName,
+            editingDestinationId,
+            pendingDestinationDisplayName,
+            pendingDestinationConnectionAddress,
+            pendingDestinationTargetId,
+            pendingDestinationInstanceTemplateId,
+            pendingDestinationTriggerId,
+            pendingDestinationRulesEngineId,
+            pendingDestinationMaxPlayers,
+            editingQueueId,
+            pendingQueueDisplayName,
+            pendingQueueDestinationId,
+            pendingQueueMinPlayers,
+            pendingQueueMaxPlayers,
+            pendingQueueCountdownSeconds,
+            selectedTargetServerConnectionAddress,
+            selectedRulesTab,
+            selectedAccessGateTab,
+            selectedRuleGroupId,
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            pendingCatalogSyncConfirmationKey
         );
     }
 
@@ -443,7 +746,11 @@ public record NexoriMenuV2State(
             selectedRulesTab,
             selectedAccessGateTab,
             selectedRuleGroupId,
-            pendingRuleGroupName
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            pendingCatalogSyncConfirmationKey
         );
     }
 
@@ -487,7 +794,11 @@ public record NexoriMenuV2State(
         RulesWorkspaceTab selectedRulesTab,
         AccessGateWorkspaceTab selectedAccessGateTab,
         String selectedRuleGroupId,
-        String pendingRuleGroupName
+        String pendingRuleGroupName,
+        CatalogSyncEntityType selectedCatalogSyncEntityType,
+        String selectedCatalogSyncEntityId,
+        String selectedCatalogSyncTargetConnectionAddress,
+        String pendingCatalogSyncConfirmationKey
     ) {
         return copy(
             selectedView,
@@ -529,7 +840,11 @@ public record NexoriMenuV2State(
             selectedRulesTab,
             selectedAccessGateTab,
             selectedRuleGroupId,
-            pendingRuleGroupName
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            pendingCatalogSyncConfirmationKey
         );
     }
 
@@ -574,7 +889,11 @@ public record NexoriMenuV2State(
         RulesWorkspaceTab selectedRulesTab,
         AccessGateWorkspaceTab selectedAccessGateTab,
         String selectedRuleGroupId,
-        String pendingRuleGroupName
+        String pendingRuleGroupName,
+        CatalogSyncEntityType selectedCatalogSyncEntityType,
+        String selectedCatalogSyncEntityId,
+        String selectedCatalogSyncTargetConnectionAddress,
+        String pendingCatalogSyncConfirmationKey
     ) {
         return new NexoriMenuV2State(
             selectedView,
@@ -616,7 +935,11 @@ public record NexoriMenuV2State(
             pendingQueueCountdownSeconds,
             selectedTargetServerConnectionAddress,
             selectedRuleGroupId,
-            pendingRuleGroupName
+            pendingRuleGroupName,
+            selectedCatalogSyncEntityType,
+            selectedCatalogSyncEntityId,
+            selectedCatalogSyncTargetConnectionAddress,
+            pendingCatalogSyncConfirmationKey
         ).normalized();
     }
 }

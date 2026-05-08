@@ -47,6 +47,7 @@ import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateBypassPlayer;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfig;
 import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
 import io.github.hyjn.nexori.plugin.backend.BackendSyncService;
+import io.github.hyjn.nexori.plugin.catalogsync.CatalogSyncEntityType;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSet;
 import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
@@ -427,14 +428,27 @@ public final class NexoriMenuV2Page {
                 .withText(tab.label())
                 .withAnchor(new HyUIAnchor().setWidth(tabWidth).setHeight(42))
                 .withDisabled(state.selectedMinigameTab() == tab)
-                .onClick((ignored, ctx) -> open(
-                    ref,
-                    store,
-                    playerRef,
-                    player,
-                    plugin,
-                    state.withSelectedMinigameTab(tab).withStatusText("")
-                ));
+                .onClick((ignored, ctx) -> {
+                    if (tab == MinigameWorkspaceTab.SYNC && hasActiveMinigameEdit(state)) {
+                        open(
+                            ref,
+                            store,
+                            playerRef,
+                            player,
+                            plugin,
+                            state.withStatusText("Save or cancel the current edit before syncing.")
+                        );
+                        return;
+                    }
+                    open(
+                        ref,
+                        store,
+                        playerRef,
+                        player,
+                        plugin,
+                        state.withSelectedMinigameTab(tab).clearedCatalogSyncConfirmation().withStatusText("")
+                    );
+                });
             row.addChild(button);
             if (index + 1 < tabs.length) {
                 row.addChild(spacerX(gap));
@@ -588,6 +602,7 @@ public final class NexoriMenuV2Page {
         return switch (state.selectedMinigameTab()) {
             case DESTINATIONS -> buildDestinationWorkspaceScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case QUEUES -> buildQueueWorkspaceScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
+            case SYNC -> buildCatalogSyncWorkspaceScroll(ref, store, playerRef, player, plugin, state, peers, setup, viewportHeight, scrollId);
             case SPAWNS -> buildSpawnWorkspaceScroll(ref, store, playerRef, player, plugin, state, viewportHeight, scrollId);
         };
     }
@@ -5517,9 +5532,19 @@ public final class NexoriMenuV2Page {
                 continue;
             }
             DiscoveredDestinationTargetSet discovery = plugin.getDiscoveredDestinationTargetCacheService().find(peer.connectionAddress()).orElse(null);
+            String remoteServerId = discovery == null ? "" : discovery.remoteServerId();
+            if (remoteServerId.isBlank()) {
+                TrustBundle trustBundle = plugin.getTrustBundleStore().getCurrentBundle();
+                remoteServerId = trustBundle.members().stream()
+                    .filter(member -> peer.connectionAddress().equalsIgnoreCase(member.connectionAddress()))
+                    .map(BundleMember::serverId)
+                    .findFirst()
+                    .orElse("");
+            }
             options.add(new RemoteServerOption(
                 peer.displayName(),
                 peer.connectionAddress(),
+                remoteServerId,
                 discovery == null ? List.of() : discovery.targets()
             ));
         }
@@ -7849,6 +7874,565 @@ public final class NexoriMenuV2Page {
         return card;
     }
 
+    private static boolean hasActiveMinigameEdit(@Nonnull NexoriMenuV2State state) {
+        boolean destinationDraftDirty =
+            !state.editingDestinationId().isBlank()
+                || !state.pendingDestinationDisplayName().isBlank()
+                || !state.pendingDestinationConnectionAddress().isBlank()
+                || !state.pendingDestinationTargetId().isBlank()
+                || !state.pendingDestinationInstanceTemplateId().isBlank()
+                || !state.pendingDestinationRulesEngineId().isBlank()
+                || !"last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
+                || !"8".equals(state.pendingDestinationMaxPlayers());
+        boolean queueDraftDirty =
+            !state.editingQueueId().isBlank()
+                || !state.pendingQueueDisplayName().isBlank()
+                || !state.pendingQueueDestinationId().isBlank()
+                || !"2".equals(state.pendingQueueMinPlayers())
+                || !"8".equals(state.pendingQueueMaxPlayers())
+                || !"15".equals(state.pendingQueueCountdownSeconds());
+        return destinationDraftDirty || queueDraftDirty;
+    }
+
+    @Nonnull
+    private static ReorderableListBuilder buildCatalogSyncWorkspaceScroll(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull HomeSetupState setup,
+        int viewportHeight,
+        @Nonnull String scrollId
+    ) {
+        int width = CONTENT_W - 32;
+        int innerWidth = width - 16;
+        String localSelectorAddress = localSelectorAddress(setup.localConnectionAddress());
+        List<RemoteServerOption> remoteServers = buildRemoteDestinationServerOptions(plugin, peers, localSelectorAddress);
+        List<ArenaDefinition> arenas = plugin.getArenaService().list();
+        List<QueueDefinition> queues = plugin.getQueueService().list();
+        int introHeight = 174;
+        int panelsHeight = Math.max(520, viewportHeight - introHeight - 76);
+        int contentHeight = 16 + introHeight + 12 + panelsHeight + 20;
+
+        ReorderableListBuilder scroll = scrollList(width, viewportHeight, Math.max(viewportHeight, contentHeight), scrollId, true);
+        scroll.addChild(spacerY(16));
+        scroll.addChild(catalogSyncIntroCard(ref, store, playerRef, player, plugin, state, innerWidth, introHeight));
+        scroll.addChild(spacerY(12));
+
+        GroupBuilder panelsRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(innerWidth).setHeight(panelsHeight));
+        int panelWidth = (innerWidth - 12) / 2;
+        if (state.selectedCatalogSyncEntityType() == CatalogSyncEntityType.GAME) {
+            panelsRow.addChild(catalogSyncGameListContainer(ref, store, playerRef, player, plugin, state, arenas, panelWidth, panelsHeight, scrollId + "-catalog-games"));
+        } else {
+            panelsRow.addChild(catalogSyncQueueListContainer(ref, store, playerRef, player, plugin, state, arenas, queues, panelWidth, panelsHeight, scrollId + "-catalog-queues"));
+        }
+        panelsRow.addChild(spacerX(12));
+        panelsRow.addChild(catalogSyncTargetServersContainer(ref, store, playerRef, player, plugin, state, peers, remoteServers, panelWidth, panelsHeight, scrollId + "-catalog-targets"));
+        scroll.addChild(panelsRow);
+        return scroll;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncIntroCard(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int width,
+        int height
+    ) {
+        GroupBuilder card = card(width, height, PANEL_BG);
+        card.addChild(label("Catalog Sync", TITLE, width - 32));
+        card.addChild(spacerY(8));
+        card.addChild(label("Copy one saved game or one saved queue to one trusted target server per operation. This sync creates or updates only the selected entity and does not copy portals, spawns, backend config, local server identity, or local UI state.", MUTED, width - 32));
+        card.addChild(label(
+            "Use this sync to keep backend driven multi lobby queues aligned across entry servers. If multiple lobby servers should send players into the same minigame, the queue and game definitions referenced by those portals need to match on each server.",
+            MUTED,
+            width - 32
+        ));
+        card.addChild(spacerY(12));
+        card.addChild(catalogSyncModeTabs(ref, store, playerRef, player, plugin, state, width - 32));
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncModeTabs(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        int width
+    ) {
+        int buttonWidth = 180;
+        int gap = 8;
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width).setHeight(42));
+        row.addChild(spacerX(Math.max(0, (width - (buttonWidth * 2) - gap) / 2)));
+        for (CatalogSyncEntityType option : CatalogSyncEntityType.values()) {
+            ButtonBuilder button = ButtonBuilder.secondaryTextButton()
+                .withText(option.label())
+                .withAnchor(new HyUIAnchor().setWidth(buttonWidth).setHeight(42))
+                .withDisabled(state.selectedCatalogSyncEntityType() == option)
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withCatalogSyncSelection(option, "").withCatalogSyncTargetConnectionAddress("").clearedCatalogSyncConfirmation().withSelectedMinigameTab(MinigameWorkspaceTab.SYNC).withStatusText("")
+                ));
+            row.addChild(button);
+            if (option != CatalogSyncEntityType.QUEUE) {
+                row.addChild(spacerX(gap));
+            }
+        }
+        return row;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncGameListContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ArenaDefinition> arenas,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int headerHeight = 64;
+        int outerGap = 12;
+        int bodyViewportHeight = height - headerHeight - 12 - 32 - (outerGap * 2);
+        int bodyContentHeight = arenas.isEmpty()
+            ? bodyViewportHeight
+            : 8 + arenas.size() * HOME_SERVER_CARD_H + Math.max(0, arenas.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Saved Games", width - 32));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, bodyViewportHeight, Math.max(bodyViewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (arenas.isEmpty()) {
+            body.addChild(label("No games saved yet.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < arenas.size(); index++) {
+                ArenaDefinition arena = arenas.get(index);
+                body.addChild(catalogSyncGameRow(ref, store, playerRef, player, plugin, state, arena, width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < arenas.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncGameRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull ArenaDefinition arena,
+        int width,
+        int height
+    ) {
+        boolean selected = state.selectedCatalogSyncEntityType() == CatalogSyncEntityType.GAME
+            && state.selectedCatalogSyncEntityId().equalsIgnoreCase(arena.arenaId());
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 170).setHeight(rowHeight));
+        identity.addChild(label(arena.displayName(), SUBTITLE, width - 170));
+        identity.addChild(spacerY(2));
+        identity.addChild(label(
+            arena.destinationConnectionAddress() + " -> " + arena.destinationTargetId() + "  " + arena.instanceTemplateId(),
+            MUTED,
+            width - 170
+        ));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText(selected ? "SELECTED" : "SELECT")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .withDisabled(selected)
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withCatalogSyncSelection(CatalogSyncEntityType.GAME, arena.arenaId()).clearedCatalogSyncConfirmation().withStatusText("Selected game '" + arena.arenaId() + "' for sync.")
+                ))
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncQueueListContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ArenaDefinition> destinations,
+        @Nonnull List<QueueDefinition> queues,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int headerHeight = 64;
+        int outerGap = 12;
+        int bodyViewportHeight = height - headerHeight - 12 - 32 - (outerGap * 2);
+        int bodyContentHeight = queues.isEmpty()
+            ? bodyViewportHeight
+            : 8 + queues.size() * HOME_SERVER_CARD_H + Math.max(0, queues.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Saved Queues", width - 32));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, bodyViewportHeight, Math.max(bodyViewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (queues.isEmpty()) {
+            body.addChild(label("No queues saved yet.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < queues.size(); index++) {
+                QueueDefinition queue = queues.get(index);
+                body.addChild(catalogSyncQueueRow(ref, store, playerRef, player, plugin, state, destinations, queue, width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < queues.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncQueueRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ArenaDefinition> destinations,
+        @Nonnull QueueDefinition queue,
+        int width,
+        int height
+    ) {
+        boolean selected = state.selectedCatalogSyncEntityType() == CatalogSyncEntityType.QUEUE
+            && state.selectedCatalogSyncEntityId().equalsIgnoreCase(queue.queueId());
+        ArenaDefinition destination = findDestination(destinations, queue.arenaIds().isEmpty() ? "" : queue.arenaIds().getFirst());
+        QueueMatchmakingMode mode = queue.effectiveMatchmakingMode();
+        String modeDetail = mode == QueueMatchmakingMode.BACKEND_DRIVEN
+            ? "BACKEND_DRIVEN"
+            : "LOCAL_FIFO  " + queue.countdownSeconds() + "s";
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 170).setHeight(rowHeight));
+        identity.addChild(label(queue.displayName(), SUBTITLE, width - 170));
+        identity.addChild(spacerY(2));
+        identity.addChild(label((destination == null ? "<missing game>" : destination.displayName()) + "  " + queue.minPlayers() + "-" + queue.maxPlayers() + "  " + modeDetail, MUTED, width - 170));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText(selected ? "SELECTED" : "SELECT")
+                .withAnchor(new HyUIAnchor().setWidth(110).setHeight(30))
+                .withDisabled(selected)
+                .onClick((ignored, ctx) -> open(
+                    ref,
+                    store,
+                    playerRef,
+                    player,
+                    plugin,
+                    state.withCatalogSyncSelection(CatalogSyncEntityType.QUEUE, queue.queueId()).clearedCatalogSyncConfirmation().withStatusText("Selected queue '" + queue.queueId() + "' for sync.")
+                ))
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncTargetServersContainer(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull List<RemoteServerOption> remoteServers,
+        int width,
+        int height,
+        @Nonnull String scrollId
+    ) {
+        int headerHeight = 64;
+        int outerGap = 12;
+        int bodyViewportHeight = height - headerHeight - 12 - 32 - (outerGap * 2);
+        int bodyContentHeight = remoteServers.isEmpty()
+            ? bodyViewportHeight
+            : 8 + remoteServers.size() * HOME_SERVER_CARD_H + Math.max(0, remoteServers.size() - 1) * 8 + 8;
+        GroupBuilder container = card(width, height, PANEL_BG);
+        container.addChild(spacerY(outerGap));
+        container.addChild(singleColumnHeaderCard("Target Servers", width - 32));
+        container.addChild(spacerY(12));
+
+        ReorderableListBuilder body = scrollList(width - 32, bodyViewportHeight, Math.max(bodyViewportHeight, bodyContentHeight), scrollId, true);
+        body.addChild(spacerY(8));
+        if (remoteServers.isEmpty()) {
+            body.addChild(label("No trusted remote servers available.", MUTED, width - 48));
+        } else {
+            for (int index = 0; index < remoteServers.size(); index++) {
+                RemoteServerOption option = remoteServers.get(index);
+                body.addChild(catalogSyncTargetRow(ref, store, playerRef, player, plugin, state, peers, option, width - 48, HOME_SERVER_CARD_H));
+                if (index + 1 < remoteServers.size()) {
+                    body.addChild(spacerY(8));
+                }
+            }
+        }
+        body.addChild(spacerY(8));
+        container.addChild(body);
+        container.addChild(spacerY(outerGap));
+        return container;
+    }
+
+    @Nonnull
+    private static GroupBuilder catalogSyncTargetRow(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull RemoteServerOption option,
+        int width,
+        int height
+    ) {
+        String confirmationKey = catalogSyncConfirmationKey(state.selectedCatalogSyncEntityType(), state.selectedCatalogSyncEntityId(), option.connectionAddress());
+        boolean confirming = !state.pendingCatalogSyncConfirmationKey().isBlank() && state.pendingCatalogSyncConfirmationKey().equals(confirmationKey);
+        GroupBuilder card = GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.symmetric(14, 0))
+            .withBackground(SERVER_CARD_BG);
+        int rowHeight = 40;
+        card.addChild(spacerY(Math.max(0, (height - rowHeight) / 2)));
+        GroupBuilder row = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(rowHeight));
+        GroupBuilder identity = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(width - 210).setHeight(rowHeight));
+        identity.addChild(label(option.displayName(), SUBTITLE, width - 210));
+        identity.addChild(spacerY(2));
+        identity.addChild(label((option.serverId().isBlank() ? "<unknown server id>" : option.serverId()) + "  " + option.connectionAddress(), MUTED, width - 210));
+        row.addChild(identity);
+        row.addChild(spacerX(12));
+        row.addChild(
+            ButtonBuilder.smallSecondaryTextButton()
+                .withText(confirming ? "CONFIRM" : "SYNC")
+                .withAnchor(new HyUIAnchor().setWidth(150).setHeight(30))
+                .withDisabled(state.selectedCatalogSyncEntityId().isBlank())
+                .onClick((ignored, ctx) -> triggerCatalogSync(ref, store, playerRef, player, plugin, state, peers, option))
+        );
+        card.addChild(row);
+        return card;
+    }
+
+    private static void triggerCatalogSync(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull Player player,
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull List<ConfiguredPeer> peers,
+        @Nonnull RemoteServerOption target
+    ) {
+        if (hasActiveMinigameEdit(state)) {
+            open(ref, store, playerRef, player, plugin, state.withStatusText("Save or cancel the current edit before syncing."));
+            return;
+        }
+        if (state.selectedCatalogSyncEntityId().isBlank()) {
+            open(ref, store, playerRef, player, plugin, state.withStatusText("Select a saved " + state.selectedCatalogSyncEntityType().singularLabel() + " first."));
+            return;
+        }
+        ConfiguredPeer destination = findConfiguredPeer(peers, target.connectionAddress());
+        if (destination == null) {
+            open(ref, store, playerRef, player, plugin, state.withStatusText("Could not resolve the selected target server."));
+            return;
+        }
+
+        String confirmationKey = catalogSyncConfirmationKey(state.selectedCatalogSyncEntityType(), state.selectedCatalogSyncEntityId(), target.connectionAddress());
+        if (!state.pendingCatalogSyncConfirmationKey().equals(confirmationKey)) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.withCatalogSyncTargetConnectionAddress(target.connectionAddress())
+                    .withPendingCatalogSyncConfirmationKey(confirmationKey)
+                    .withStatusText(catalogSyncConfirmationMessage(state.selectedCatalogSyncEntityType(), state.selectedCatalogSyncEntityId(), target))
+            );
+            return;
+        }
+
+        String originWorldName = player.getWorld().getName();
+        Transform originTransform = captureCurrentTransform(store, ref);
+        UiResumeAction resumeAction = catalogSyncResumeAction(
+            plugin,
+            state,
+            state.selectedCatalogSyncEntityType(),
+            state.selectedCatalogSyncEntityId(),
+            target.connectionAddress()
+        );
+        try {
+            switch (state.selectedCatalogSyncEntityType()) {
+                case GAME -> {
+                    ArenaDefinition arena = plugin.getArenaService().find(state.selectedCatalogSyncEntityId()).orElse(null);
+                    if (arena == null) {
+                        open(ref, store, playerRef, player, plugin, state.clearedCatalogSyncConfirmation().withStatusText("The selected game no longer exists."));
+                        return;
+                    }
+                    plugin.getNetworkCatalogSyncService().syncArena(
+                        playerRef,
+                        destination,
+                        originWorldName,
+                        originTransform,
+                        arena,
+                        resumeAction
+                    );
+                }
+                case QUEUE -> {
+                    QueueDefinition queue = plugin.getQueueService().find(state.selectedCatalogSyncEntityId()).orElse(null);
+                    if (queue == null) {
+                        open(ref, store, playerRef, player, plugin, state.clearedCatalogSyncConfirmation().withStatusText("The selected queue no longer exists."));
+                        return;
+                    }
+                    plugin.getNetworkCatalogSyncService().syncQueue(
+                        playerRef,
+                        destination,
+                        originWorldName,
+                        originTransform,
+                        queue,
+                        resumeAction
+                    );
+                }
+            }
+        } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
+            open(
+                ref,
+                store,
+                playerRef,
+                player,
+                plugin,
+                state.clearedCatalogSyncConfirmation().withCatalogSyncTargetConnectionAddress(target.connectionAddress()).withStatusText("Failed to start " + state.selectedCatalogSyncEntityType().singularLabel() + " sync: " + exception.getMessage())
+            );
+        }
+    }
+
+    @Nonnull
+    private static UiResumeAction catalogSyncResumeAction(
+        @Nonnull NexoriPlugin plugin,
+        @Nonnull NexoriMenuV2State state,
+        @Nonnull CatalogSyncEntityType entityType,
+        @Nonnull String entityId,
+        @Nonnull String targetConnectionAddress
+    ) {
+        NexoriMenuV2State resumeState = state
+            .withSelectedView(NexoriMenuV2View.QUEUES)
+            .withSelectedMinigameTab(MinigameWorkspaceTab.SYNC)
+            .withCatalogSyncSelection(entityType, entityId)
+            .withCatalogSyncTargetConnectionAddress(targetConnectionAddress)
+            .clearedCatalogSyncConfirmation();
+        return new UiResumeAction() {
+            @Override
+            public void reopen(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player
+            ) {
+                open(ref, store, playerRef, player, plugin, resumeState);
+            }
+
+            @Override
+            public void reopenWithStatus(
+                @Nonnull Ref<EntityStore> ref,
+                @Nonnull Store<EntityStore> store,
+                @Nonnull PlayerRef playerRef,
+                @Nonnull Player player,
+                @Nonnull String status,
+                boolean success
+            ) {
+                open(ref, store, playerRef, player, plugin, resumeState.withStatusText(status));
+            }
+        };
+    }
+
+    @Nonnull
+    private static String catalogSyncConfirmationMessage(
+        @Nonnull CatalogSyncEntityType entityType,
+        @Nonnull String entityId,
+        @Nonnull RemoteServerOption target
+    ) {
+        String targetLabel = target.serverId().isBlank() ? target.connectionAddress() : target.serverId();
+        return switch (entityType) {
+            case GAME ->
+                "This will create or update game '" + entityId + "' on server '" + targetLabel + "'. It will not copy portals, spawns, backend config, or local server identity. Click CONFIRM to continue.";
+            case QUEUE ->
+                "This will create or update queue '" + entityId + "' on server '" + targetLabel + "'. It will not copy portals, spawns, backend config, or local server identity. Click CONFIRM to continue.";
+        };
+    }
+
+    @Nonnull
+    private static String catalogSyncConfirmationKey(
+        @Nonnull CatalogSyncEntityType entityType,
+        @Nonnull String entityId,
+        @Nonnull String connectionAddress
+    ) {
+        return entityType.name() + "|" + entityId.trim().toLowerCase(Locale.ROOT) + "|" + connectionAddress.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static ConfiguredPeer findConfiguredPeer(@Nonnull List<ConfiguredPeer> peers, @Nonnull String connectionAddress) {
+        for (ConfiguredPeer peer : peers) {
+            if (peer.connectionAddress().equalsIgnoreCase(connectionAddress)) {
+                return peer;
+            }
+        }
+        return null;
+    }
+
     @Nonnull
     private static ReorderableListBuilder buildBackendScroll(
         @Nonnull Ref<EntityStore> ref,
@@ -8450,7 +9034,7 @@ public final class NexoriMenuV2Page {
             case PORTALS -> "";
             case TARGETS -> "Targets are now folded into the Portals travel bind workspace.";
             case RULES -> "";
-            case QUEUES -> "Configure the lobby, reusable games, and the queues that launch into them.";
+            case QUEUES -> "Configure reusable games, queues, spawn slots, and cross server catalog sync.";
             case BACKEND -> "Configure backend sync, result reporting, request health, and endpoint reference details.";
             case ACCESS_GATE -> "Control server join caps, reserved slots, and bypass player access for the server you are currently on. To configure another server, move to that server first and then open this view there.";
             case OPERATIONS -> "Live runtime, diagnostics, and recovery belong here.";
@@ -8464,7 +9048,7 @@ public final class NexoriMenuV2Page {
             case PORTALS -> "This will become the star visualizer: server/world groups, portal nodes, bindings, and arrows.";
             case TARGETS -> "Targets are now grouped inside the travel bind workspace.";
             case RULES -> "Rules keep their own mental model: define policies once, then attach servers under them.";
-            case QUEUES -> "This view owns the clean product flow: mark the lobby, create games, then create queues.";
+            case QUEUES -> "Create games locally, create queues locally, manage spawn slots, and sync saved catalog entities to trusted servers one operation at a time.";
             case BACKEND -> "Backend config can send authenticated matchmaking sync requests and event-driven match result reports.";
             case ACCESS_GATE -> "";
             case OPERATIONS -> "Operations will show active queues, active matches, handoffs, diagnostics, and repair flows.";
@@ -8684,6 +9268,7 @@ public final class NexoriMenuV2Page {
     private record RemoteServerOption(
         String displayName,
         String connectionAddress,
+        String serverId,
         List<DiscoveredDestinationTargetSummary> discoveredTargets
     ) {
     }
