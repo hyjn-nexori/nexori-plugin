@@ -29,8 +29,6 @@ import io.github.hyjn.nexori.plugin.command.NexoriBackupLimitCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriInstanceListCommand;
-import io.github.hyjn.nexori.plugin.command.NexoriLobbyListCommand;
-import io.github.hyjn.nexori.plugin.command.NexoriLobbyUpsertCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchResolvePlayerCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchSessionStatusCommand;
@@ -80,14 +78,9 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
-import io.github.hyjn.nexori.plugin.minigame.LobbyService;
-import io.github.hyjn.nexori.plugin.minigame.LobbyRoleSyncService;
-import io.github.hyjn.nexori.plugin.minigame.LobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriAssignedSpawnProvider;
-import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyService;
-import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorTickSystem;
@@ -174,9 +167,6 @@ public class NexoriPlugin extends JavaPlugin {
     private DiagnosticsService diagnosticsService;
     private DiagnosticsCollectService diagnosticsCollectService;
     private DiagnosticsOwnerReportService diagnosticsOwnerReportService;
-    private LobbyService lobbyService;
-    private NetworkLobbyService networkLobbyService;
-    private LobbyRoleSyncService lobbyRoleSyncService;
     private ArenaService arenaService;
     private InstanceSpawnSlotService instanceSpawnSlotService;
     private QueueService queueService;
@@ -230,14 +220,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.destinationTargetService = new DestinationTargetService(
                 new DestinationTargetStore(this.getDataDirectory().resolve("config").resolve("destination-targets.json")),
                 this.diagnosticsService
-            );
-            this.lobbyService = new LobbyService(
-                new LobbyStore(this.getDataDirectory().resolve("config").resolve("lobbies.json")),
-                this.destinationTargetService
-            );
-            this.networkLobbyService = new NetworkLobbyService(
-                new NetworkLobbyStore(this.getDataDirectory().resolve("config").resolve("network-lobby.json")),
-                this.localConnectionAddressService
             );
             this.arenaService = new ArenaService(
                 new ArenaStore(this.getDataDirectory().resolve("config").resolve("arenas.json")),
@@ -351,8 +333,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.queueCoordinatorService = new QueueCoordinatorService(
                 this.queueService,
                 this.arenaService,
-                this.lobbyService,
-                this.networkLobbyService,
                 this.matchSessionService,
                 this.localConnectionAddressService,
                 this.secureTravelService,
@@ -385,14 +365,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.triggerBindingService,
                 this.secureReferralService
             );
-            this.lobbyRoleSyncService = new LobbyRoleSyncService(
-                this.getLogger(),
-                this.trustBundleStore,
-                this.localConnectionAddressService,
-                this.lobbyService,
-                this.networkLobbyService,
-                this.secureReferralService
-            );
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
@@ -416,7 +388,6 @@ public class NexoriPlugin extends JavaPlugin {
                 backendAssignmentStore,
                 this.localIdentity,
                 this.localConnectionAddressService,
-                this.networkLobbyService,
                 this.queueService,
                 this.queueCoordinatorService,
                 this.arenaService,
@@ -469,8 +440,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.secureReferralService.registerHandler(this.serverPolicySyncService.responseHandler());
             this.secureReferralService.registerHandler(this.portalBindingSyncService.applyRequestHandler());
             this.secureReferralService.registerHandler(this.portalBindingSyncService.responseHandler());
-            this.secureReferralService.registerHandler(this.lobbyRoleSyncService.applyRequestHandler());
-            this.secureReferralService.registerHandler(this.lobbyRoleSyncService.responseHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestRequestHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.manifestResponseHandler());
             this.secureReferralService.registerHandler(this.diagnosticsCollectService.chunkRequestHandler());
@@ -495,10 +464,8 @@ public class NexoriPlugin extends JavaPlugin {
                 this.destinationTargetService,
                 this.triggerBindingService
             ));
-            this.registerAdminCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.lobbyService, this.queueService, this.triggerBindingService));
+            this.registerAdminCommand(new NexoriPortalQueueBindCommand(this, this.portalInstanceService, this.queueService, this.triggerBindingService));
             this.registerAdminCommand(new NexoriPortalUnbindCommand(this, this.triggerBindingService));
-            this.registerAdminCommand(new NexoriLobbyUpsertCommand(this, this.lobbyService));
-            this.registerAdminCommand(new NexoriLobbyListCommand(this.lobbyService));
             this.registerAdminCommand(new NexoriArenaUpsertCommand(this, this.arenaService));
             this.registerAdminCommand(new NexoriArenaListCommand(this.arenaService));
             this.registerAdminCommand(new NexoriInstanceListCommand());
@@ -573,7 +540,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoverySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.serverPolicySyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.portalBindingSyncService::handlePlayerReady);
-            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.lobbyRoleSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
             // Entity systems keep portals, queues, match state, HUDs, and labels updated during world ticks.
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
@@ -723,18 +689,6 @@ public class NexoriPlugin extends JavaPlugin {
 
     public DiagnosticsOwnerReportService getDiagnosticsOwnerReportService() {
         return diagnosticsOwnerReportService;
-    }
-
-    public LobbyService getLobbyService() {
-        return lobbyService;
-    }
-
-    public NetworkLobbyService getNetworkLobbyService() {
-        return networkLobbyService;
-    }
-
-    public LobbyRoleSyncService getLobbyRoleSyncService() {
-        return lobbyRoleSyncService;
     }
 
     public ArenaService getArenaService() {

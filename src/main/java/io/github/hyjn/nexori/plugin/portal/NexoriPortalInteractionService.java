@@ -28,7 +28,6 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
-import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.ui.NexoriPortalQuickEditPage;
@@ -391,17 +390,11 @@ public final class NexoriPortalInteractionService {
         @Nonnull PortalInstanceDefinition portal,
         @Nonnull TriggerBindingDefinition binding
     ) {
-        LobbyDefinition lobby = plugin.getLobbyService().findByWorldName(portal.worldName()).orElse(null);
-        if (lobby == null || !lobby.enabled()) {
-            player.sendMessage(Message.raw("This Nexori portal is not in an enabled lobby world, so queue join is unavailable."));
-            return false;
-        }
-
         QueueCoordinatorService.JoinResult result = queueCoordinatorService.joinQueue(
             playerRef.getUuid(),
             playerRef.getUsername(),
             binding.queueId(),
-            lobby.lobbyId(),
+            portal.worldName(),
             portal.portalId()
         );
         switch (result.outcome()) {
@@ -436,12 +429,6 @@ public final class NexoriPortalInteractionService {
             case QUEUE_DISABLED -> {
                 player.sendMessage(Message.raw(
                     "This Nexori queue is currently disabled."
-                ));
-                return false;
-            }
-            case NOT_LOBBY_SERVER -> {
-                player.sendMessage(Message.raw(
-                    "This server is not the active Nexori lobby right now, so queue join is unavailable."
                 ));
                 return false;
             }

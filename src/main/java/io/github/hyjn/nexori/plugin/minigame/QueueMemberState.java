@@ -20,7 +20,7 @@ public record QueueMemberState(
         return new QueueMemberState(
             playerUuid,
             normalizePlayerName(playerNameSnapshot, playerUuid.toString()),
-            normalizeRequiredLower(sourceLobbyId, "Queue member source lobby id cannot be blank."),
+            normalizeRequiredLower(sourceLobbyId, "Queue member source context id cannot be blank."),
             normalizeOptionalLower(sourcePortalId),
             joinedAtEpochMs <= 0 ? System.currentTimeMillis() : joinedAtEpochMs
         );

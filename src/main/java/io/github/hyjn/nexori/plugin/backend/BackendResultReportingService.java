@@ -23,6 +23,7 @@ import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,7 @@ public final class BackendResultReportingService {
             match.matchId(),
             match.externalMatchId(),
             match.assignmentId(),
+            toStoreAssignmentIdsByPlayerUuid(match),
             match.queueId(),
             match.arenaId(),
             match.rulesEngineId(),
@@ -437,6 +439,7 @@ public final class BackendResultReportingService {
             result.localMatchId(),
             result.externalMatchId(),
             result.assignmentId(),
+            result.assignmentIdsByPlayerUuid(),
             result.queueId(),
             result.arenaId(),
             result.rulesEngineId(),
@@ -461,6 +464,23 @@ public final class BackendResultReportingService {
             ));
         }
         return List.copyOf(records);
+    }
+
+    @Nonnull
+    private Map<String, String> toStoreAssignmentIdsByPlayerUuid(@Nonnull ArenaActiveMatch match) {
+        if (match.assignmentIdsByPlayerUuid().isEmpty()) {
+            return Map.of();
+        }
+        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
+        match.assignmentIdsByPlayerUuid().entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> {
+                if (entry.getKey() == null || entry.getValue() == null || entry.getValue().isBlank()) {
+                    return;
+                }
+                normalized.put(entry.getKey().toString().toLowerCase(), entry.getValue().trim());
+            });
+        return Map.copyOf(normalized);
     }
 
     @Nonnull

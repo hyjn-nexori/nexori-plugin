@@ -192,7 +192,7 @@ public final class NexoriStatusHudService {
 
         return new HudRenderState(
             titleText,
-            "Returning to Lobby",
+            "Returning to Origin Server",
             detailText,
             "Lobby in " + secondsRemaining(returnHudState.returnAtEpochMs(), nowEpochMs) + "s",
             accentColor

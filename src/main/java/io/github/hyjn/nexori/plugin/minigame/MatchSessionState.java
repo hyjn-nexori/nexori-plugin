@@ -1,10 +1,8 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
 import javax.annotation.Nonnull;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 public record MatchSessionState(
@@ -31,12 +29,12 @@ public record MatchSessionState(
             normalizeRequiredLower(matchId, "Match session id cannot be blank."),
             QueueDefinition.normalizeId(queueId),
             ArenaDefinition.normalizeId(arenaId),
-            LobbyDefinition.normalizeId(originLobbyId),
+            SourceContextId.normalizeId(originLobbyId),
             normalizeRequired(returnConnectionAddress, "Match session return connection address cannot be blank."),
             normalizeRequiredLower(returnFallbackTargetId, "Match session return fallback target id cannot be blank."),
             normalizeRequiredLower(launchTravelProfileId, "Match session travel profile id cannot be blank."),
-            normalizePlayers(expectedPlayerUuids),
-            normalizePlayers(returnedPlayerUuids),
+            PlayerUuidLists.canonicalize(expectedPlayerUuids),
+            PlayerUuidLists.canonicalize(returnedPlayerUuids),
             createdAtEpochMs <= 0L ? now : createdAtEpochMs,
             updatedAtEpochMs <= 0L ? now : updatedAtEpochMs,
             Math.max(0L, handoffCompletedAtEpochMs),
@@ -78,7 +76,7 @@ public record MatchSessionState(
             returnFallbackTargetId(),
             launchTravelProfileId(),
             expectedPlayerUuids(),
-            List.copyOf(observed),
+            PlayerUuidLists.canonicalize(observed),
             createdAtEpochMs(),
             nowEpochMs,
             handoffCompletedAtEpochMs(),
@@ -179,26 +177,12 @@ public record MatchSessionState(
                 filtered.add(returned);
             }
         }
-        return List.copyOf(filtered);
-    }
-
-    @Nonnull
-    private static List<UUID> normalizePlayers(List<UUID> rawPlayerUuids) {
-        if (rawPlayerUuids == null || rawPlayerUuids.isEmpty()) {
-            return List.of();
-        }
-        LinkedHashSet<UUID> players = new LinkedHashSet<>();
-        for (UUID playerUuid : rawPlayerUuids) {
-            if (playerUuid != null) {
-                players.add(playerUuid);
-            }
-        }
-        return List.copyOf(new ArrayList<>(players));
+        return PlayerUuidLists.canonicalize(filtered);
     }
 
     @Nonnull
     private static String normalizeRequiredLower(String rawValue, @Nonnull String message) {
-        String normalized = normalizeOptionalLower(rawValue);
+        String normalized = NexoriMatchIds.normalizeRequiredMatchId(rawValue, message);
         if (normalized.isBlank()) {
             throw new IllegalArgumentException(message);
         }
@@ -212,15 +196,6 @@ public record MatchSessionState(
             throw new IllegalArgumentException(message);
         }
         return normalized;
-    }
-
-    @Nonnull
-    private static String normalizeOptionalLower(String rawValue) {
-        if (rawValue == null) {
-            return "";
-        }
-        String normalized = rawValue.trim().toLowerCase(Locale.ROOT);
-        return normalized.isBlank() ? "" : normalized;
     }
 
     @Nonnull

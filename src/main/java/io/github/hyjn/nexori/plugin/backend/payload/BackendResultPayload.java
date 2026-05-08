@@ -13,6 +13,7 @@ public record BackendResultPayload(
     String localMatchId,
     String externalMatchId,
     String assignmentId,
+    Map<String, String> assignmentIdsByPlayerUuid,
     String queueId,
     String arenaId,
     String rulesEngineId,

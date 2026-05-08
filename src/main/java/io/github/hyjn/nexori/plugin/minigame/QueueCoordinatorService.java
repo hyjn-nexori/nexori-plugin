@@ -35,8 +35,6 @@ public final class QueueCoordinatorService {
 
     private final QueueService queueService;
     private final ArenaService arenaService;
-    private final LobbyService lobbyService;
-    private final NetworkLobbyService networkLobbyService;
     private final MatchSessionService matchSessionService;
     private final LocalConnectionAddressService localConnectionAddressService;
     private final SecureTravelService secureTravelService;
@@ -51,8 +49,6 @@ public final class QueueCoordinatorService {
     public QueueCoordinatorService(
         @Nonnull QueueService queueService,
         @Nonnull ArenaService arenaService,
-        @Nonnull LobbyService lobbyService,
-        @Nonnull NetworkLobbyService networkLobbyService,
         @Nonnull MatchSessionService matchSessionService,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
         @Nonnull SecureTravelService secureTravelService,
@@ -60,8 +56,6 @@ public final class QueueCoordinatorService {
     ) {
         this.queueService = queueService;
         this.arenaService = arenaService;
-        this.lobbyService = lobbyService;
-        this.networkLobbyService = networkLobbyService;
         this.matchSessionService = matchSessionService;
         this.localConnectionAddressService = localConnectionAddressService;
         this.secureTravelService = secureTravelService;
@@ -79,9 +73,6 @@ public final class QueueCoordinatorService {
         @Nonnull String sourceLobbyId,
         @Nonnull String sourcePortalId
     ) {
-        if (!networkLobbyService.isCurrentServerLobby()) {
-            return JoinResult.notLobbyServer();
-        }
         String normalizedQueueId = QueueDefinition.normalizeId(rawQueueId);
         Optional<QueueDefinition> queue = queueService.find(normalizedQueueId);
         if (queue.isEmpty()) {
@@ -222,14 +213,6 @@ public final class QueueCoordinatorService {
             return;
         }
         lastWorldTickAdvanceAtEpochMs = nowEpochMs;
-        if (!networkLobbyService.isCurrentServerLobby()) {
-            try {
-                matchSessionService.pruneExpired(nowEpochMs);
-            } catch (IOException exception) {
-                logger.atWarning().withCause(exception).log("Failed to prune Nexori handoff records on world tick.");
-            }
-            return;
-        }
         advanceCountdowns(nowEpochMs);
         launchReadyBatches(nowEpochMs);
         try {
@@ -362,7 +345,7 @@ public final class QueueCoordinatorService {
             ).normalized();
             stateByQueueId.put(queue.queueId(), readyState);
 
-            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "", "");
+            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "", "", "", List.of());
             if (dispatch.failedBeforeLaunch()) {
                 stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, dispatch.errorMessage()));
                 continue;
@@ -413,10 +396,12 @@ public final class QueueCoordinatorService {
     @Nonnull
     public synchronized AssignmentLaunchResult launchBackendAssignment(
         @Nonnull String assignmentId,
+        @Nonnull String matchId,
         @Nonnull String externalMatchId,
         @Nonnull String rawQueueId,
         @Nonnull String rawArenaId,
-        @Nonnull List<UUID> playerUuids
+        @Nonnull List<UUID> playerUuids,
+        @Nonnull List<UUID> expectedPlayerUuids
     ) {
         long nowEpochMs = System.currentTimeMillis();
         if (assignmentId == null || assignmentId.isBlank()) {
@@ -428,6 +413,17 @@ public final class QueueCoordinatorService {
         Set<UUID> uniquePlayerUuids = new LinkedHashSet<>(playerUuids);
         if (uniquePlayerUuids.size() != playerUuids.size()) {
             return AssignmentLaunchResult.rejected("", "Assignment includes duplicate players.");
+        }
+        String normalizedMatchId;
+        try {
+            normalizedMatchId = NexoriMatchIds.normalizeBackendOwnedMatchId(matchId);
+        } catch (IllegalArgumentException exception) {
+            return AssignmentLaunchResult.rejected("", exception.getMessage());
+        }
+        List<UUID> canonicalExpectedPlayerUuids = PlayerUuidLists.canonicalize(expectedPlayerUuids);
+        if (!canonicalExpectedPlayerUuids.isEmpty()
+            && !PlayerUuidLists.isSubset(playerUuids, canonicalExpectedPlayerUuids)) {
+            return AssignmentLaunchResult.rejected("", "Assignment playerUuids must be a subset of expectedPlayerUuids.");
         }
 
         QueueDefinition queue = queueService.find(rawQueueId).orElse(null);
@@ -504,7 +500,16 @@ public final class QueueCoordinatorService {
             launchCandidates.add(new LaunchCandidate(member, playerRef));
         }
 
-        DispatchLaunchResult dispatch = dispatchLaunch(queue, arena, launchCandidates, nowEpochMs, assignmentId, externalMatchId);
+        DispatchLaunchResult dispatch = dispatchLaunch(
+            queue,
+            arena,
+            launchCandidates,
+            nowEpochMs,
+            assignmentId,
+            normalizedMatchId,
+            externalMatchId,
+            canonicalExpectedPlayerUuids
+        );
         for (LaunchCandidate candidate : dispatch.launched()) {
             queueIdByPlayerUuid.remove(candidate.member().playerUuid());
         }
@@ -626,7 +631,9 @@ public final class QueueCoordinatorService {
         @Nonnull List<LaunchCandidate> launchCandidates,
         long nowEpochMs,
         @Nonnull String assignmentId,
-        @Nonnull String externalMatchId
+        @Nonnull String matchIdOverride,
+        @Nonnull String externalMatchId,
+        @Nonnull List<UUID> expectedPlayerUuidsOverride
     ) {
         List<QueueMemberState> readyMembers = launchCandidates.stream()
             .map(LaunchCandidate::member)
@@ -641,7 +648,16 @@ public final class QueueCoordinatorService {
 
         PreparedLaunch preparedLaunch;
         try {
-            preparedLaunch = prepareLaunch(queue, arena, readyMembers, nowEpochMs, assignmentId, externalMatchId);
+            preparedLaunch = prepareLaunch(
+                queue,
+                arena,
+                readyMembers,
+                nowEpochMs,
+                assignmentId,
+                matchIdOverride,
+                externalMatchId,
+                expectedPlayerUuidsOverride
+            );
         } catch (IllegalStateException exception) {
             return DispatchLaunchResult.failedBeforeLaunch("", exception.getMessage());
         }
@@ -665,7 +681,12 @@ public final class QueueCoordinatorService {
                         candidate.playerRef(),
                         destination,
                         queue.launchTravelProfileId(),
-                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                        contextJsonWithLaunchIndex(
+                            preparedLaunch.contextJson(),
+                            launchIndex,
+                            candidate.member(),
+                            preparedLaunch.playerReturnTargetsByUuid()
+                        )
                     );
                 } else {
                     secureTravelService.travel(
@@ -674,7 +695,12 @@ public final class QueueCoordinatorService {
                         arena.destinationTargetId(),
                         "",
                         queue.launchTravelProfileId(),
-                        contextJsonWithLaunchIndex(preparedLaunch.contextJson(), launchIndex)
+                        contextJsonWithLaunchIndex(
+                            preparedLaunch.contextJson(),
+                            launchIndex,
+                            candidate.member(),
+                            preparedLaunch.playerReturnTargetsByUuid()
+                        )
                     );
                 }
                 launched.add(candidate);
@@ -734,39 +760,56 @@ public final class QueueCoordinatorService {
         @Nonnull List<QueueMemberState> readyMembers,
         long nowEpochMs,
         @Nonnull String assignmentId,
-        @Nonnull String externalMatchId
+        @Nonnull String matchIdOverride,
+        @Nonnull String externalMatchId,
+        @Nonnull List<UUID> expectedPlayerUuidsOverride
     ) {
         if (readyMembers.isEmpty()) {
             throw new IllegalStateException("Cannot build a launch context for an empty ready batch.");
         }
-        String originLobbyId = readyMembers.get(0).sourceLobbyId();
-        LobbyDefinition originLobby = lobbyService.find(originLobbyId)
-            .orElseThrow(() -> new IllegalStateException(
-                "Queue ready batch references missing lobby '" + originLobbyId + "'."
-            ));
+        String originLobbyId = normalizeSourceContextId(readyMembers.get(0).sourceLobbyId());
         String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
         if (returnConnectionAddress.isBlank()) {
             throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
         }
-        String matchId = UUID.randomUUID().toString().toLowerCase();
+        String originReturnTargetId = defaultReturnTargetId(originLobbyId);
+        String matchId = matchIdOverride != null && !matchIdOverride.isBlank()
+            ? NexoriMatchIds.normalizeBackendOwnedMatchId(matchIdOverride)
+            : NexoriMatchIds.normalizeGeneratedMatchId(UUID.randomUUID().toString().toLowerCase());
+        List<UUID> expectedPlayerUuids = expectedPlayerUuidsOverride != null && !expectedPlayerUuidsOverride.isEmpty()
+            ? PlayerUuidLists.canonicalize(expectedPlayerUuidsOverride)
+            : PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList());
+        LinkedHashMap<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid = new LinkedHashMap<>();
+        for (QueueMemberState member : readyMembers) {
+            String memberSourceContextId = normalizeSourceContextId(member.sourceLobbyId());
+            playerReturnTargetsByUuid.put(
+                member.playerUuid(),
+                new ArenaPlayerReturnTarget(
+                    memberSourceContextId,
+                    returnConnectionAddress,
+                    defaultReturnTargetId(memberSourceContextId),
+                    queue.launchTravelProfileId()
+                ).normalized()
+            );
+        }
         JsonObject root = new JsonObject();
         root.addProperty("flowType", "minigame.launch");
         root.addProperty("matchId", matchId);
         root.addProperty("queueId", queue.queueId());
         root.addProperty("arenaId", arena.arenaId());
-        root.addProperty("originLobbyId", originLobby.lobbyId());
+        root.addProperty("originLobbyId", originLobbyId);
         root.addProperty("returnConnectionAddress", returnConnectionAddress);
-        root.addProperty("returnFallbackTargetId", originLobby.returnTargetId());
+        root.addProperty("returnFallbackTargetId", originReturnTargetId);
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
         root.addProperty("instanceTemplateId", arena.instanceTemplateId());
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("rulesEngineId", arena.rulesEngineId());
-        root.addProperty("expectedPlayerCount", readyMembers.size());
-        JsonArray expectedPlayerUuids = new JsonArray();
-        for (QueueMemberState member : readyMembers) {
-            expectedPlayerUuids.add(member.playerUuid().toString());
+        root.addProperty("expectedPlayerCount", expectedPlayerUuids.size());
+        JsonArray expectedPlayerUuidsJson = new JsonArray();
+        for (UUID expectedPlayerUuid : expectedPlayerUuids) {
+            expectedPlayerUuidsJson.add(expectedPlayerUuid.toString());
         }
-        root.add("expectedPlayerUuids", expectedPlayerUuids);
+        root.add("expectedPlayerUuids", expectedPlayerUuidsJson);
         root.addProperty("launchedAtEpochMs", nowEpochMs);
         if (assignmentId != null && !assignmentId.isBlank()) {
             root.addProperty("assignmentId", assignmentId);
@@ -781,11 +824,11 @@ public final class QueueCoordinatorService {
             matchId,
             queue.queueId(),
             arena.arenaId(),
-            originLobby.lobbyId(),
+            originLobbyId,
             returnConnectionAddress,
-            originLobby.returnTargetId(),
+            originReturnTargetId,
             queue.launchTravelProfileId(),
-            readyMembers.stream().map(QueueMemberState::playerUuid).toList(),
+            PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList()),
             List.of(),
             nowEpochMs,
             nowEpochMs,
@@ -793,16 +836,39 @@ public final class QueueCoordinatorService {
             nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
             ""
         ).normalized();
-        return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState);
+        return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState, Map.copyOf(playerReturnTargetsByUuid));
     }
 
     @Nonnull
-    private String contextJsonWithLaunchIndex(@Nonnull String baseContextJson, int launchIndex) {
+    private static String normalizeSourceContextId(@Nonnull String rawSourceContextId) {
+        return SourceContextId.normalizeId(rawSourceContextId);
+    }
+
+    @Nonnull
+    private static String defaultReturnTargetId(@Nonnull String sourceContextId) {
+        return normalizeSourceContextId(sourceContextId) + ".natural_spawn";
+    }
+
+    @Nonnull
+    private String contextJsonWithLaunchIndex(
+        @Nonnull String baseContextJson,
+        int launchIndex,
+        @Nonnull QueueMemberState member,
+        @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid
+    ) {
         JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
         if (root == null) {
             root = new JsonObject();
         }
         root.addProperty("launchIndex", Math.max(launchIndex, 0));
+        ArenaPlayerReturnTarget returnTarget = playerReturnTargetsByUuid.get(member.playerUuid());
+        if (returnTarget == null) {
+            throw new IllegalStateException("Missing per-player return target for launched player " + member.playerUuid() + ".");
+        }
+        root.addProperty("originLobbyId", returnTarget.originLobbyId());
+        root.addProperty("returnConnectionAddress", returnTarget.returnConnectionAddress());
+        root.addProperty("returnFallbackTargetId", returnTarget.returnFallbackTargetId());
+        root.addProperty("launchTravelProfileId", returnTarget.launchTravelProfileId());
         return GSON.toJson(root);
     }
 
@@ -917,7 +983,8 @@ public final class QueueCoordinatorService {
     private record PreparedLaunch(
         String matchId,
         String contextJson,
-        MatchSessionState matchSessionState
+        MatchSessionState matchSessionState,
+        Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid
     ) {
     }
 
@@ -1006,8 +1073,7 @@ public final class QueueCoordinatorService {
         JOINED,
         ALREADY_QUEUED,
         QUEUE_MISSING,
-        QUEUE_DISABLED,
-        NOT_LOBBY_SERVER
+        QUEUE_DISABLED
     }
 
     public record JoinResult(
@@ -1037,10 +1103,6 @@ public final class QueueCoordinatorService {
             return new JoinResult(JoinOutcome.QUEUE_DISABLED, QueueDefinition.normalizeId(queueId), "", null);
         }
 
-        @Nonnull
-        public static JoinResult notLobbyServer() {
-            return new JoinResult(JoinOutcome.NOT_LOBBY_SERVER, "", "", null);
-        }
     }
 
     public enum LeaveOutcome {

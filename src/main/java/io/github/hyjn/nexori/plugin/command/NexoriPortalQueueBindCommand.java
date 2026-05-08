@@ -11,8 +11,6 @@ import io.github.hyjn.nexori.plugin.NexoriPlugin;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingAction;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingDefinition;
 import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
-import io.github.hyjn.nexori.plugin.minigame.LobbyDefinition;
-import io.github.hyjn.nexori.plugin.minigame.LobbyService;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
@@ -24,7 +22,6 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
 
     private final NexoriPlugin plugin;
     private final PortalInstanceService portalInstanceService;
-    private final LobbyService lobbyService;
     private final QueueService queueService;
     private final TriggerBindingService triggerBindingService;
     private final RequiredArg<String> portalIdArg;
@@ -34,14 +31,12 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
     public NexoriPortalQueueBindCommand(
         @Nonnull NexoriPlugin plugin,
         @Nonnull PortalInstanceService portalInstanceService,
-        @Nonnull LobbyService lobbyService,
         @Nonnull QueueService queueService,
         @Nonnull TriggerBindingService triggerBindingService
     ) {
         super("nexoriportalqueuebind", "Binds a placed Nexori portal to JOIN_QUEUE or LEAVE_QUEUE for one persisted queue.");
         this.plugin = plugin;
         this.portalInstanceService = portalInstanceService;
-        this.lobbyService = lobbyService;
         this.queueService = queueService;
         this.triggerBindingService = triggerBindingService;
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
@@ -61,11 +56,6 @@ public final class NexoriPortalQueueBindCommand extends CommandBase {
         PortalInstanceDefinition portal = portalInstanceService.findById(portalId).orElse(null);
         if (portal == null) {
             context.sendMessage(Message.raw("That Nexori portal does not exist on this server."));
-            return;
-        }
-        LobbyDefinition lobby = lobbyService.findByWorldName(portal.worldName()).orElse(null);
-        if (lobby == null || !lobby.enabled()) {
-            context.sendMessage(Message.raw("That portal is not in an enabled Nexori lobby world, so it cannot bind to a Nexori queue action."));
             return;
         }
         if (queueService.find(queueId).isEmpty()) {

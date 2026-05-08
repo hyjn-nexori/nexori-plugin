@@ -275,6 +275,24 @@ public final class BackendResultStore {
         return Map.copyOf(normalized);
     }
 
+    @Nonnull
+    private static Map<String, String> normalizeAssignmentIdsByPlayerUuid(Map<String, String> rawAssignmentIdsByPlayerUuid) {
+        if (rawAssignmentIdsByPlayerUuid == null || rawAssignmentIdsByPlayerUuid.isEmpty()) {
+            return Map.of();
+        }
+        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
+        rawAssignmentIdsByPlayerUuid.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .forEach(entry -> {
+                String playerUuid = normalize(entry.getKey()).toLowerCase();
+                String assignmentId = normalize(entry.getValue());
+                if (!playerUuid.isBlank() && !assignmentId.isBlank()) {
+                    normalized.put(playerUuid, assignmentId);
+                }
+            });
+        return Map.copyOf(normalized);
+    }
+
     public enum BackendResultStatus {
         PENDING,
         ACKNOWLEDGED,
@@ -324,6 +342,7 @@ public final class BackendResultStore {
         String localMatchId,
         String externalMatchId,
         String assignmentId,
+        Map<String, String> assignmentIdsByPlayerUuid,
         String queueId,
         String arenaId,
         String rulesEngineId,
@@ -353,6 +372,7 @@ public final class BackendResultStore {
                 normalize(localMatchId),
                 normalize(externalMatchId),
                 normalize(assignmentId),
+                normalizeAssignmentIdsByPlayerUuid(assignmentIdsByPlayerUuid),
                 normalize(queueId),
                 normalize(arenaId),
                 normalize(rulesEngineId),
@@ -382,6 +402,7 @@ public final class BackendResultStore {
                 localMatchId,
                 externalMatchId,
                 assignmentId,
+                assignmentIdsByPlayerUuid,
                 queueId,
                 arenaId,
                 rulesEngineId,
@@ -420,6 +441,7 @@ public final class BackendResultStore {
                 localMatchId,
                 externalMatchId,
                 assignmentId,
+                assignmentIdsByPlayerUuid,
                 queueId,
                 arenaId,
                 rulesEngineId,

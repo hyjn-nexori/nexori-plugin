@@ -1040,7 +1040,6 @@ public final class ArenaMatchService {
         canonical.append("matchId=").append(match.matchId()).append('\n');
         canonical.append("queueId=").append(match.queueId()).append('\n');
         canonical.append("arenaId=").append(match.arenaId()).append('\n');
-        canonical.append("assignmentId=").append(match.assignmentId()).append('\n');
         canonical.append("externalMatchId=").append(match.externalMatchId()).append('\n');
         canonical.append("reason=").append(reason).append('\n');
         canonical.append("returnDelaySeconds=").append(Math.max(returnDelaySeconds, 0)).append('\n');
@@ -1087,7 +1086,6 @@ public final class ArenaMatchService {
         canonical.append("matchId=").append(match.matchId()).append('\n');
         canonical.append("queueId=").append(match.queueId()).append('\n');
         canonical.append("arenaId=").append(match.arenaId()).append('\n');
-        canonical.append("assignmentId=").append(match.assignmentId()).append('\n');
         canonical.append("externalMatchId=").append(match.externalMatchId()).append('\n');
         canonical.append("rulesEngineId=").append(match.rulesEngineId()).append('\n');
         canonical.append("reason=").append(reason).append('\n');
@@ -1218,6 +1216,8 @@ public final class ArenaMatchService {
                 List.of(playerRef.getUuid()),
                 List.of(),
                 List.of(),
+                launch.assignmentId().isBlank() ? Map.of() : Map.of(playerRef.getUuid(), launch.assignmentId()),
+                Map.of(playerRef.getUuid(), launch.playerReturnTarget()),
                 Map.of(),
                 Map.of(),
                 "",
@@ -1228,7 +1228,10 @@ public final class ArenaMatchService {
                 now,
                 ""
             ).normalized()
-            : existing.withPlayerArrival(playerRef.getUuid(), now);
+            : existing
+                .withPlayerReturnTarget(playerRef.getUuid(), launch.playerReturnTarget(), now)
+                .withPlayerAssignmentId(playerRef.getUuid(), launch.assignmentId(), now)
+                .withPlayerArrival(playerRef.getUuid(), now);
 
         // A player can only belong to one active match at a time.
         String previousMatchId = matchIdByPlayerUuid.put(playerRef.getUuid(), updated.matchId());
@@ -1266,15 +1269,12 @@ public final class ArenaMatchService {
         if (optionalIdentityMismatch(existing.externalMatchId(), launch.externalMatchId())) {
             return Optional.of("externalMatchId mismatch");
         }
-        if (optionalIdentityMismatch(existing.assignmentId(), launch.assignmentId())) {
-            return Optional.of("assignmentId mismatch");
-        }
         if (optionalIdentityMismatch(existing.rulesEngineId(), launch.rulesEngineId())) {
             return Optional.of("rulesEngineId mismatch");
         }
         if (!existing.expectedPlayerUuids().isEmpty()
             && !launch.expectedPlayerUuids().isEmpty()
-            && !samePlayers(existing.expectedPlayerUuids(), launch.expectedPlayerUuids())) {
+            && !PlayerUuidLists.sameCanonicalPlayers(existing.expectedPlayerUuids(), launch.expectedPlayerUuids())) {
             return Optional.of("expectedPlayerUuids mismatch");
         }
         return Optional.empty();
@@ -1580,9 +1580,30 @@ public final class ArenaMatchService {
             return match.withPendingReturn(playerRef.getUuid(), nowEpochMs + RETURN_RETRY_DELAY_MS, nowEpochMs);
         }
 
+        ArenaPlayerReturnTarget playerReturnTarget = match.findPlayerReturnTarget(playerRef.getUuid());
+        String returnConnectionAddress = playerReturnTarget == null
+            ? match.returnConnectionAddress()
+            : playerReturnTarget.returnConnectionAddress();
+        String returnFallbackTargetId = playerReturnTarget == null
+            ? match.returnFallbackTargetId()
+            : playerReturnTarget.returnFallbackTargetId();
+        String launchTravelProfileId = playerReturnTarget == null
+            ? match.launchTravelProfileId()
+            : playerReturnTarget.launchTravelProfileId();
+        String originLobbyId = playerReturnTarget == null
+            ? match.originLobbyId()
+            : playerReturnTarget.originLobbyId();
+        if (returnConnectionAddress.isBlank()
+            || returnFallbackTargetId.isBlank()
+            || launchTravelProfileId.isBlank()
+            || originLobbyId.isBlank()) {
+            return match.withLastError("No valid return target exists for player " + playerRef.getUuid() + ".", nowEpochMs)
+                .withPendingReturn(playerRef.getUuid(), nowEpochMs + RETURN_RETRY_DELAY_MS, nowEpochMs);
+        }
+
         ConfiguredPeer destination;
         try {
-            destination = ConfiguredPeer.parse(match.returnConnectionAddress());
+            destination = ConfiguredPeer.parse(returnConnectionAddress);
         } catch (IllegalArgumentException exception) {
             return match.withLastError(normalizeOptional(exception.getMessage(), exception.getClass().getSimpleName()), nowEpochMs)
                 .withPendingReturn(playerRef.getUuid(), nowEpochMs + RETURN_RETRY_DELAY_MS, nowEpochMs);
@@ -1595,10 +1616,10 @@ public final class ArenaMatchService {
             secureTravelService.travel(
                 playerRef,
                 destination,
-                match.returnFallbackTargetId(),
+                returnFallbackTargetId,
                 "",
-                match.launchTravelProfileId(),
-                buildReturnContextJson(match, returnReason, nowEpochMs)
+                launchTravelProfileId,
+                buildReturnContextJson(match, originLobbyId, returnReason, nowEpochMs)
             );
             removeMatchPlayers(match.matchId(), List.of(playerRef.getUuid()));
             return match.withoutReturnedPlayer(playerRef.getUuid(), nowEpochMs);
@@ -1695,12 +1716,17 @@ public final class ArenaMatchService {
     }
 
     @Nonnull
-    private String buildReturnContextJson(@Nonnull ArenaActiveMatch match, @Nonnull String returnReason, long nowEpochMs) {
+    private String buildReturnContextJson(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull String originLobbyId,
+        @Nonnull String returnReason,
+        long nowEpochMs
+    ) {
         JsonObject root = new JsonObject();
         root.addProperty("flowType", "minigame.return");
         root.addProperty("matchId", match.matchId());
         root.addProperty("queueId", match.queueId());
-        root.addProperty("originLobbyId", match.originLobbyId());
+        root.addProperty("originLobbyId", originLobbyId);
         root.addProperty("sourceArenaId", match.arenaId());
         if (!match.assignmentId().isBlank()) {
             root.addProperty("assignmentId", match.assignmentId());
@@ -1757,7 +1783,7 @@ public final class ArenaMatchService {
                 throw new IllegalArgumentException("Minigame context field 'expectedPlayerUuids' contains invalid UUID '" + rawUuid + "'.", exception);
             }
         }
-        return List.copyOf(playerUuids);
+        return PlayerUuidLists.canonicalize(playerUuids);
     }
 
     private static boolean optionalIdentityMismatch(String left, String right) {
@@ -1767,10 +1793,6 @@ public final class ArenaMatchService {
             return false;
         }
         return !normalizedLeft.equals(normalizedRight);
-    }
-
-    private static boolean samePlayers(@Nonnull List<UUID> left, @Nonnull List<UUID> right) {
-        return new HashSet<>(left).equals(new HashSet<>(right));
     }
 
     @Nonnull
@@ -1852,7 +1874,8 @@ public final class ArenaMatchService {
         String assignmentId,
         String externalMatchId,
         List<UUID> expectedPlayerUuids,
-        int expectedPlayerCount
+        int expectedPlayerCount,
+        ArenaPlayerReturnTarget playerReturnTarget
     ) {
 
         private boolean usesInstanceTemplate() {
@@ -1863,10 +1886,10 @@ public final class ArenaMatchService {
         @Nonnull
         private static LaunchContext from(@Nonnull JsonObject root) {
             return new LaunchContext(
-                readRequired(root, "matchId").toLowerCase(),
+                NexoriMatchIds.normalizeRequiredMatchId(readRequired(root, "matchId"), "Minigame context field 'matchId' cannot be blank."),
                 QueueDefinition.normalizeId(readRequired(root, "queueId")),
                 ArenaDefinition.normalizeId(readRequired(root, "arenaId")),
-                LobbyDefinition.normalizeId(readRequired(root, "originLobbyId")),
+                SourceContextId.normalizeId(readRequired(root, "originLobbyId")),
                 readRequired(root, "returnConnectionAddress"),
                 readRequired(root, "returnFallbackTargetId"),
                 readRequired(root, "launchTravelProfileId").toLowerCase(),
@@ -1886,7 +1909,13 @@ public final class ArenaMatchService {
                     ? normalizeOptional(root.get("externalMatchId").getAsString(), "")
                     : "",
                 readExpectedPlayerUuids(root),
-                root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0
+                root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0,
+                new ArenaPlayerReturnTarget(
+                    SourceContextId.normalizeId(readRequired(root, "originLobbyId")),
+                    readRequired(root, "returnConnectionAddress"),
+                    readRequired(root, "returnFallbackTargetId"),
+                    readRequired(root, "launchTravelProfileId").toLowerCase()
+                ).normalized()
             );
         }
     }

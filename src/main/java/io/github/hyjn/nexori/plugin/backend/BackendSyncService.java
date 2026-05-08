@@ -12,7 +12,8 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
-import io.github.hyjn.nexori.plugin.minigame.NetworkLobbyService;
+import io.github.hyjn.nexori.plugin.minigame.NexoriMatchIds;
+import io.github.hyjn.nexori.plugin.minigame.PlayerUuidLists;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueMemberState;
@@ -58,7 +59,6 @@ public final class BackendSyncService {
     private final BackendAssignmentStore assignmentStore;
     private final ServerIdentity localIdentity;
     private final LocalConnectionAddressService localConnectionAddressService;
-    private final NetworkLobbyService networkLobbyService;
     private final QueueService queueService;
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaService arenaService;
@@ -83,7 +83,6 @@ public final class BackendSyncService {
         @Nonnull BackendAssignmentStore assignmentStore,
         @Nonnull ServerIdentity localIdentity,
         @Nonnull LocalConnectionAddressService localConnectionAddressService,
-        @Nonnull NetworkLobbyService networkLobbyService,
         @Nonnull QueueService queueService,
         @Nonnull QueueCoordinatorService queueCoordinatorService,
         @Nonnull ArenaService arenaService,
@@ -94,7 +93,6 @@ public final class BackendSyncService {
         this.assignmentStore = assignmentStore;
         this.localIdentity = localIdentity;
         this.localConnectionAddressService = localConnectionAddressService;
-        this.networkLobbyService = networkLobbyService;
         this.queueService = queueService;
         this.queueCoordinatorService = queueCoordinatorService;
         this.arenaService = arenaService;
@@ -405,13 +403,17 @@ public final class BackendSyncService {
             return;
         }
 
+        String normalizedMatchId = normalizeBackendMatchId(assignment.matchId());
         List<UUID> playerUuids = parsePlayerUuids(assignment.playerUuids());
+        List<UUID> expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
         QueueCoordinatorService.AssignmentLaunchResult result = queueCoordinatorService.launchBackendAssignment(
             assignment.assignmentId(),
+            normalizedMatchId,
             normalize(assignment.externalMatchId()),
             assignment.queueId(),
             assignment.arenaId(),
-            playerUuids
+            playerUuids,
+            expectedPlayerUuids
         );
         persistAssignmentAck(
             assignment,
@@ -432,6 +434,20 @@ public final class BackendSyncService {
             playerUuids = parsePlayerUuids(assignment.playerUuids());
         } catch (IllegalArgumentException exception) {
             return exception.getMessage();
+        }
+        try {
+            normalizeBackendMatchId(assignment.matchId());
+        } catch (IllegalArgumentException exception) {
+            return exception.getMessage();
+        }
+        List<UUID> expectedPlayerUuids;
+        try {
+            expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
+        } catch (IllegalArgumentException exception) {
+            return exception.getMessage();
+        }
+        if (!expectedPlayerUuids.isEmpty() && !PlayerUuidLists.isSubset(playerUuids, expectedPlayerUuids)) {
+            return "Assignment playerUuids must be a subset of expectedPlayerUuids.";
         }
         for (UUID playerUuid : playerUuids) {
             if (arenaMatchService.findActiveMatchId(playerUuid).isPresent()) {
@@ -518,7 +534,7 @@ public final class BackendSyncService {
             new BackendSyncRequestPayload.ServerSnapshot(
                 localIdentity.fingerprint(),
                 localConnectionAddressService.getConnectionAddressOrBlank(),
-                networkLobbyService.isCurrentServerLobby() ? "LOBBY" : "MEMBER",
+                "SERVER",
                 config.region()
             ),
             List.copyOf(queues),
@@ -606,6 +622,23 @@ public final class BackendSyncService {
             ordered.add(playerUuid);
         }
         return List.copyOf(ordered);
+    }
+
+    @Nonnull
+    private List<UUID> parseExpectedPlayerUuids(List<String> rawPlayerUuids) {
+        if (rawPlayerUuids == null || rawPlayerUuids.isEmpty()) {
+            return List.of();
+        }
+        return PlayerUuidLists.canonicalize(parsePlayerUuids(rawPlayerUuids));
+    }
+
+    @Nonnull
+    private String normalizeBackendMatchId(String rawMatchId) {
+        try {
+            return NexoriMatchIds.normalizeBackendOwnedMatchId(rawMatchId);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Assignment matchId is invalid: " + exception.getMessage());
+        }
     }
 
     @Nonnull

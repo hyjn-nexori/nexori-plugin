@@ -64,14 +64,14 @@ public final class MatchSessionService {
     public synchronized ReturnResult registerReturn(
         @Nonnull String rawMatchId,
         @Nonnull String rawQueueId,
-        @Nonnull String rawOriginLobbyId,
+        @Nonnull String rawOriginContextId,
         @Nonnull String rawSourceArenaId,
         @Nonnull String rawReturnReason,
         @Nonnull UUID playerUuid
     ) throws IOException {
         String matchId = normalizeMatchId(rawMatchId);
         String queueId = QueueDefinition.normalizeId(rawQueueId);
-        String originLobbyId = LobbyDefinition.normalizeId(rawOriginLobbyId);
+        String originContextId = SourceContextId.normalizeId(rawOriginContextId);
         String sourceArenaId = ArenaDefinition.normalizeId(rawSourceArenaId);
         String returnReason = normalizeOptional(rawReturnReason, "MATCH_ENDED");
 
@@ -82,8 +82,8 @@ public final class MatchSessionService {
         if (!session.queueId().equals(queueId)) {
             return ReturnResult.invalid(session, "Queue mismatch on return: expected '" + session.queueId() + "' but got '" + queueId + "'.");
         }
-        if (!session.originLobbyId().equals(originLobbyId)) {
-            return ReturnResult.invalid(session, "Origin lobby mismatch on return: expected '" + session.originLobbyId() + "' but got '" + originLobbyId + "'.");
+        if (!session.originLobbyId().equals(originContextId)) {
+            return ReturnResult.invalid(session, "Origin source context mismatch on return: expected '" + session.originLobbyId() + "' but got '" + originContextId + "'.");
         }
         if (!session.arenaId().equals(sourceArenaId)) {
             return ReturnResult.invalid(session, "Source arena mismatch on return: expected '" + session.arenaId() + "' but got '" + sourceArenaId + "'.");
@@ -125,7 +125,7 @@ public final class MatchSessionService {
 
     @Nonnull
     private static String normalizeMatchId(@Nonnull String rawMatchId) {
-        String normalized = normalizeOptional(rawMatchId, "");
+        String normalized = NexoriMatchIds.normalizeRequiredMatchId(rawMatchId, "Match session id cannot be blank.");
         if (normalized.isBlank()) {
             throw new IllegalArgumentException("Match session id cannot be blank.");
         }

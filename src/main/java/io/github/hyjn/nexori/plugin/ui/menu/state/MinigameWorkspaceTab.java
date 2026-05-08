@@ -1,7 +1,6 @@
 package io.github.hyjn.nexori.plugin.ui.menu.state;
 
 public enum MinigameWorkspaceTab {
-    LOBBY("LOBBY"),
     DESTINATIONS("GAMES"),
     QUEUES("QUEUES"),
     SPAWNS("SPAWNS");
