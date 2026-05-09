@@ -7565,6 +7565,11 @@ public final class NexoriMenuV2Page {
                         int maxPlayers = Integer.parseInt(rawMax);
                         int countdown = Integer.parseInt(rawCountdown);
                         String queueId = editing == null ? deriveId(displayName, "queue") : editing.queueId();
+                        boolean backfillEnabled = editing != null && editing.backfillEnabled();
+                        String backfillMode = editing == null
+                            ? io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode.defaultMode().id()
+                            : editing.backfillMode();
+                        int backfillWindowSeconds = editing == null ? 0 : editing.backfillWindowSeconds();
                         QueueDefinition saved = plugin.getQueueService().upsert(new QueueDefinition(
                             queueId,
                             displayName,
@@ -7574,7 +7579,10 @@ public final class NexoriMenuV2Page {
                             countdown,
                             DEFAULT_MINIGAME_QUEUE_TRAVEL_PROFILE_ID,
                             matchmakingMode.id(),
-                            true
+                            true,
+                            backfillEnabled,
+                            backfillMode,
+                            backfillWindowSeconds
                         ));
                         QUEUE_MODE_DRAFTS.remove(playerRef.getUuid());
                         open(ref, store, playerRef, player, plugin, state.clearedQueueDraft().withStatusText("Saved queue " + saved.displayName() + "."));
@@ -8929,10 +8937,16 @@ public final class NexoriMenuV2Page {
                 rawRegion,
                 requestTimeoutMs,
                 resultReportingEnabled,
-                resultRetryIntervalMs
+                resultRetryIntervalMs,
+                current.matchStateReportingEnabled(),
+                current.matchStateDebounceMs(),
+                current.matchStateMaxCoalesceWindowMs(),
+                current.matchStateRetryIntervalMs(),
+                current.matchStateStaleAfterMs()
             ).normalized();
             plugin.getBackendMatchmakingConfigStore().save(updated);
             plugin.getBackendSyncService().updateConfig(updated);
+            plugin.getBackendMatchAdmissionStateReportingService().updateConfig(updated);
             plugin.getBackendResultReportingService().updateConfig(updated);
             BACKEND_CONFIG_DRAFTS.remove(playerRef.getUuid());
             open(ref, store, playerRef, player, plugin, state.withSelectedView(NexoriMenuV2View.BACKEND).withStatusText("Saved backend matchmaking config and applied it live."));

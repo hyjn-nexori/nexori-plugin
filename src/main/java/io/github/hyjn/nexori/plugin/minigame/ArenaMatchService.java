@@ -24,6 +24,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -77,6 +78,7 @@ public final class ArenaMatchService {
     private final MatchSessionService matchSessionService;
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
+    private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
@@ -98,6 +100,12 @@ public final class ArenaMatchService {
         this.matchSessionService = matchSessionService;
         this.arenaService = arenaService;
         this.instanceSpawnSlotService = instanceSpawnSlotService;
+    }
+
+    public synchronized void setBackendMatchAdmissionStateReportingService(
+        BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService
+    ) {
+        this.backendMatchAdmissionStateReportingService = backendMatchAdmissionStateReportingService;
     }
 
     /**
@@ -156,13 +164,14 @@ public final class ArenaMatchService {
         long now = System.currentTimeMillis();
         ArenaActiveMatch updated = match.withoutReturnedPlayer(playerRef.getUuid(), now)
             .withLastError("Player disconnected: " + event.getDisconnectReason(), now);
-        updated = applyAutomaticResolutionTrigger(updated, now);
+        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
 
         if (updated.isEmpty()) {
             matchesById.remove(updated.matchId());
         } else {
             matchesById.put(updated.matchId(), updated);
         }
+        maybeScheduleAdmissionReporting(match, updated, now, "");
     }
 
     /**
@@ -196,12 +205,13 @@ public final class ArenaMatchService {
                 if (match != null) {
                     ArenaActiveMatch updated = match.withExpectedPlayerCount(match.expectedPlayerCount() - 1, now)
                         .withLastError(reason, now);
-                    updated = applyAutomaticResolutionTrigger(updated, now);
+                    updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
                     if (updated.isEmpty()) {
                         matchesById.remove(updated.matchId());
                     } else {
                         matchesById.put(updated.matchId(), updated);
                     }
+                    maybeScheduleAdmissionReporting(match, updated, now, "");
                 }
                 return;
             }
@@ -258,7 +268,7 @@ public final class ArenaMatchService {
             playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 5 seconds."));
         }
 
-        updated = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, nowEpochMs), nowEpochMs);
 
         if (updated.hasPendingReturn(playerRef.getUuid())) {
             Long dueAt = updated.pendingReturnAtEpochMsByPlayerUuid().get(playerRef.getUuid());
@@ -272,6 +282,7 @@ public final class ArenaMatchService {
         } else {
             matchesById.put(updated.matchId(), updated);
         }
+        maybeScheduleAdmissionReporting(match, updated, nowEpochMs, "");
     }
 
     /**
@@ -406,9 +417,7 @@ public final class ArenaMatchService {
         int expectedPlayers = match.expectedPlayerCount();
         int arrivedPlayers = match.arrivedPlayerUuids().size();
         int placedPlayers = countPlacedPlayers(match);
-        boolean placementComplete = expectedPlayers > 0
-            && arrivedPlayers >= expectedPlayers
-            && placedPlayers >= expectedPlayers;
+        boolean placementComplete = isPlacementComplete(match);
 
         maybeLogPlacementState(
             match,
@@ -698,6 +707,7 @@ public final class ArenaMatchService {
             updated = updated.withLastError(validation.reason(), now);
         }
         matchesById.put(updated.matchId(), updated);
+        maybeScheduleAdmissionReporting(match, updated, now, "");
         return SubmitMatchResult.accepted(
             updated,
             validation.players(),
@@ -737,7 +747,9 @@ public final class ArenaMatchService {
         if (!reason.isBlank()) {
             updated = updated.withLastError(reason, now);
         }
+        updated = reconcileAdmissionLifecycle(updated, now);
         matchesById.put(updated.matchId(), updated);
+        maybeScheduleAdmissionReporting(match, updated, now, "");
         return ResolvePlayerResult.updated(updated, playerUuid, outcome);
     }
 
@@ -758,8 +770,10 @@ public final class ArenaMatchService {
         for (UUID playerUuid : match.activePlayerUuids()) {
             updated = updated.withPendingReturn(playerUuid, now, now);
         }
-        updated = updated.withLastError("Manual match end requested: " + returnReason, now);
+        updated = updated.withLastError("Manual match end requested: " + returnReason, now)
+            .withCompleted(now, now);
         matchesById.put(updated.matchId(), updated);
+        maybeScheduleAdmissionReporting(match, updated, now, "");
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
     }
 
@@ -1210,6 +1224,12 @@ public final class ArenaMatchService {
                 launch.rulesEngineId(),
                 launch.assignmentId(),
                 launch.externalMatchId(),
+                launch.matchSource(),
+                launch.admissionPolicySchemaVersion(),
+                launch.admissionCapacity(),
+                launch.backfillEnabled(),
+                launch.backfillMode(),
+                launch.backfillWindowSeconds(),
                 launch.expectedPlayerUuids(),
                 launch.expectedPlayerCount(),
                 List.of(playerRef.getUuid()),
@@ -1221,6 +1241,8 @@ public final class ArenaMatchService {
                 Map.of(),
                 Map.of(),
                 "",
+                0L,
+                0L,
                 0L,
                 0L,
                 "",
@@ -1247,8 +1269,9 @@ public final class ArenaMatchService {
             }
         }
 
-        updated = applyAutomaticResolutionTrigger(updated, now);
+        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
         matchesById.put(updated.matchId(), updated);
+        maybeScheduleAdmissionReporting(existing, updated, now, "PLAYER_ARRIVED");
         rememberPendingInstanceSpawnTeleport(playerRef.getUuid(), launch, context);
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
@@ -1271,6 +1294,24 @@ public final class ArenaMatchService {
         }
         if (optionalIdentityMismatch(existing.rulesEngineId(), launch.rulesEngineId())) {
             return Optional.of("rulesEngineId mismatch");
+        }
+        if (existing.admissionPolicySchemaVersion() != launch.admissionPolicySchemaVersion()) {
+            return Optional.of("admissionPolicySchemaVersion mismatch");
+        }
+        if (existing.effectiveMatchSource() != ArenaMatchSource.tryParse(launch.matchSource()).orElse(ArenaMatchSource.defaultSource())) {
+            return Optional.of("matchSource mismatch");
+        }
+        if (existing.admissionCapacity() != launch.admissionCapacity()) {
+            return Optional.of("admissionCapacity mismatch");
+        }
+        if (existing.backfillEnabled() != launch.backfillEnabled()) {
+            return Optional.of("backfillEnabled mismatch");
+        }
+        if (existing.effectiveBackfillMode() != QueueBackfillMode.tryParse(launch.backfillMode()).orElse(QueueBackfillMode.NONE)) {
+            return Optional.of("backfillMode mismatch");
+        }
+        if (existing.backfillWindowSeconds() != launch.backfillWindowSeconds()) {
+            return Optional.of("backfillWindowSeconds mismatch");
         }
         if (!existing.expectedPlayerUuids().isEmpty()
             && !launch.expectedPlayerUuids().isEmpty()
@@ -1840,6 +1881,53 @@ public final class ArenaMatchService {
         );
     }
 
+    @Nonnull
+    private ArenaActiveMatch reconcileAdmissionLifecycle(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
+        ArenaActiveMatch updated = match;
+        if (updated.placementCompletedAtEpochMs() <= 0L && isPlacementComplete(updated)) {
+            updated = updated.withPlacementCompleted(nowEpochMs, nowEpochMs);
+        }
+        if (updated.completedAtEpochMs() <= 0L && shouldMarkMatchCompleted(updated)) {
+            updated = updated.withCompleted(nowEpochMs, nowEpochMs);
+        }
+        return updated;
+    }
+
+    private boolean isPlacementComplete(@Nonnull ArenaActiveMatch match) {
+        int expectedPlayers = match.expectedPlayerCount();
+        int arrivedPlayers = match.arrivedPlayerUuids().size();
+        int placedPlayers = countPlacedPlayers(match);
+        return expectedPlayers > 0
+            && arrivedPlayers >= expectedPlayers
+            && placedPlayers >= expectedPlayers;
+    }
+
+    private boolean shouldMarkMatchCompleted(@Nonnull ArenaActiveMatch match) {
+        return match.hasWinner() || match.hasSubmittedResult();
+    }
+
+    private void maybeScheduleAdmissionReporting(
+        ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated,
+        long nowEpochMs,
+        @Nonnull String primaryReason
+    ) {
+        if (backendMatchAdmissionStateReportingService == null) {
+            return;
+        }
+        if (previous == null) {
+            backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), "MATCH_CREATED", nowEpochMs);
+        }
+        if (!primaryReason.isBlank()) {
+            backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), primaryReason, nowEpochMs);
+        }
+        if ((previous == null || previous.placementCompletedAtEpochMs() <= 0L)
+            && updated.placementCompletedAtEpochMs() > 0L) {
+            backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), "PLACEMENT_COMPLETED", nowEpochMs);
+            backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), "MATCH_STARTED", nowEpochMs);
+        }
+    }
+
     private void logPlacementConfirmed(
         @Nonnull PlayerRef playerRef,
         String matchId,
@@ -1873,6 +1961,12 @@ public final class ArenaMatchService {
         String rulesEngineId,
         String assignmentId,
         String externalMatchId,
+        String matchSource,
+        int admissionPolicySchemaVersion,
+        int admissionCapacity,
+        boolean backfillEnabled,
+        String backfillMode,
+        int backfillWindowSeconds,
         List<UUID> expectedPlayerUuids,
         int expectedPlayerCount,
         ArenaPlayerReturnTarget playerReturnTarget
@@ -1908,6 +2002,16 @@ public final class ArenaMatchService {
                 root.has("externalMatchId")
                     ? normalizeOptional(root.get("externalMatchId").getAsString(), "")
                     : "",
+                root.has("matchSource")
+                    ? normalizeOptional(root.get("matchSource").getAsString(), ArenaMatchSource.defaultSource().id())
+                    : ArenaMatchSource.defaultSource().id(),
+                root.has("admissionPolicySchemaVersion") ? Math.max(root.get("admissionPolicySchemaVersion").getAsInt(), 0) : 0,
+                root.has("admissionCapacity") ? Math.max(root.get("admissionCapacity").getAsInt(), 0) : 0,
+                root.has("backfillEnabled") && root.get("backfillEnabled").getAsBoolean(),
+                root.has("backfillMode")
+                    ? normalizeOptional(root.get("backfillMode").getAsString(), QueueBackfillMode.defaultMode().id())
+                    : QueueBackfillMode.defaultMode().id(),
+                root.has("backfillWindowSeconds") ? Math.max(root.get("backfillWindowSeconds").getAsInt(), 0) : 0,
                 readExpectedPlayerUuids(root),
                 root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0,
                 new ArenaPlayerReturnTarget(

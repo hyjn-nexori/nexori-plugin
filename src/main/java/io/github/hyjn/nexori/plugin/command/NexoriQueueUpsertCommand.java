@@ -64,6 +64,7 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
                 .map(String::trim)
                 .filter(value -> !value.isBlank())
                 .toList();
+            QueueDefinition existing = queueService.find(queueId).orElse(null);
 
             QueueDefinition saved = queueService.upsert(new QueueDefinition(
                 queueId,
@@ -74,7 +75,10 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
                 context.get(countdownSecondsArg),
                 travelProfileId,
                 matchmakingMode.id(),
-                true
+                true,
+                existing != null && existing.backfillEnabled(),
+                existing == null ? io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode.defaultMode().id() : existing.backfillMode(),
+                existing == null ? 0 : existing.backfillWindowSeconds()
             ));
             context.sendMessage(Message.raw(
                 "Saved queue " + saved.queueId()

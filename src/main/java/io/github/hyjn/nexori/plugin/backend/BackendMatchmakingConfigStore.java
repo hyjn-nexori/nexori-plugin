@@ -74,7 +74,12 @@ public final class BackendMatchmakingConfigStore {
             stringValue(root, "region", ""),
             longValue(root, "requestTimeoutMs", 0L),
             booleanValue(root, "resultReportingEnabled", false),
-            longValue(root, "resultRetryIntervalMs", 0L)
+            longValue(root, "resultRetryIntervalMs", 0L),
+            booleanValue(root, "matchStateReportingEnabled", false),
+            longValue(root, "matchStateDebounceMs", BackendMatchmakingConfig.DEFAULT_MATCH_STATE_DEBOUNCE_MS),
+            longValue(root, "matchStateMaxCoalesceWindowMs", BackendMatchmakingConfig.DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS),
+            longValue(root, "matchStateRetryIntervalMs", BackendMatchmakingConfig.DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS),
+            longValue(root, "matchStateStaleAfterMs", BackendMatchmakingConfig.DEFAULT_MATCH_STATE_STALE_AFTER_MS)
         );
     }
 

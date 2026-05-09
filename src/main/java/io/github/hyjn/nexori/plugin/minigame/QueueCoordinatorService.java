@@ -30,6 +30,7 @@ import java.util.UUID;
 public final class QueueCoordinatorService {
 
     private static final Gson GSON = new Gson();
+    private static final int ADMISSION_POLICY_SCHEMA_VERSION = 1;
     private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;
     private static final long WORLD_TICK_ADVANCE_INTERVAL_MS = 1000L;
 
@@ -776,6 +777,12 @@ public final class QueueCoordinatorService {
         String matchId = matchIdOverride != null && !matchIdOverride.isBlank()
             ? NexoriMatchIds.normalizeBackendOwnedMatchId(matchIdOverride)
             : NexoriMatchIds.normalizeGeneratedMatchId(UUID.randomUUID().toString().toLowerCase());
+        QueueBackfillMode backfillMode = queue.effectiveBackfillMode();
+        int admissionCapacity = Math.max(queue.maxPlayers(), 0);
+        int arenaCapacity = Math.max(arena.maxSupportedPlayers(), 0);
+        if (arenaCapacity > 0) {
+            admissionCapacity = Math.min(admissionCapacity, arenaCapacity);
+        }
         List<UUID> expectedPlayerUuids = expectedPlayerUuidsOverride != null && !expectedPlayerUuidsOverride.isEmpty()
             ? PlayerUuidLists.canonicalize(expectedPlayerUuidsOverride)
             : PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList());
@@ -805,6 +812,17 @@ public final class QueueCoordinatorService {
         root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("rulesEngineId", arena.rulesEngineId());
         root.addProperty("expectedPlayerCount", expectedPlayerUuids.size());
+        root.addProperty("admissionPolicySchemaVersion", ADMISSION_POLICY_SCHEMA_VERSION);
+        root.addProperty(
+            "matchSource",
+            queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN
+                ? ArenaMatchSource.BACKEND_DRIVEN.id()
+                : ArenaMatchSource.LOCAL_FIFO.id()
+        );
+        root.addProperty("admissionCapacity", admissionCapacity);
+        root.addProperty("backfillEnabled", queue.backfillEnabled());
+        root.addProperty("backfillMode", backfillMode.id());
+        root.addProperty("backfillWindowSeconds", Math.max(queue.backfillWindowSeconds(), 0));
         JsonArray expectedPlayerUuidsJson = new JsonArray();
         for (UUID expectedPlayerUuid : expectedPlayerUuids) {
             expectedPlayerUuidsJson.add(expectedPlayerUuid.toString());

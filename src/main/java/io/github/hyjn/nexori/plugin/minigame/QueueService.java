@@ -25,6 +25,7 @@ public final class QueueService {
         this.logger = logger;
         for (QueueDefinition queue : store.loadOrCreate()) {
             warnInvalidMatchmakingMode(queue);
+            warnInvalidBackfillMode(queue);
             QueueDefinition normalized = queue.normalized();
             validate(normalized);
             queuesById.put(normalized.queueId(), normalized);
@@ -49,6 +50,7 @@ public final class QueueService {
     @Nonnull
     public synchronized QueueDefinition upsert(@Nonnull QueueDefinition definition) throws IOException {
         warnInvalidMatchmakingMode(definition);
+        warnInvalidBackfillMode(definition);
         QueueDefinition normalized = definition.normalized();
         validate(normalized);
         queuesById.put(normalized.queueId(), normalized);
@@ -76,6 +78,9 @@ public final class QueueService {
         if (definition.countdownSeconds() < 0) {
             throw new IllegalArgumentException("Queue countdown seconds cannot be negative.");
         }
+        if (definition.backfillWindowSeconds() < 0) {
+            throw new IllegalArgumentException("Queue backfill window seconds cannot be negative.");
+        }
         TravelProfileType.parse(definition.launchTravelProfileId());
         for (String arenaId : definition.arenaIds()) {
             arenaService.find(arenaId)
@@ -98,6 +103,20 @@ public final class QueueService {
             "Queue '" + queueId + "' has invalid matchmakingMode '"
                 + definition.matchmakingMode()
                 + "'; falling back to LOCAL_FIFO."
+        );
+    }
+
+    private void warnInvalidBackfillMode(@Nonnull QueueDefinition definition) {
+        if (!definition.hasInvalidBackfillMode()) {
+            return;
+        }
+        String queueId = definition.queueId() == null || definition.queueId().isBlank()
+            ? "<unknown>"
+            : definition.queueId().trim();
+        logger.atWarning().log(
+            "Queue '" + queueId + "' has invalid backfillMode '"
+                + definition.backfillMode()
+                + "'; falling back to NONE."
         );
     }
 }

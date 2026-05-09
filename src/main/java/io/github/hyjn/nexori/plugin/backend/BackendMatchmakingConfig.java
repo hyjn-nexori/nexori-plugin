@@ -11,13 +11,51 @@ public record BackendMatchmakingConfig(
     String region,
     long requestTimeoutMs,
     boolean resultReportingEnabled,
-    long resultRetryIntervalMs
+    long resultRetryIntervalMs,
+    boolean matchStateReportingEnabled,
+    long matchStateDebounceMs,
+    long matchStateMaxCoalesceWindowMs,
+    long matchStateRetryIntervalMs,
+    long matchStateStaleAfterMs
 ) {
 
     public static final int CURRENT_SCHEMA_VERSION = 1;
     private static final long DEFAULT_SYNC_INTERVAL_MS = 1000L;
     private static final long DEFAULT_REQUEST_TIMEOUT_MS = 3000L;
     private static final long DEFAULT_RESULT_RETRY_INTERVAL_MS = 5000L;
+    public static final long DEFAULT_MATCH_STATE_DEBOUNCE_MS = 1000L;
+    public static final long DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS = 5000L;
+    public static final long DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS = 3000L;
+    public static final long DEFAULT_MATCH_STATE_STALE_AFTER_MS = 30000L;
+
+    public BackendMatchmakingConfig(
+        int schemaVersion,
+        boolean syncEnabled,
+        String baseUrl,
+        String serverToken,
+        long syncIntervalMs,
+        String region,
+        long requestTimeoutMs,
+        boolean resultReportingEnabled,
+        long resultRetryIntervalMs
+    ) {
+        this(
+            schemaVersion,
+            syncEnabled,
+            baseUrl,
+            serverToken,
+            syncIntervalMs,
+            region,
+            requestTimeoutMs,
+            resultReportingEnabled,
+            resultRetryIntervalMs,
+            false,
+            DEFAULT_MATCH_STATE_DEBOUNCE_MS,
+            DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS,
+            DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS,
+            DEFAULT_MATCH_STATE_STALE_AFTER_MS
+        );
+    }
 
     @Nonnull
     public static BackendMatchmakingConfig defaults() {
@@ -30,12 +68,36 @@ public record BackendMatchmakingConfig(
             "",
             DEFAULT_REQUEST_TIMEOUT_MS,
             false,
-            DEFAULT_RESULT_RETRY_INTERVAL_MS
+            DEFAULT_RESULT_RETRY_INTERVAL_MS,
+            false,
+            DEFAULT_MATCH_STATE_DEBOUNCE_MS,
+            DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS,
+            DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS,
+            DEFAULT_MATCH_STATE_STALE_AFTER_MS
         );
     }
 
     @Nonnull
     public BackendMatchmakingConfig normalized() {
+        long normalizedDebounceMs = Math.max(0L, matchStateDebounceMs);
+        long normalizedMaxCoalesceWindowMs = matchStateMaxCoalesceWindowMs < normalizedDebounceMs
+            ? DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS
+            : matchStateMaxCoalesceWindowMs;
+        if (normalizedMaxCoalesceWindowMs < normalizedDebounceMs) {
+            normalizedMaxCoalesceWindowMs = normalizedDebounceMs;
+        }
+        if (normalizedMaxCoalesceWindowMs <= 0L) {
+            normalizedMaxCoalesceWindowMs = DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS;
+        }
+        long normalizedRetryIntervalMs = matchStateRetryIntervalMs > 0L
+            ? matchStateRetryIntervalMs
+            : DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS;
+        long normalizedStaleAfterMs = matchStateStaleAfterMs > normalizedMaxCoalesceWindowMs
+            ? matchStateStaleAfterMs
+            : DEFAULT_MATCH_STATE_STALE_AFTER_MS;
+        if (normalizedStaleAfterMs <= normalizedMaxCoalesceWindowMs) {
+            normalizedStaleAfterMs = normalizedMaxCoalesceWindowMs + DEFAULT_MATCH_STATE_STALE_AFTER_MS;
+        }
         return new BackendMatchmakingConfig(
             CURRENT_SCHEMA_VERSION,
             syncEnabled,
@@ -45,7 +107,12 @@ public record BackendMatchmakingConfig(
             normalizeOptional(region),
             requestTimeoutMs <= 0L ? DEFAULT_REQUEST_TIMEOUT_MS : requestTimeoutMs,
             resultReportingEnabled,
-            resultRetryIntervalMs <= 0L ? DEFAULT_RESULT_RETRY_INTERVAL_MS : resultRetryIntervalMs
+            resultRetryIntervalMs <= 0L ? DEFAULT_RESULT_RETRY_INTERVAL_MS : resultRetryIntervalMs,
+            matchStateReportingEnabled,
+            normalizedDebounceMs,
+            normalizedMaxCoalesceWindowMs,
+            normalizedRetryIntervalMs,
+            normalizedStaleAfterMs
         );
     }
 
@@ -61,6 +128,12 @@ public record BackendMatchmakingConfig(
     public boolean isResultReportingUsable() {
         BackendMatchmakingConfig normalized = normalized();
         return !normalized.resultReportingEnabled()
+            || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
+    }
+
+    public boolean isMatchStateReportingUsable() {
+        BackendMatchmakingConfig normalized = normalized();
+        return !normalized.matchStateReportingEnabled()
             || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
     }
 
@@ -80,6 +153,15 @@ public record BackendMatchmakingConfig(
             normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);
         }
         return normalizedBaseUrl + "/nexori/results";
+    }
+
+    @Nonnull
+    public String matchStateUrl() {
+        String normalizedBaseUrl = normalizeOptional(baseUrl);
+        if (normalizedBaseUrl.endsWith("/")) {
+            normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);
+        }
+        return normalizedBaseUrl + "/nexori/matches/state";
     }
 
     @Nonnull

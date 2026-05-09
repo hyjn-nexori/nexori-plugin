@@ -17,8 +17,38 @@ public record QueueDefinition(
     int countdownSeconds,
     String launchTravelProfileId,
     String matchmakingMode,
-    boolean enabled
+    boolean enabled,
+    boolean backfillEnabled,
+    String backfillMode,
+    int backfillWindowSeconds
 ) {
+
+    public QueueDefinition(
+        String queueId,
+        String displayName,
+        List<String> arenaIds,
+        int minPlayers,
+        int maxPlayers,
+        int countdownSeconds,
+        String launchTravelProfileId,
+        String matchmakingMode,
+        boolean enabled
+    ) {
+        this(
+            queueId,
+            displayName,
+            arenaIds,
+            minPlayers,
+            maxPlayers,
+            countdownSeconds,
+            launchTravelProfileId,
+            matchmakingMode,
+            enabled,
+            false,
+            QueueBackfillMode.defaultMode().id(),
+            0
+        );
+    }
 
     @Nonnull
     public QueueDefinition normalized() {
@@ -27,6 +57,7 @@ public record QueueDefinition(
         List<String> normalizedArenaIds = normalizeIds(arenaIds);
         String normalizedTravelProfileId = TravelProfileType.KEEP_INVENTORY.id();
         String normalizedMatchmakingMode = effectiveMatchmakingMode().id();
+        QueueBackfillMode normalizedBackfillMode = effectiveBackfillMode();
         return new QueueDefinition(
             normalizedQueueId,
             normalizedDisplayName,
@@ -36,7 +67,10 @@ public record QueueDefinition(
             countdownSeconds,
             normalizedTravelProfileId,
             normalizedMatchmakingMode,
-            enabled
+            enabled,
+            backfillEnabled,
+            normalizedBackfillMode.id(),
+            Math.max(backfillWindowSeconds, 0)
         );
     }
 
@@ -50,6 +84,21 @@ public record QueueDefinition(
         return matchmakingMode != null
             && !matchmakingMode.isBlank()
             && QueueMatchmakingMode.tryParse(matchmakingMode).isEmpty();
+    }
+
+    @Nonnull
+    public QueueBackfillMode effectiveBackfillMode() {
+        if (!backfillEnabled) {
+            return QueueBackfillMode.NONE;
+        }
+        return QueueBackfillMode.tryParse(backfillMode)
+            .orElse(QueueBackfillMode.defaultMode());
+    }
+
+    public boolean hasInvalidBackfillMode() {
+        return backfillMode != null
+            && !backfillMode.isBlank()
+            && QueueBackfillMode.tryParse(backfillMode).isEmpty();
     }
 
     @Nonnull
