@@ -1,7 +1,7 @@
 {
     "Group": "Nexori",
     "Name": "NexoriPlugin",
-    "Version": "2.2.0",
+    "Version": "2.3.0",
     "Description": "Connected Hytale server networks with secure travel, portals, queues, and instanced minigames.",
     "Authors": [
         {
