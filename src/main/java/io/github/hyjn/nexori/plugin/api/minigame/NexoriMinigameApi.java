@@ -100,6 +100,12 @@ public interface NexoriMinigameApi {
     NexoriSubmitFinalMatchResultResult submitFinalMatchResult(@Nonnull NexoriSubmitFinalMatchResultRequest request);
 
     /**
+     * Explicitly closes backend admission reporting for one active backend-driven match.
+     */
+    @Nonnull
+    NexoriCloseMatchAdmissionResult closeMatchAdmission(@Nonnull NexoriCloseMatchAdmissionRequest request);
+
+    /**
      * Returns the state of Nexori's initial player placement phase for one active match.
      */
     @Nonnull

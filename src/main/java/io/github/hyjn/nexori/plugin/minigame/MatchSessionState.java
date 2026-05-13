@@ -64,6 +64,31 @@ public record MatchSessionState(
     }
 
     @Nonnull
+    public MatchSessionState withMergedExpectedPlayers(
+        @Nonnull List<UUID> playerUuids,
+        long nowEpochMs,
+        @Nonnull String rawLastError
+    ) {
+        List<UUID> mergedExpectedPlayerUuids = mergePlayers(expectedPlayerUuids(), playerUuids);
+        return new MatchSessionState(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            mergedExpectedPlayerUuids,
+            filterExistingObserved(mergedExpectedPlayerUuids, returnedPlayerUuids()),
+            createdAtEpochMs(),
+            nowEpochMs,
+            handoffCompletedAtEpochMs(),
+            expiresAtEpochMs(),
+            rawLastError
+        ).normalized();
+    }
+
+    @Nonnull
     public MatchSessionState withObservedPlayer(@Nonnull UUID playerUuid, long nowEpochMs) {
         LinkedHashSet<UUID> observed = new LinkedHashSet<>(returnedPlayerUuids());
         observed.add(playerUuid);
@@ -102,6 +127,32 @@ public record MatchSessionState(
             launchTravelProfileId(),
             launchedPlayerUuids,
             filterExistingObserved(launchedPlayerUuids, returnedPlayerUuids()),
+            createdAtEpochMs(),
+            nowEpochMs,
+            nowEpochMs,
+            expiresAtEpochMs,
+            rawLastError
+        ).normalized();
+    }
+
+    @Nonnull
+    public MatchSessionState withMergedHandoffCompleted(
+        @Nonnull List<UUID> launchedPlayerUuids,
+        long expiresAtEpochMs,
+        long nowEpochMs,
+        @Nonnull String rawLastError
+    ) {
+        List<UUID> mergedExpectedPlayerUuids = mergePlayers(expectedPlayerUuids(), launchedPlayerUuids);
+        return new MatchSessionState(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            mergedExpectedPlayerUuids,
+            filterExistingObserved(mergedExpectedPlayerUuids, returnedPlayerUuids()),
             createdAtEpochMs(),
             nowEpochMs,
             nowEpochMs,
@@ -178,6 +229,18 @@ public record MatchSessionState(
             }
         }
         return PlayerUuidLists.canonicalize(filtered);
+    }
+
+    @Nonnull
+    private static List<UUID> mergePlayers(@Nonnull List<UUID> existingPlayers, @Nonnull List<UUID> addedPlayers) {
+        LinkedHashSet<UUID> merged = new LinkedHashSet<>();
+        if (existingPlayers != null) {
+            merged.addAll(existingPlayers);
+        }
+        if (addedPlayers != null) {
+            merged.addAll(addedPlayers);
+        }
+        return PlayerUuidLists.canonicalize(merged);
     }
 
     @Nonnull

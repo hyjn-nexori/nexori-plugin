@@ -2,6 +2,10 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriBackendReportStatus;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionResult;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchCompletionStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultPlayer;
@@ -296,6 +300,44 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             result.backendReportStatus(),
             result.resultId(),
             result.message()
+        );
+    }
+
+    @Nonnull
+    @Override
+    public NexoriCloseMatchAdmissionResult closeMatchAdmission(@Nonnull NexoriCloseMatchAdmissionRequest request) {
+        if (request == null) {
+            return new NexoriCloseMatchAdmissionResult(
+                NexoriCloseMatchAdmissionStatus.INVALID_REASON,
+                "",
+                false,
+                "Request cannot be null."
+            );
+        }
+        ArenaMatchService.CloseMatchAdmissionResult localResult = arenaMatchService.closeMatchAdmission(
+            request.matchId(),
+            request.reason() == null
+                ? null
+                : switch (request.reason()) {
+                    case MOD_REQUEST -> ArenaMatchService.CloseMatchAdmissionReason.MOD_REQUEST;
+                    case GAME_PHASE_LOCKED -> ArenaMatchService.CloseMatchAdmissionReason.GAME_PHASE_LOCKED;
+                    case ROSTER_LOCKED -> ArenaMatchService.CloseMatchAdmissionReason.ROSTER_LOCKED;
+                    case ADMIN_FORCED -> ArenaMatchService.CloseMatchAdmissionReason.ADMIN_FORCED;
+                },
+            request.message() == null ? "" : request.message()
+        );
+        return new NexoriCloseMatchAdmissionResult(
+            switch (localResult.outcome()) {
+                case CLOSED -> NexoriCloseMatchAdmissionStatus.CLOSED;
+                case ALREADY_CLOSED -> NexoriCloseMatchAdmissionStatus.ALREADY_CLOSED;
+                case MATCH_MISSING -> NexoriCloseMatchAdmissionStatus.MATCH_MISSING;
+                case MATCH_NOT_BACKEND_DRIVEN -> NexoriCloseMatchAdmissionStatus.MATCH_NOT_BACKEND_DRIVEN;
+                case INVALID_REASON -> NexoriCloseMatchAdmissionStatus.INVALID_REASON;
+                case REPORTING_DISABLED -> NexoriCloseMatchAdmissionStatus.REPORTING_DISABLED;
+            },
+            localResult.matchId(),
+            localResult.closedLocally(),
+            localResult.message()
         );
     }
 

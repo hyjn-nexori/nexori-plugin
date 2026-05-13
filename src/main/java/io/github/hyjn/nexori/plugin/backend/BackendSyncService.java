@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentAckPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentPayload;
+import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentPlayerPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncRequestPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
@@ -53,6 +54,8 @@ public final class BackendSyncService {
     private static final long ERROR_BACKOFF_MS = 5_000L;
     private static final long STALE_SAFETY_WINDOW_MS = 1_000L;
     private static final int MAX_SYNC_LOG_ENTRIES = 80;
+    private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
+    private static final String ASSIGNMENT_TYPE_BACKFILL = "BACKFILL";
 
     private final HytaleLogger logger;
     private BackendMatchmakingConfig config;
@@ -403,18 +406,33 @@ public final class BackendSyncService {
             return;
         }
 
+        String assignmentType = normalizeAssignmentType(assignment);
         String normalizedMatchId = normalizeBackendMatchId(assignment.matchId());
-        List<UUID> playerUuids = parsePlayerUuids(assignment.playerUuids());
-        List<UUID> expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
-        QueueCoordinatorService.AssignmentLaunchResult result = queueCoordinatorService.launchBackendAssignment(
-            assignment.assignmentId(),
-            normalizedMatchId,
-            normalize(assignment.externalMatchId()),
-            assignment.queueId(),
-            assignment.arenaId(),
-            playerUuids,
-            expectedPlayerUuids
-        );
+        QueueCoordinatorService.AssignmentLaunchResult result;
+        if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)) {
+            result = queueCoordinatorService.launchBackendBackfillAssignment(
+                assignment.assignmentId(),
+                normalizedMatchId,
+                normalize(assignment.externalMatchId()),
+                assignment.queueId(),
+                assignment.arenaId(),
+                parseBackfillPlayerTickets(assignment.players()),
+                normalize(assignment.reportingServerId()),
+                normalize(assignment.targetConnectionAddress())
+            );
+        } else {
+            List<UUID> expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
+            List<UUID> playerUuids = parsePlayerUuids(assignment.playerUuids());
+            result = queueCoordinatorService.launchBackendAssignment(
+                assignment.assignmentId(),
+                normalizedMatchId,
+                normalize(assignment.externalMatchId()),
+                assignment.queueId(),
+                assignment.arenaId(),
+                playerUuids,
+                expectedPlayerUuids
+            );
+        }
         persistAssignmentAck(
             assignment,
             assignmentHash,
@@ -426,12 +444,31 @@ public final class BackendSyncService {
     }
 
     private String validateAssignmentOutsideQueueCoordinator(BackendAssignmentPayload assignment) {
-        if (!"CREATE_MATCH".equalsIgnoreCase(normalize(assignment.type()))) {
+        String assignmentType;
+        try {
+            assignmentType = normalizeAssignmentType(assignment);
+        } catch (IllegalArgumentException exception) {
+            return exception.getMessage();
+        }
+        if (ASSIGNMENT_TYPE_INITIAL_MATCH.equals(assignmentType)
+            && !"CREATE_MATCH".equalsIgnoreCase(normalize(assignment.type()))) {
             return "Unsupported assignment type.";
         }
-        List<UUID> playerUuids;
+        if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)
+            && !normalize(assignment.type()).isBlank()
+            && !"JOIN_MATCH".equalsIgnoreCase(normalize(assignment.type()))
+            && !"BACKFILL".equalsIgnoreCase(normalize(assignment.type()))) {
+            return "Unsupported assignment type.";
+        }
+        if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)
+            && normalize(assignment.targetConnectionAddress()).isBlank()) {
+            return "BACKFILL assignment requires targetConnectionAddress.";
+        }
+        List<UUID> assignmentPlayerUuids;
         try {
-            playerUuids = parsePlayerUuids(assignment.playerUuids());
+            assignmentPlayerUuids = ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)
+                ? parseBackfillPlayerUuids(assignment.players())
+                : parsePlayerUuids(assignment.playerUuids());
         } catch (IllegalArgumentException exception) {
             return exception.getMessage();
         }
@@ -440,16 +477,19 @@ public final class BackendSyncService {
         } catch (IllegalArgumentException exception) {
             return exception.getMessage();
         }
-        List<UUID> expectedPlayerUuids;
-        try {
-            expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
-        } catch (IllegalArgumentException exception) {
-            return exception.getMessage();
+        if (ASSIGNMENT_TYPE_INITIAL_MATCH.equals(assignmentType)) {
+            List<UUID> expectedPlayerUuids;
+            try {
+                expectedPlayerUuids = parseExpectedPlayerUuids(assignment.expectedPlayerUuids());
+            } catch (IllegalArgumentException exception) {
+                return exception.getMessage();
+            }
+            if (!expectedPlayerUuids.isEmpty()
+                && !PlayerUuidLists.isSubset(assignmentPlayerUuids, expectedPlayerUuids)) {
+                return "Assignment playerUuids must be a subset of expectedPlayerUuids.";
+            }
         }
-        if (!expectedPlayerUuids.isEmpty() && !PlayerUuidLists.isSubset(playerUuids, expectedPlayerUuids)) {
-            return "Assignment playerUuids must be a subset of expectedPlayerUuids.";
-        }
-        for (UUID playerUuid : playerUuids) {
+        for (UUID playerUuid : assignmentPlayerUuids) {
             if (arenaMatchService.findActiveMatchId(playerUuid).isPresent()) {
                 return "Player " + playerUuid + " is already in an active match.";
             }
@@ -600,6 +640,72 @@ public final class BackendSyncService {
         } catch (RuntimeException exception) {
             return BackendSyncHttpResult.failure(syncId, sequence, statusCode, exception.getClass().getSimpleName(), "Backend sync response could not be parsed.");
         }
+    }
+
+    @Nonnull
+    private String normalizeAssignmentType(@Nonnull BackendAssignmentPayload assignment) {
+        String rawAssignmentType = normalize(assignment.assignmentType()).toUpperCase();
+        if (rawAssignmentType.isBlank()) {
+            if ("CREATE_MATCH".equalsIgnoreCase(normalize(assignment.type()))) {
+                return ASSIGNMENT_TYPE_INITIAL_MATCH;
+            }
+            throw new IllegalArgumentException("Assignment assignmentType is required unless legacy type is CREATE_MATCH.");
+        }
+        if (ASSIGNMENT_TYPE_INITIAL_MATCH.equals(rawAssignmentType) || ASSIGNMENT_TYPE_BACKFILL.equals(rawAssignmentType)) {
+            return rawAssignmentType;
+        }
+        throw new IllegalArgumentException("Assignment assignmentType must be INITIAL_MATCH or BACKFILL.");
+    }
+
+    @Nonnull
+    private List<QueueCoordinatorService.BackendAssignmentPlayerTicket> parseBackfillPlayerTickets(
+        List<BackendAssignmentPlayerPayload> rawPlayers
+    ) {
+        if (rawPlayers == null || rawPlayers.isEmpty()) {
+            throw new IllegalArgumentException("BACKFILL assignment must include players.");
+        }
+        Set<UUID> parsedPlayerUuids = new HashSet<>();
+        Set<String> parsedReservationIds = new HashSet<>();
+        List<QueueCoordinatorService.BackendAssignmentPlayerTicket> tickets = new ArrayList<>();
+        for (BackendAssignmentPlayerPayload rawPlayer : rawPlayers) {
+            if (rawPlayer == null) {
+                throw new IllegalArgumentException("BACKFILL assignment includes a null player ticket.");
+            }
+            UUID playerUuid;
+            try {
+                playerUuid = UUID.fromString(normalize(rawPlayer.playerUuid()));
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException("BACKFILL assignment includes an invalid player UUID.");
+            }
+            if (!parsedPlayerUuids.add(playerUuid)) {
+                throw new IllegalArgumentException("BACKFILL assignment includes duplicate players.");
+            }
+            String reservationId = normalize(rawPlayer.admissionReservationId());
+            if (reservationId.isBlank()) {
+                throw new IllegalArgumentException("BACKFILL assignment requires one admissionReservationId per player.");
+            }
+            if (!parsedReservationIds.add(reservationId)) {
+                throw new IllegalArgumentException("BACKFILL assignment includes duplicate admissionReservationIds.");
+            }
+            if (rawPlayer.admissionExpiresAtEpochMs() <= 0L) {
+                throw new IllegalArgumentException("BACKFILL assignment requires a positive admissionExpiresAtEpochMs per player.");
+            }
+            tickets.add(new QueueCoordinatorService.BackendAssignmentPlayerTicket(
+                playerUuid,
+                reservationId,
+                rawPlayer.admissionExpiresAtEpochMs()
+            ));
+        }
+        return List.copyOf(tickets);
+    }
+
+    @Nonnull
+    private List<UUID> parseBackfillPlayerUuids(List<BackendAssignmentPlayerPayload> rawPlayers) {
+        List<UUID> playerUuids = new ArrayList<>();
+        for (QueueCoordinatorService.BackendAssignmentPlayerTicket ticket : parseBackfillPlayerTickets(rawPlayers)) {
+            playerUuids.add(ticket.playerUuid());
+        }
+        return List.copyOf(playerUuids);
     }
 
     @Nonnull

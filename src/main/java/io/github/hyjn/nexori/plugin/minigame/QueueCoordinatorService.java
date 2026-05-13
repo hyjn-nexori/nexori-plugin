@@ -33,6 +33,8 @@ public final class QueueCoordinatorService {
     private static final int ADMISSION_POLICY_SCHEMA_VERSION = 1;
     private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;
     private static final long WORLD_TICK_ADVANCE_INTERVAL_MS = 1000L;
+    private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
+    private static final String ASSIGNMENT_TYPE_BACKFILL = "BACKFILL";
 
     private final QueueService queueService;
     private final ArenaService arenaService;
@@ -346,7 +348,19 @@ public final class QueueCoordinatorService {
             ).normalized();
             stateByQueueId.put(queue.queueId(), readyState);
 
-            DispatchLaunchResult dispatch = dispatchLaunch(queue, arena.get(), launchCandidates, nowEpochMs, "", "", "", List.of());
+            DispatchLaunchResult dispatch = dispatchLaunch(
+                queue,
+                arena.get(),
+                launchCandidates,
+                nowEpochMs,
+                "",
+                ASSIGNMENT_TYPE_INITIAL_MATCH,
+                "",
+                "",
+                List.of(),
+                List.of(),
+                ""
+            );
             if (dispatch.failedBeforeLaunch()) {
                 stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, dispatch.errorMessage()));
                 continue;
@@ -404,16 +418,88 @@ public final class QueueCoordinatorService {
         @Nonnull List<UUID> playerUuids,
         @Nonnull List<UUID> expectedPlayerUuids
     ) {
+        List<BackendAssignmentPlayerTicket> tickets = new ArrayList<>();
+        if (playerUuids != null) {
+            for (UUID playerUuid : playerUuids) {
+                tickets.add(new BackendAssignmentPlayerTicket(playerUuid, "", 0L));
+            }
+        }
+        return launchBackendAssignment(
+            assignmentId,
+            ASSIGNMENT_TYPE_INITIAL_MATCH,
+            matchId,
+            externalMatchId,
+            rawQueueId,
+            rawArenaId,
+            tickets,
+            expectedPlayerUuids,
+            "",
+            ""
+        );
+    }
+
+    @Nonnull
+    public synchronized AssignmentLaunchResult launchBackendAssignment(
+        @Nonnull String assignmentId,
+        @Nonnull String assignmentType,
+        @Nonnull String matchId,
+        @Nonnull String externalMatchId,
+        @Nonnull String rawQueueId,
+        @Nonnull String rawArenaId,
+        @Nonnull List<BackendAssignmentPlayerTicket> players,
+        @Nonnull List<UUID> expectedPlayerUuids,
+        @Nonnull String reportingServerId,
+        @Nonnull String targetConnectionAddress
+    ) {
         long nowEpochMs = System.currentTimeMillis();
         if (assignmentId == null || assignmentId.isBlank()) {
             return AssignmentLaunchResult.rejected("", "Assignment id cannot be blank.");
         }
-        if (playerUuids == null || playerUuids.isEmpty()) {
+        String normalizedAssignmentType = assignmentType == null || assignmentType.isBlank()
+            ? ASSIGNMENT_TYPE_INITIAL_MATCH
+            : assignmentType.trim().toUpperCase();
+        if (!ASSIGNMENT_TYPE_INITIAL_MATCH.equals(normalizedAssignmentType) && !ASSIGNMENT_TYPE_BACKFILL.equals(normalizedAssignmentType)) {
+            return AssignmentLaunchResult.rejected("", "Assignment type must be INITIAL_MATCH or BACKFILL.");
+        }
+        if (ASSIGNMENT_TYPE_BACKFILL.equals(normalizedAssignmentType)) {
+            return launchBackendBackfillAssignment(
+                assignmentId,
+                matchId,
+                externalMatchId,
+                rawQueueId,
+                rawArenaId,
+                players,
+                reportingServerId,
+                targetConnectionAddress
+            );
+        }
+        if (players == null || players.isEmpty()) {
             return AssignmentLaunchResult.rejected("", "Assignment must include at least one player.");
         }
-        Set<UUID> uniquePlayerUuids = new LinkedHashSet<>(playerUuids);
-        if (uniquePlayerUuids.size() != playerUuids.size()) {
-            return AssignmentLaunchResult.rejected("", "Assignment includes duplicate players.");
+        List<UUID> playerUuids = new ArrayList<>();
+        Set<UUID> uniquePlayerUuids = new LinkedHashSet<>();
+        Set<String> uniqueReservationIds = new LinkedHashSet<>();
+        List<BackendAssignmentPlayerTicket> normalizedTickets = new ArrayList<>();
+        for (BackendAssignmentPlayerTicket player : players) {
+            if (player == null || player.playerUuid() == null) {
+                return AssignmentLaunchResult.rejected("", "Assignment includes a null player UUID.");
+            }
+            if (!uniquePlayerUuids.add(player.playerUuid())) {
+                return AssignmentLaunchResult.rejected("", "Assignment includes duplicate players.");
+            }
+            if (ASSIGNMENT_TYPE_BACKFILL.equals(normalizedAssignmentType)) {
+                if (player.admissionReservationId() == null || player.admissionReservationId().isBlank()) {
+                    return AssignmentLaunchResult.rejected("", "BACKFILL assignment requires one admissionReservationId per player.");
+                }
+                if (!uniqueReservationIds.add(player.admissionReservationId().trim())) {
+                    return AssignmentLaunchResult.rejected("", "BACKFILL assignment includes duplicate admissionReservationIds.");
+                }
+                if (player.admissionExpiresAtEpochMs() <= 0L) {
+                    return AssignmentLaunchResult.rejected("", "BACKFILL assignment requires a positive admission expiry per player.");
+                }
+            }
+            normalizedTickets.add(player.normalized());
+            playerUuids.add(player.playerUuid());
         }
         String normalizedMatchId;
         try {
@@ -422,7 +508,8 @@ public final class QueueCoordinatorService {
             return AssignmentLaunchResult.rejected("", exception.getMessage());
         }
         List<UUID> canonicalExpectedPlayerUuids = PlayerUuidLists.canonicalize(expectedPlayerUuids);
-        if (!canonicalExpectedPlayerUuids.isEmpty()
+        if (ASSIGNMENT_TYPE_INITIAL_MATCH.equals(normalizedAssignmentType)
+            && !canonicalExpectedPlayerUuids.isEmpty()
             && !PlayerUuidLists.isSubset(playerUuids, canonicalExpectedPlayerUuids)) {
             return AssignmentLaunchResult.rejected("", "Assignment playerUuids must be a subset of expectedPlayerUuids.");
         }
@@ -456,13 +543,15 @@ public final class QueueCoordinatorService {
         } catch (IllegalArgumentException exception) {
             return AssignmentLaunchResult.rejected("", exception.getMessage());
         }
+        if (targetConnectionAddress != null
+            && !targetConnectionAddress.isBlank()
+            && !arena.destinationConnectionAddress().equalsIgnoreCase(targetConnectionAddress.trim())) {
+            return AssignmentLaunchResult.rejected("", "Assignment targetConnectionAddress does not match the arena destination.");
+        }
 
         QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
         List<QueueMemberState> assignmentMembers = new ArrayList<>();
         for (UUID playerUuid : playerUuids) {
-            if (playerUuid == null) {
-                return AssignmentLaunchResult.rejected("", "Assignment includes a null player UUID.");
-            }
             String queuedQueueId = queueIdByPlayerUuid.get(playerUuid);
             if (!queue.queueId().equals(queuedQueueId)) {
                 return AssignmentLaunchResult.rejected("", "Player " + playerUuid + " is not in queue " + queue.queueId() + ".");
@@ -507,9 +596,12 @@ public final class QueueCoordinatorService {
             launchCandidates,
             nowEpochMs,
             assignmentId,
+            normalizedAssignmentType,
             normalizedMatchId,
             externalMatchId,
-            canonicalExpectedPlayerUuids
+            canonicalExpectedPlayerUuids,
+            normalizedTickets,
+            reportingServerId
         );
         for (LaunchCandidate candidate : dispatch.launched()) {
             queueIdByPlayerUuid.remove(candidate.member().playerUuid());
@@ -541,6 +633,180 @@ public final class QueueCoordinatorService {
             return AssignmentLaunchResult.failed(dispatch.matchId(), dispatch.errorMessage());
         }
         return AssignmentLaunchResult.failed(dispatch.matchId(), "Partial launch: " + dispatch.errorMessage());
+    }
+
+    @Nonnull
+    public synchronized AssignmentLaunchResult launchBackendBackfillAssignment(
+        @Nonnull String assignmentId,
+        @Nonnull String matchId,
+        @Nonnull String externalMatchId,
+        @Nonnull String rawQueueId,
+        @Nonnull String rawArenaId,
+        @Nonnull List<BackendAssignmentPlayerTicket> players,
+        @Nonnull String reportingServerId,
+        @Nonnull String targetConnectionAddress
+    ) {
+        long nowEpochMs = System.currentTimeMillis();
+        if (assignmentId == null || assignmentId.isBlank()) {
+            return AssignmentLaunchResult.rejected("", "Assignment id cannot be blank.");
+        }
+        if (players == null || players.isEmpty()) {
+            return AssignmentLaunchResult.rejected("", "BACKFILL assignment must include at least one player.");
+        }
+        String normalizedMatchId;
+        try {
+            normalizedMatchId = NexoriMatchIds.normalizeBackendOwnedMatchId(matchId);
+        } catch (IllegalArgumentException exception) {
+            return AssignmentLaunchResult.rejected("", exception.getMessage());
+        }
+        String normalizedArenaId = rawArenaId == null ? "" : rawArenaId.trim().toLowerCase();
+        if (normalizedArenaId.isBlank()) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, "Arena id cannot be blank.");
+        }
+        String normalizedTargetConnectionAddress = targetConnectionAddress == null ? "" : targetConnectionAddress.trim();
+        if (normalizedTargetConnectionAddress.isBlank()) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment requires targetConnectionAddress.");
+        }
+        ConfiguredPeer destination;
+        try {
+            destination = ConfiguredPeer.parse(normalizedTargetConnectionAddress);
+        } catch (IllegalArgumentException exception) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, exception.getMessage());
+        }
+
+        List<UUID> playerUuids = new ArrayList<>();
+        Set<UUID> uniquePlayerUuids = new LinkedHashSet<>();
+        Set<String> uniqueReservationIds = new LinkedHashSet<>();
+        List<BackendAssignmentPlayerTicket> normalizedTickets = new ArrayList<>();
+        for (BackendAssignmentPlayerTicket player : players) {
+            if (player == null || player.playerUuid() == null) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment includes a null player UUID.");
+            }
+            if (!uniquePlayerUuids.add(player.playerUuid())) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment includes duplicate players.");
+            }
+            BackendAssignmentPlayerTicket normalizedTicket;
+            try {
+                normalizedTicket = player.normalized();
+            } catch (IllegalArgumentException exception) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, exception.getMessage());
+            }
+            if (normalizedTicket.admissionReservationId().isBlank()) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment requires one admissionReservationId per player.");
+            }
+            if (!uniqueReservationIds.add(normalizedTicket.admissionReservationId())) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment includes duplicate admissionReservationIds.");
+            }
+            if (normalizedTicket.admissionExpiresAtEpochMs() <= 0L) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "BACKFILL assignment requires a positive admission expiry per player.");
+            }
+            normalizedTickets.add(normalizedTicket);
+            playerUuids.add(normalizedTicket.playerUuid());
+        }
+
+        QueueDefinition queue = queueService.find(rawQueueId).orElse(null);
+        if (queue == null) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, "Queue does not exist.");
+        }
+        if (!queue.enabled()) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, "Queue is disabled.");
+        }
+        if (queue.effectiveMatchmakingMode() != QueueMatchmakingMode.BACKEND_DRIVEN) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, "Queue is not BACKEND_DRIVEN.");
+        }
+
+        QueueRuntimeState currentState = state(queue.queueId(), nowEpochMs);
+        List<QueueMemberState> assignmentMembers = new ArrayList<>();
+        for (UUID playerUuid : playerUuids) {
+            String queuedQueueId = queueIdByPlayerUuid.get(playerUuid);
+            if (!queue.queueId().equals(queuedQueueId)) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "Player " + playerUuid + " is not in queue " + queue.queueId() + ".");
+            }
+            PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+            if (playerRef == null || !playerRef.isValid()) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "Player " + playerUuid + " is not online.");
+            }
+            QueueMemberState member = findMember(currentState, playerUuid).orElse(null);
+            if (member == null) {
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "Player " + playerUuid + " is missing from queue runtime state.");
+            }
+            assignmentMembers.add(member);
+        }
+
+        PreparedLaunch preparedLaunch;
+        try {
+            preparedLaunch = prepareBackfillLaunch(
+                queue,
+                normalizedArenaId,
+                assignmentMembers,
+                nowEpochMs,
+                assignmentId,
+                normalizedMatchId,
+                externalMatchId,
+                normalizedTickets,
+                reportingServerId
+            );
+        } catch (IllegalStateException exception) {
+            return AssignmentLaunchResult.rejected(normalizedMatchId, exception.getMessage());
+        }
+
+        QueueRuntimeState launchingState = new QueueRuntimeState(
+            currentState.queueId(),
+            QueuePhase.READY,
+            removePlayers(currentState.waitingMembers(), playerUuids),
+            List.copyOf(assignmentMembers),
+            0L,
+            nowEpochMs,
+            nowEpochMs,
+            nowEpochMs,
+            ""
+        ).normalized();
+        stateByQueueId.put(queue.queueId(), launchingState);
+
+        List<LaunchCandidate> launchCandidates = new ArrayList<>();
+        for (QueueMemberState member : assignmentMembers) {
+            PlayerRef playerRef = Universe.get().getPlayer(member.playerUuid());
+            if (playerRef == null || !playerRef.isValid()) {
+                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(launchingState, nowEpochMs, "Assigned player went offline before launch."));
+                return AssignmentLaunchResult.rejected(normalizedMatchId, "Assigned player went offline before launch.");
+            }
+            launchCandidates.add(new LaunchCandidate(member, playerRef));
+        }
+
+        DispatchLaunchResult dispatch = dispatchBackfillLaunch(
+            queue,
+            destination,
+            launchCandidates,
+            preparedLaunch,
+            nowEpochMs
+        );
+        for (LaunchCandidate candidate : dispatch.launched()) {
+            queueIdByPlayerUuid.remove(candidate.member().playerUuid());
+        }
+
+        List<QueueMemberState> unlaunchedReady = new ArrayList<>();
+        for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
+            unlaunchedReady.add(launchCandidates.get(index).member());
+        }
+        List<QueueMemberState> mergedWaiting = new ArrayList<>(launchingState.waitingMembers());
+        mergedWaiting.addAll(unlaunchedReady);
+        QueueRuntimeState updated = new QueueRuntimeState(
+            queue.queueId(),
+            QueuePhase.WAITING,
+            List.copyOf(mergedWaiting),
+            List.of(),
+            0L,
+            0L,
+            nowEpochMs,
+            0L,
+            dispatch.succeeded() ? "" : dispatch.errorMessage()
+        ).normalized();
+        stateByQueueId.put(queue.queueId(), updated);
+
+        if (!dispatch.launched().isEmpty()) {
+            return AssignmentLaunchResult.launched(dispatch.matchId());
+        }
+        return AssignmentLaunchResult.failed(dispatch.matchId(), dispatch.errorMessage());
     }
 
     @Nonnull
@@ -632,9 +898,12 @@ public final class QueueCoordinatorService {
         @Nonnull List<LaunchCandidate> launchCandidates,
         long nowEpochMs,
         @Nonnull String assignmentId,
+        @Nonnull String assignmentType,
         @Nonnull String matchIdOverride,
         @Nonnull String externalMatchId,
-        @Nonnull List<UUID> expectedPlayerUuidsOverride
+        @Nonnull List<UUID> expectedPlayerUuidsOverride,
+        @Nonnull List<BackendAssignmentPlayerTicket> assignmentPlayerTickets,
+        @Nonnull String reportingServerId
     ) {
         List<QueueMemberState> readyMembers = launchCandidates.stream()
             .map(LaunchCandidate::member)
@@ -655,21 +924,26 @@ public final class QueueCoordinatorService {
                 readyMembers,
                 nowEpochMs,
                 assignmentId,
+                assignmentType,
                 matchIdOverride,
                 externalMatchId,
-                expectedPlayerUuidsOverride
+                expectedPlayerUuidsOverride,
+                assignmentPlayerTickets,
+                reportingServerId
             );
         } catch (IllegalStateException exception) {
             return DispatchLaunchResult.failedBeforeLaunch("", exception.getMessage());
         }
-        try {
-            matchSessionService.upsert(preparedLaunch.matchSessionState());
-        } catch (IOException exception) {
-            logger.atWarning().withCause(exception).log("Failed to persist Nexori match session before launch.");
-            return DispatchLaunchResult.failedBeforeLaunch(
-                preparedLaunch.matchId(),
-                "Failed to persist match session state before launch."
-            );
+        if (!ASSIGNMENT_TYPE_BACKFILL.equals(preparedLaunch.assignmentType())) {
+            try {
+                matchSessionService.upsert(preparedLaunch.matchSessionState());
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to persist Nexori match session before launch.");
+                return DispatchLaunchResult.failedBeforeLaunch(
+                    preparedLaunch.matchId(),
+                    "Failed to persist match session state before launch."
+                );
+            }
         }
 
         List<LaunchCandidate> launched = new ArrayList<>();
@@ -686,7 +960,10 @@ public final class QueueCoordinatorService {
                             preparedLaunch.contextJson(),
                             launchIndex,
                             candidate.member(),
-                            preparedLaunch.playerReturnTargetsByUuid()
+                            preparedLaunch.playerReturnTargetsByUuid(),
+                            preparedLaunch.assignmentType(),
+                            preparedLaunch.assignmentPlayerTicketsByUuid(),
+                            preparedLaunch.reportingServerId()
                         )
                     );
                 } else {
@@ -700,7 +977,10 @@ public final class QueueCoordinatorService {
                             preparedLaunch.contextJson(),
                             launchIndex,
                             candidate.member(),
-                            preparedLaunch.playerReturnTargetsByUuid()
+                            preparedLaunch.playerReturnTargetsByUuid(),
+                            preparedLaunch.assignmentType(),
+                            preparedLaunch.assignmentPlayerTicketsByUuid(),
+                            preparedLaunch.reportingServerId()
                         )
                     );
                 }
@@ -720,7 +1000,8 @@ public final class QueueCoordinatorService {
 
         if (launchError.isBlank()) {
             try {
-                matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
+                matchSessionService.upsert(completeSessionHandoff(
+                    preparedLaunch,
                     launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
                     nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
                     nowEpochMs,
@@ -733,16 +1014,19 @@ public final class QueueCoordinatorService {
         }
 
         if (launched.isEmpty()) {
-            try {
-                matchSessionService.remove(preparedLaunch.matchId());
-            } catch (IOException exception) {
-                logger.atWarning().withCause(exception).log("Failed to remove unused Nexori match session after launch failure.");
+            if (!ASSIGNMENT_TYPE_BACKFILL.equals(preparedLaunch.assignmentType())) {
+                try {
+                    matchSessionService.remove(preparedLaunch.matchId());
+                } catch (IOException exception) {
+                    logger.atWarning().withCause(exception).log("Failed to remove unused Nexori match session after launch failure.");
+                }
             }
             return DispatchLaunchResult.failedBeforeLaunch(preparedLaunch.matchId(), launchError);
         }
 
         try {
-            matchSessionService.upsert(preparedLaunch.matchSessionState().withHandoffCompleted(
+            matchSessionService.upsert(completeSessionHandoff(
+                preparedLaunch,
                 launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
                 nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
                 nowEpochMs,
@@ -755,15 +1039,191 @@ public final class QueueCoordinatorService {
     }
 
     @Nonnull
+    private DispatchLaunchResult dispatchBackfillLaunch(
+        @Nonnull QueueDefinition queue,
+        @Nonnull ConfiguredPeer destination,
+        @Nonnull List<LaunchCandidate> launchCandidates,
+        @Nonnull PreparedLaunch preparedLaunch,
+        long nowEpochMs
+    ) {
+        List<LaunchCandidate> launched = new ArrayList<>();
+        String launchError = "";
+        for (LaunchCandidate candidate : launchCandidates) {
+            try {
+                secureTravelService.travelToServer(
+                    candidate.playerRef(),
+                    destination,
+                    queue.launchTravelProfileId(),
+                    backfillContextJsonForPlayer(
+                        preparedLaunch.contextJson(),
+                        candidate.member(),
+                        preparedLaunch.playerReturnTargetsByUuid(),
+                        preparedLaunch.assignmentPlayerTicketsByUuid(),
+                        preparedLaunch.reportingServerId()
+                    )
+                );
+                launched.add(candidate);
+            } catch (IOException | GeneralSecurityException | IllegalStateException exception) {
+                launchError = exception.getMessage();
+                logger.atWarning().withCause(exception).log(
+                    "Failed to launch Nexori BACKFILL assignment for queue "
+                        + queue.queueId()
+                        + " to match "
+                        + preparedLaunch.matchId()
+                        + "."
+                );
+                break;
+            }
+        }
+
+        if (!launched.isEmpty()) {
+            try {
+                matchSessionService.upsert(completeSessionHandoff(
+                    preparedLaunch,
+                    launched.stream().map(candidate -> candidate.member().playerUuid()).toList(),
+                    nowEpochMs + MatchSessionService.HANDOFF_RECORD_RETENTION_MS,
+                    nowEpochMs,
+                    launchError
+                ));
+            } catch (IOException exception) {
+                logger.atWarning().withCause(exception).log("Failed to finalize Nexori BACKFILL handoff record after launch.");
+            }
+        }
+
+        if (launchError.isBlank()) {
+            return DispatchLaunchResult.succeeded(preparedLaunch.matchId(), launched);
+        }
+        if (launched.isEmpty()) {
+            return DispatchLaunchResult.failedBeforeLaunch(preparedLaunch.matchId(), launchError);
+        }
+        return DispatchLaunchResult.partial(preparedLaunch.matchId(), launched, launchError);
+    }
+
+    @Nonnull
+    private MatchSessionState completeSessionHandoff(
+        @Nonnull PreparedLaunch preparedLaunch,
+        @Nonnull List<UUID> launchedPlayerUuids,
+        long expiresAtEpochMs,
+        long nowEpochMs,
+        @Nonnull String lastError
+    ) {
+        if (!ASSIGNMENT_TYPE_BACKFILL.equals(preparedLaunch.assignmentType())) {
+            return preparedLaunch.matchSessionState().withHandoffCompleted(
+                launchedPlayerUuids,
+                expiresAtEpochMs,
+                nowEpochMs,
+                lastError
+            );
+        }
+        MatchSessionState base = matchSessionService.find(preparedLaunch.matchId())
+            .orElse(preparedLaunch.matchSessionState());
+        return base.withMergedHandoffCompleted(
+            launchedPlayerUuids,
+            expiresAtEpochMs,
+            nowEpochMs,
+            lastError
+        );
+    }
+
+    @Nonnull
+    private PreparedLaunch prepareBackfillLaunch(
+        @Nonnull QueueDefinition queue,
+        @Nonnull String arenaId,
+        @Nonnull List<QueueMemberState> readyMembers,
+        long nowEpochMs,
+        @Nonnull String assignmentId,
+        @Nonnull String matchId,
+        @Nonnull String externalMatchId,
+        @Nonnull List<BackendAssignmentPlayerTicket> assignmentPlayerTickets,
+        @Nonnull String reportingServerId
+    ) {
+        if (readyMembers.isEmpty()) {
+            throw new IllegalStateException("Cannot build a BACKFILL launch context for an empty assignment.");
+        }
+        String originLobbyId = normalizeSourceContextId(readyMembers.get(0).sourceLobbyId());
+        String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
+        if (returnConnectionAddress.isBlank()) {
+            throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
+        }
+        String originReturnTargetId = defaultReturnTargetId(originLobbyId);
+        LinkedHashMap<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid = new LinkedHashMap<>();
+        for (QueueMemberState member : readyMembers) {
+            String memberSourceContextId = normalizeSourceContextId(member.sourceLobbyId());
+            playerReturnTargetsByUuid.put(
+                member.playerUuid(),
+                new ArenaPlayerReturnTarget(
+                    memberSourceContextId,
+                    returnConnectionAddress,
+                    defaultReturnTargetId(memberSourceContextId),
+                    queue.launchTravelProfileId()
+                ).normalized()
+            );
+        }
+        LinkedHashMap<UUID, BackendAssignmentPlayerTicket> assignmentTicketsByPlayerUuid = new LinkedHashMap<>();
+        for (BackendAssignmentPlayerTicket ticket : assignmentPlayerTickets) {
+            if (ticket != null && ticket.playerUuid() != null) {
+                assignmentTicketsByPlayerUuid.put(ticket.playerUuid(), ticket.normalized());
+            }
+        }
+
+        JsonObject root = new JsonObject();
+        root.addProperty("flowType", "minigame.launch");
+        root.addProperty("assignmentType", ASSIGNMENT_TYPE_BACKFILL);
+        root.addProperty("assignmentId", assignmentId);
+        root.addProperty("matchId", matchId);
+        if (externalMatchId != null && !externalMatchId.isBlank()) {
+            root.addProperty("externalMatchId", externalMatchId);
+        }
+        root.addProperty("queueId", queue.queueId());
+        root.addProperty("arenaId", arenaId);
+        if (reportingServerId != null && !reportingServerId.isBlank()) {
+            root.addProperty("reportingServerId", reportingServerId.trim());
+        }
+        root.addProperty("originLobbyId", originLobbyId);
+        root.addProperty("returnConnectionAddress", returnConnectionAddress);
+        root.addProperty("returnFallbackTargetId", originReturnTargetId);
+        root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
+
+        MatchSessionState matchSessionState = new MatchSessionState(
+            matchId,
+            queue.queueId(),
+            arenaId,
+            originLobbyId,
+            returnConnectionAddress,
+            originReturnTargetId,
+            queue.launchTravelProfileId(),
+            List.of(),
+            List.of(),
+            nowEpochMs,
+            nowEpochMs,
+            0L,
+            nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
+            ""
+        ).normalized();
+        return new PreparedLaunch(
+            matchId,
+            GSON.toJson(root),
+            matchSessionState,
+            Map.copyOf(playerReturnTargetsByUuid),
+            ASSIGNMENT_TYPE_BACKFILL,
+            Map.copyOf(assignmentTicketsByPlayerUuid),
+            reportingServerId == null ? "" : reportingServerId.trim()
+        );
+    }
+
+    @Nonnull
     private PreparedLaunch prepareLaunch(
         @Nonnull QueueDefinition queue,
         @Nonnull ArenaDefinition arena,
         @Nonnull List<QueueMemberState> readyMembers,
         long nowEpochMs,
         @Nonnull String assignmentId,
+        @Nonnull String assignmentType,
         @Nonnull String matchIdOverride,
         @Nonnull String externalMatchId,
-        @Nonnull List<UUID> expectedPlayerUuidsOverride
+        @Nonnull List<UUID> expectedPlayerUuidsOverride,
+        @Nonnull List<BackendAssignmentPlayerTicket> assignmentPlayerTickets,
+        @Nonnull String reportingServerId
     ) {
         if (readyMembers.isEmpty()) {
             throw new IllegalStateException("Cannot build a launch context for an empty ready batch.");
@@ -783,10 +1243,16 @@ public final class QueueCoordinatorService {
         if (arenaCapacity > 0) {
             admissionCapacity = Math.min(admissionCapacity, arenaCapacity);
         }
-        List<UUID> expectedPlayerUuids = expectedPlayerUuidsOverride != null && !expectedPlayerUuidsOverride.isEmpty()
-            ? PlayerUuidLists.canonicalize(expectedPlayerUuidsOverride)
-            : PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList());
+        List<UUID> expectedPlayerUuids;
+        if (expectedPlayerUuidsOverride != null && !expectedPlayerUuidsOverride.isEmpty()) {
+            expectedPlayerUuids = PlayerUuidLists.canonicalize(expectedPlayerUuidsOverride);
+        } else if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)) {
+            expectedPlayerUuids = List.of();
+        } else {
+            expectedPlayerUuids = PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList());
+        }
         LinkedHashMap<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid = new LinkedHashMap<>();
+        LinkedHashMap<UUID, BackendAssignmentPlayerTicket> assignmentTicketsByPlayerUuid = new LinkedHashMap<>();
         for (QueueMemberState member : readyMembers) {
             String memberSourceContextId = normalizeSourceContextId(member.sourceLobbyId());
             playerReturnTargetsByUuid.put(
@@ -799,8 +1265,16 @@ public final class QueueCoordinatorService {
                 ).normalized()
             );
         }
+        if (assignmentPlayerTickets != null) {
+            for (BackendAssignmentPlayerTicket ticket : assignmentPlayerTickets) {
+                if (ticket != null && ticket.playerUuid() != null) {
+                    assignmentTicketsByPlayerUuid.put(ticket.playerUuid(), ticket.normalized());
+                }
+            }
+        }
         JsonObject root = new JsonObject();
         root.addProperty("flowType", "minigame.launch");
+        root.addProperty("assignmentType", assignmentType);
         root.addProperty("matchId", matchId);
         root.addProperty("queueId", queue.queueId());
         root.addProperty("arenaId", arena.arenaId());
@@ -835,6 +1309,9 @@ public final class QueueCoordinatorService {
         if (externalMatchId != null && !externalMatchId.isBlank()) {
             root.addProperty("externalMatchId", externalMatchId);
         }
+        if (reportingServerId != null && !reportingServerId.isBlank()) {
+            root.addProperty("reportingServerId", reportingServerId);
+        }
         if (arena.usesInstanceTemplate()) {
             root.addProperty("serverEntryMode", "default_world_natural_spawn");
         }
@@ -854,7 +1331,15 @@ public final class QueueCoordinatorService {
             nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
             ""
         ).normalized();
-        return new PreparedLaunch(matchId, GSON.toJson(root), matchSessionState, Map.copyOf(playerReturnTargetsByUuid));
+        return new PreparedLaunch(
+            matchId,
+            GSON.toJson(root),
+            matchSessionState,
+            Map.copyOf(playerReturnTargetsByUuid),
+            assignmentType,
+            Map.copyOf(assignmentTicketsByPlayerUuid),
+            reportingServerId == null ? "" : reportingServerId.trim()
+        );
     }
 
     @Nonnull
@@ -872,13 +1357,17 @@ public final class QueueCoordinatorService {
         @Nonnull String baseContextJson,
         int launchIndex,
         @Nonnull QueueMemberState member,
-        @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid
+        @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
+        @Nonnull String assignmentType,
+        @Nonnull Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        @Nonnull String reportingServerId
     ) {
         JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
         if (root == null) {
             root = new JsonObject();
         }
         root.addProperty("launchIndex", Math.max(launchIndex, 0));
+        root.addProperty("assignmentType", assignmentType);
         ArenaPlayerReturnTarget returnTarget = playerReturnTargetsByUuid.get(member.playerUuid());
         if (returnTarget == null) {
             throw new IllegalStateException("Missing per-player return target for launched player " + member.playerUuid() + ".");
@@ -887,6 +1376,52 @@ public final class QueueCoordinatorService {
         root.addProperty("returnConnectionAddress", returnTarget.returnConnectionAddress());
         root.addProperty("returnFallbackTargetId", returnTarget.returnFallbackTargetId());
         root.addProperty("launchTravelProfileId", returnTarget.launchTravelProfileId());
+        if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)) {
+            BackendAssignmentPlayerTicket ticket = assignmentPlayerTicketsByUuid.get(member.playerUuid());
+            if (ticket == null) {
+                throw new IllegalStateException("Missing backfill ticket for launched player " + member.playerUuid() + ".");
+            }
+            root.addProperty("playerUuid", member.playerUuid().toString());
+            root.addProperty("admissionReservationId", ticket.admissionReservationId());
+            root.addProperty("admissionExpiresAtEpochMs", ticket.admissionExpiresAtEpochMs());
+            if (!reportingServerId.isBlank()) {
+                root.addProperty("reportingServerId", reportingServerId);
+            }
+        }
+        return GSON.toJson(root);
+    }
+
+    @Nonnull
+    private String backfillContextJsonForPlayer(
+        @Nonnull String baseContextJson,
+        @Nonnull QueueMemberState member,
+        @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
+        @Nonnull Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        @Nonnull String reportingServerId
+    ) {
+        JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
+        if (root == null) {
+            root = new JsonObject();
+        }
+        root.addProperty("assignmentType", ASSIGNMENT_TYPE_BACKFILL);
+        ArenaPlayerReturnTarget returnTarget = playerReturnTargetsByUuid.get(member.playerUuid());
+        if (returnTarget == null) {
+            throw new IllegalStateException("Missing per-player return target for launched player " + member.playerUuid() + ".");
+        }
+        BackendAssignmentPlayerTicket ticket = assignmentPlayerTicketsByUuid.get(member.playerUuid());
+        if (ticket == null) {
+            throw new IllegalStateException("Missing backfill ticket for launched player " + member.playerUuid() + ".");
+        }
+        root.addProperty("originLobbyId", returnTarget.originLobbyId());
+        root.addProperty("returnConnectionAddress", returnTarget.returnConnectionAddress());
+        root.addProperty("returnFallbackTargetId", returnTarget.returnFallbackTargetId());
+        root.addProperty("launchTravelProfileId", returnTarget.launchTravelProfileId());
+        root.addProperty("playerUuid", member.playerUuid().toString());
+        root.addProperty("admissionReservationId", ticket.admissionReservationId());
+        root.addProperty("admissionExpiresAtEpochMs", ticket.admissionExpiresAtEpochMs());
+        if (!reportingServerId.isBlank()) {
+            root.addProperty("reportingServerId", reportingServerId);
+        }
         return GSON.toJson(root);
     }
 
@@ -998,11 +1533,33 @@ public final class QueueCoordinatorService {
     ) {
     }
 
+    public record BackendAssignmentPlayerTicket(
+        UUID playerUuid,
+        String admissionReservationId,
+        long admissionExpiresAtEpochMs
+    ) {
+
+        @Nonnull
+        public BackendAssignmentPlayerTicket normalized() {
+            if (playerUuid == null) {
+                throw new IllegalArgumentException("Assignment playerUuid cannot be null.");
+            }
+            return new BackendAssignmentPlayerTicket(
+                playerUuid,
+                admissionReservationId == null ? "" : admissionReservationId.trim(),
+                Math.max(0L, admissionExpiresAtEpochMs)
+            );
+        }
+    }
+
     private record PreparedLaunch(
         String matchId,
         String contextJson,
         MatchSessionState matchSessionState,
-        Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid
+        Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
+        String assignmentType,
+        Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        String reportingServerId
     ) {
     }
 

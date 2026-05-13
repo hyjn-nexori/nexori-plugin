@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public record ArenaActiveMatch(
@@ -22,6 +23,7 @@ public record ArenaActiveMatch(
     String matchResolutionTriggerId,
     String rulesEngineId,
     String assignmentId,
+    String createdByAssignmentType,
     String externalMatchId,
     String matchSource,
     int admissionPolicySchemaVersion,
@@ -39,6 +41,12 @@ public record ArenaActiveMatch(
     Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
     Map<UUID, ArenaPlayerOutcomeState> playerOutcomeByUuid,
     Map<UUID, Long> pendingReturnAtEpochMsByPlayerUuid,
+    int consumedBackfillAdmissionCount,
+    Set<String> acceptedBackfillReservationIds,
+    boolean explicitAdmissionClosed,
+    String explicitAdmissionCloseReason,
+    String explicitAdmissionCloseMessage,
+    long explicitAdmissionClosedAtEpochMs,
     String winnerPlayerUuid,
     long placementCompletedAtEpochMs,
     long matchStartedAtEpochMs,
@@ -98,6 +106,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId,
             "",
             assignmentId,
+            "",
             externalMatchId,
             matchSource,
             admissionPolicySchemaVersion,
@@ -115,6 +124,12 @@ public record ArenaActiveMatch(
             Map.of(),
             Map.of(),
             pendingReturnAtEpochMsByPlayerUuid,
+            0,
+            Set.of(),
+            false,
+            "",
+            "",
+            0L,
             winnerPlayerUuid,
             placementCompletedAtEpochMs,
             matchStartedAtEpochMs,
@@ -165,7 +180,9 @@ public record ArenaActiveMatch(
             instanceTemplateId,
             instanceWorldName,
             matchResolutionTriggerId,
+            "",
             assignmentId,
+            "",
             externalMatchId,
             ArenaMatchSource.defaultSource().id(),
             0,
@@ -178,7 +195,17 @@ public record ArenaActiveMatch(
             arrivedPlayerUuids,
             activePlayerUuids,
             eliminatedPlayerUuids,
+            List.of(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
             pendingReturnAtEpochMsByPlayerUuid,
+            0,
+            Set.of(),
+            false,
+            "",
+            "",
+            0L,
             winnerPlayerUuid,
             0L,
             0L,
@@ -207,6 +234,7 @@ public record ArenaActiveMatch(
             normalizeOptional(matchResolutionTriggerId),
             ArenaDefinition.normalizeRulesEngineId(rulesEngineId),
             normalizeOptional(assignmentId),
+            normalizeOptional(createdByAssignmentType),
             normalizeOptional(externalMatchId),
             effectiveMatchSource().id(),
             Math.max(0, admissionPolicySchemaVersion),
@@ -224,6 +252,12 @@ public record ArenaActiveMatch(
             normalizePlayerReturnTargets(playerReturnTargetsByUuid),
             normalizePlayerOutcomes(playerOutcomeByUuid),
             normalizePendingReturns(pendingReturnAtEpochMsByPlayerUuid),
+            Math.max(0, consumedBackfillAdmissionCount),
+            normalizeReservationIds(acceptedBackfillReservationIds),
+            explicitAdmissionClosed,
+            normalizeOptional(explicitAdmissionCloseReason),
+            normalizeOptional(explicitAdmissionCloseMessage),
+            Math.max(0L, explicitAdmissionClosedAtEpochMs),
             normalizeOptional(winnerPlayerUuid),
             Math.max(0L, placementCompletedAtEpochMs),
             Math.max(0L, matchStartedAtEpochMs),
@@ -251,6 +285,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -277,6 +317,12 @@ public record ArenaActiveMatch(
             updatedTargets,
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -303,6 +349,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -327,6 +379,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -344,6 +397,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -379,6 +438,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             outcomes,
             pendingReturns,
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -411,6 +476,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             outcomes,
             pendingReturns,
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             playerUuid.toString(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -433,6 +504,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturns,
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -472,6 +549,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             outcomes,
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winner,
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -498,6 +581,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -509,7 +598,7 @@ public record ArenaActiveMatch(
 
     @Nonnull
     public ArenaActiveMatch withExpectedPlayerCount(int rawExpectedPlayerCount, long nowEpochMs) {
-        int normalizedExpected = Math.max(rawExpectedPlayerCount, arrivedPlayerUuids().size());
+        int normalizedExpected = Math.max(rawExpectedPlayerCount, arrivedInitialPlayerCount());
         return new ArenaActiveMatch(
             matchId(),
             queueId(),
@@ -523,6 +612,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -540,6 +630,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -567,6 +663,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -584,6 +681,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -611,6 +714,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -628,6 +732,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -655,6 +765,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             rawMatchSource,
             admissionPolicySchemaVersion(),
@@ -672,6 +783,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -703,6 +820,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -720,6 +838,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             normalizedPlacementCompletedAtEpochMs,
             normalizedMatchStartedAtEpochMs,
@@ -747,6 +871,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -764,6 +889,12 @@ public record ArenaActiveMatch(
             playerReturnTargetsByUuid(),
             playerOutcomeByUuid(),
             pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -801,6 +932,12 @@ public record ArenaActiveMatch(
             returnTargets,
             playerOutcomeByUuid(),
             pendingReturns,
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
             winner,
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
@@ -866,7 +1003,21 @@ public record ArenaActiveMatch(
     }
 
     public boolean allExpectedPlayersArrived() {
-        return expectedPlayerCount() > 0 && arrivedPlayerUuids().size() >= expectedPlayerCount();
+        return expectedPlayerCount() > 0 && arrivedInitialPlayerCount() >= expectedPlayerCount();
+    }
+
+    public int arrivedInitialPlayerCount() {
+        if (expectedPlayerUuids().isEmpty()) {
+            return 0;
+        }
+        LinkedHashSet<UUID> expected = new LinkedHashSet<>(expectedPlayerUuids());
+        int arrivedInitialPlayers = 0;
+        for (UUID playerUuid : arrivedPlayerUuids()) {
+            if (expected.contains(playerUuid)) {
+                arrivedInitialPlayers++;
+            }
+        }
+        return arrivedInitialPlayers;
     }
 
     @Nonnull
@@ -905,6 +1056,151 @@ public record ArenaActiveMatch(
         return playerReturnTargetsByUuid().get(playerUuid);
     }
 
+    public boolean hasAcceptedBackfillReservation(@Nonnull String rawReservationId) {
+        String reservationId = normalizeOptional(rawReservationId);
+        return !reservationId.isBlank() && acceptedBackfillReservationIds().contains(reservationId);
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withAcceptedBackfillReservation(@Nonnull String rawReservationId, long nowEpochMs) {
+        String reservationId = normalizeOptional(rawReservationId);
+        if (reservationId.isBlank() || acceptedBackfillReservationIds().contains(reservationId)) {
+            return this;
+        }
+        LinkedHashSet<String> updatedAcceptedReservations = new LinkedHashSet<>(acceptedBackfillReservationIds());
+        updatedAcceptedReservations.add(reservationId);
+        return copy(
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            updatedAcceptedReservations,
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withConsumedBackfillAdmissionIncrement(long nowEpochMs) {
+        return copy(
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount() + 1,
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withCreatedByAssignmentType(@Nonnull String rawCreatedByAssignmentType, long nowEpochMs) {
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            matchResolutionTriggerId(),
+            rulesEngineId(),
+            assignmentId(),
+            rawCreatedByAssignmentType,
+            externalMatchId(),
+            matchSource(),
+            admissionPolicySchemaVersion(),
+            admissionCapacity(),
+            backfillEnabled(),
+            backfillMode(),
+            backfillWindowSeconds(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            placementCompletedAtEpochMs(),
+            matchStartedAtEpochMs(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            lastError()
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withExplicitAdmissionClosed(
+        @Nonnull String rawReason,
+        @Nonnull String rawMessage,
+        long closedAtEpochMs,
+        long nowEpochMs
+    ) {
+        return copy(
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            true,
+            rawReason,
+            rawMessage,
+            Math.max(0L, closedAtEpochMs),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
     @Nonnull
     private ArenaActiveMatch copy(
         @Nonnull List<UUID> arrived,
@@ -915,6 +1211,12 @@ public record ArenaActiveMatch(
         @Nonnull Map<UUID, ArenaPlayerReturnTarget> returnTargets,
         @Nonnull Map<UUID, ArenaPlayerOutcomeState> outcomes,
         @Nonnull Map<UUID, Long> pendingReturns,
+        int consumedBackfillAdmissions,
+        @Nonnull Set<String> acceptedReservations,
+        boolean admissionClosed,
+        @Nonnull String admissionCloseReason,
+        @Nonnull String admissionCloseMessage,
+        long admissionClosedAtEpochMs,
         @Nonnull String winner,
         long completedAt,
         long resultSubmittedAt,
@@ -935,6 +1237,7 @@ public record ArenaActiveMatch(
             matchResolutionTriggerId(),
             rulesEngineId(),
             assignmentId(),
+            createdByAssignmentType(),
             externalMatchId(),
             matchSource(),
             admissionPolicySchemaVersion(),
@@ -952,6 +1255,12 @@ public record ArenaActiveMatch(
             returnTargets,
             outcomes,
             pendingReturns,
+            consumedBackfillAdmissions,
+            acceptedReservations,
+            admissionClosed,
+            admissionCloseReason,
+            admissionCloseMessage,
+            admissionClosedAtEpochMs,
             winner,
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
@@ -1025,6 +1334,21 @@ public record ArenaActiveMatch(
             .sorted(Map.Entry.comparingByKey(Comparator.comparing(UUID::toString)))
             .forEach(entry -> normalized.put(entry.getKey(), entry.getValue().normalized()));
         return Map.copyOf(normalized);
+    }
+
+    @Nonnull
+    private static Set<String> normalizeReservationIds(Set<String> rawReservationIds) {
+        if (rawReservationIds == null || rawReservationIds.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String rawReservationId : rawReservationIds) {
+            String reservationId = normalizeOptional(rawReservationId);
+            if (!reservationId.isBlank()) {
+                normalized.add(reservationId);
+            }
+        }
+        return Set.copyOf(normalized);
     }
 
     @Nonnull

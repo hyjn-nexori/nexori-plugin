@@ -283,7 +283,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         );
 
         if (payload.destinationTargetId() == null || payload.destinationTargetId().isBlank()) {
-            if (shouldUseDefaultWorldNaturalSpawnEntry(context)) {
+            if (shouldUseDefaultWorldNaturalSpawnEntry(context) || isMinigameLaunchContext(context)) {
                 resolvedTarget = resolveDefaultWorldNaturalSpawnEntry().orElse(null);
                 if (resolvedTarget == null) {
                     recordTravel(
@@ -308,17 +308,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                 }
                 effectiveTargetIdForErrors = resolvedTarget.definition().id();
             } else {
-                resolvedTarget = null;
                 try {
-
-                    logger.atInfo().log(
-                            "NEXORI_TRAVEL_DEFAULT_ENTRY_RESOLVED payloadTargetId="
-                                    + normalizeOptional(payload.destinationTargetId())
-                                    + " resolvedTargetId=" + resolvedTarget.definition().id()
-                                    + " resolvedWorldName=" + resolvedTarget.effectiveWorldName()
-                                    + " resolvedArrivalPointId=" + resolvedTarget.effectiveArrivalPointId()
-                    );
-
                     TravelProfileType profileType = TravelProfileType.parse(payload.travelProfileId());
                     inventoryTransferService.prepareInboundArrival(
                             event.getUuid(),
@@ -810,6 +800,12 @@ public final class SecureTravelService implements SecureReferralHandler {
         return context != null
                 && context.has("serverEntryMode")
                 && "default_world_natural_spawn".equalsIgnoreCase(normalizeOptional(context.get("serverEntryMode").getAsString()));
+    }
+
+    private boolean isMinigameLaunchContext(JsonObject context) {
+        return context != null
+                && context.has("flowType")
+                && "minigame.launch".equalsIgnoreCase(normalizeOptional(context.get("flowType").getAsString()));
     }
 
     @Nonnull

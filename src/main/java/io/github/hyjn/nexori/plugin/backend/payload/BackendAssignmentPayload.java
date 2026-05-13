@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import java.util.List;
 
 public record BackendAssignmentPayload(
+    String assignmentType,
     String assignmentId,
     String matchId,
     String externalMatchId,
@@ -13,6 +14,9 @@ public record BackendAssignmentPayload(
     List<String> playerUuids,
     List<String> expectedPlayerUuids,
     String arenaId,
+    List<BackendAssignmentPlayerPayload> players,
+    String reportingServerId,
+    String targetConnectionAddress,
     String modeId,
     String kitId,
     boolean ranked,

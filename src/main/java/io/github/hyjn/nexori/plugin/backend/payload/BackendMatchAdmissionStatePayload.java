@@ -26,6 +26,7 @@ public record BackendMatchAdmissionStatePayload(
     int initialRosterSize,
     int arrivedInitialPlayerCount,
     int unfilledInitialRosterCount,
+    List<String> consumedAdmissionReservationIds,
     boolean admissionReportingClosed,
     String admissionReportingCloseReason,
     String primaryChangeReason,
