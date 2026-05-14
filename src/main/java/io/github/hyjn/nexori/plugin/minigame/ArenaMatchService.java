@@ -30,6 +30,8 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecider;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecision;
+import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidationResult;
+import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidator;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -70,17 +72,17 @@ public final class ArenaMatchService {
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
     private static final String CLOSE_REASON_MATCH_RUNTIME_ENDED = "MATCH_RUNTIME_ENDED";
-    public static final int MAX_RESULT_REASON_LENGTH = 512;
-    public static final int MAX_RESULT_METADATA_ENTRIES = 32;
-    public static final int MAX_RESULT_METADATA_KEY_LENGTH = 64;
-    public static final int MAX_RESULT_METADATA_VALUE_LENGTH = 512;
-    public static final int MAX_RESULT_PLAYER_REASON_LENGTH = 256;
-    public static final int MAX_CUSTOM_DATA_BYTES = 32_768;
-    public static final int MAX_CUSTOM_DATA_DEPTH = 8;
-    public static final int MAX_CUSTOM_DATA_PROPERTIES = 256;
-    public static final int MAX_CUSTOM_DATA_ARRAY_LENGTH = 128;
-    public static final int MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH = 64;
-    public static final int MAX_CUSTOM_DATA_STRING_LENGTH = 1024;
+    public static final int MAX_RESULT_REASON_LENGTH = MatchResultValidator.MAX_RESULT_REASON_LENGTH;
+    public static final int MAX_RESULT_METADATA_ENTRIES = MatchResultValidator.MAX_RESULT_METADATA_ENTRIES;
+    public static final int MAX_RESULT_METADATA_KEY_LENGTH = MatchResultValidator.MAX_RESULT_METADATA_KEY_LENGTH;
+    public static final int MAX_RESULT_METADATA_VALUE_LENGTH = MatchResultValidator.MAX_RESULT_METADATA_VALUE_LENGTH;
+    public static final int MAX_RESULT_PLAYER_REASON_LENGTH = MatchResultValidator.MAX_RESULT_PLAYER_REASON_LENGTH;
+    public static final int MAX_CUSTOM_DATA_BYTES = MatchResultValidator.MAX_CUSTOM_DATA_BYTES;
+    public static final int MAX_CUSTOM_DATA_DEPTH = MatchResultValidator.MAX_CUSTOM_DATA_DEPTH;
+    public static final int MAX_CUSTOM_DATA_PROPERTIES = MatchResultValidator.MAX_CUSTOM_DATA_PROPERTIES;
+    public static final int MAX_CUSTOM_DATA_ARRAY_LENGTH = MatchResultValidator.MAX_CUSTOM_DATA_ARRAY_LENGTH;
+    public static final int MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH = MatchResultValidator.MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH;
+    public static final int MAX_CUSTOM_DATA_STRING_LENGTH = MatchResultValidator.MAX_CUSTOM_DATA_STRING_LENGTH;
 
     private final HytaleLogger logger;
     private final SecureTravelService secureTravelService;
@@ -88,6 +90,7 @@ public final class ArenaMatchService {
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
+    private final MatchResultValidator matchResultValidator = new MatchResultValidator();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
@@ -671,7 +674,13 @@ public final class ArenaMatchService {
             return SubmitMatchResult.matchMissing(matchId);
         }
 
-        ValidationResult validation = validateSubmitMatchResult(match, rawPlayerResults, rawMetadata, rawReason, returnDelaySeconds);
+        MatchResultValidationResult validation = matchResultValidator.validateSubmittedResult(
+            match,
+            toValidationPlayerResults(rawPlayerResults),
+            rawMetadata,
+            rawReason,
+            returnDelaySeconds
+        );
         if (!validation.valid()) {
             return SubmitMatchResult.invalid(match, validation.message());
         }
@@ -679,7 +688,7 @@ public final class ArenaMatchService {
         if (match.hasSubmittedResult()) {
             String payloadHash = hashFinalSubmittedResult(
                 match,
-                validation.players(),
+                toSubmitMatchPlayerResults(validation.players()),
                 validation.metadata(),
                 validation.reason(),
                 metadataToJson(validation.metadata())
@@ -693,7 +702,7 @@ public final class ArenaMatchService {
 
         long now = System.currentTimeMillis();
         ArenaActiveMatch updated = match;
-        for (SubmitMatchPlayerResult playerResult : validation.players()) {
+        for (MatchResultValidationResult.PlayerResult playerResult : validation.players()) {
             updated = updated.withPlayerOutcome(
                 playerResult.playerUuid(),
                 playerResult.runtimeOutcome(),
@@ -710,7 +719,7 @@ public final class ArenaMatchService {
 
         long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
         ArenaActiveMatch returned = result.activeMatch();
-        for (SubmitMatchPlayerResult playerResult : validation.players()) {
+        for (MatchResultValidationResult.PlayerResult playerResult : validation.players()) {
             returned = returned.withPendingReturn(playerResult.playerUuid(), now + delayMillis, now);
         }
         matchesById.put(returned.matchId(), returned);
@@ -738,12 +747,18 @@ public final class ArenaMatchService {
             return SubmitMatchResult.matchMissing(matchId);
         }
 
-        FinalValidationResult validation = validateFinalMatchResult(match, rawReason, metadata, rawCustomData);
+        MatchResultValidationResult validation = matchResultValidator.validateFinalResult(match, rawReason, metadata, rawCustomData);
         if (!validation.valid()) {
             return SubmitMatchResult.invalid(match, validation.message());
         }
 
-        String payloadHash = hashFinalSubmittedResult(match, validation.players(), validation.metadata(), validation.reason(), validation.customData());
+        String payloadHash = hashFinalSubmittedResult(
+            match,
+            toSubmitMatchPlayerResults(validation.players()),
+            validation.metadata(),
+            validation.reason(),
+            validation.customData()
+        );
         if (match.hasSubmittedResult()) {
             boolean samePayload = match.resultPayloadHash().equals(payloadHash);
             return SubmitMatchResult.alreadySubmitted(match, payloadHash, !samePayload);
@@ -761,7 +776,7 @@ public final class ArenaMatchService {
         maybeScheduleAdmissionReporting(match, updated, now, "");
         return SubmitMatchResult.accepted(
             updated,
-            validation.players(),
+            toSubmitMatchPlayerResults(validation.players()),
             validation.metadata(),
             validation.customData(),
             validation.reason(),
@@ -826,259 +841,6 @@ public final class ArenaMatchService {
         matchesById.put(updated.matchId(), updated);
         maybeScheduleAdmissionReporting(match, updated, now, "");
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
-    }
-
-    @Nonnull
-    private ValidationResult validateSubmitMatchResult(
-        @Nonnull ArenaActiveMatch match,
-        @Nonnull List<SubmitMatchPlayerResult> rawPlayerResults,
-        @Nonnull Map<String, String> rawMetadata,
-        @Nonnull String rawReason,
-        int returnDelaySeconds
-    ) {
-        if (returnDelaySeconds < 0) {
-            return ValidationResult.invalid("returnDelaySeconds cannot be negative.");
-        }
-        String reason = normalizeOptional(rawReason);
-        if (reason.length() > MAX_RESULT_REASON_LENGTH) {
-            return ValidationResult.invalid("Result reason exceeds " + MAX_RESULT_REASON_LENGTH + " characters.");
-        }
-        MetadataValidationResult metadataResult = normalizeResultMetadata(rawMetadata);
-        if (!metadataResult.valid()) {
-            return ValidationResult.invalid(metadataResult.message());
-        }
-        if (rawPlayerResults == null || rawPlayerResults.isEmpty()) {
-            return ValidationResult.invalid("Result must include one player outcome per required player.");
-        }
-
-        LinkedHashMap<UUID, SubmitMatchPlayerResult> playersByUuid = new LinkedHashMap<>();
-        for (SubmitMatchPlayerResult playerResult : rawPlayerResults) {
-            if (playerResult == null || playerResult.playerUuid() == null || playerResult.runtimeOutcome() == null) {
-                return ValidationResult.invalid("Result contains an invalid player outcome.");
-            }
-            String playerReason = normalizeOptional(playerResult.reason());
-            if (playerReason.length() > MAX_RESULT_PLAYER_REASON_LENGTH) {
-                return ValidationResult.invalid("Player result reason exceeds " + MAX_RESULT_PLAYER_REASON_LENGTH + " characters.");
-            }
-            if (playersByUuid.put(playerResult.playerUuid(), new SubmitMatchPlayerResult(
-                playerResult.playerUuid(),
-                playerResult.runtimeOutcome(),
-                normalizeOptional(playerResult.backendOutcome(), playerResult.runtimeOutcome().name()),
-                playerReason
-            )) != null) {
-                return ValidationResult.invalid("Result contains duplicate player " + playerResult.playerUuid() + ".");
-            }
-        }
-
-        List<UUID> requiredPlayers = buildRequiredResultPlayerUuids(match);
-        if (requiredPlayers.isEmpty()) {
-            return ValidationResult.invalid("Match has no required players to resolve.");
-        }
-        LinkedHashSet<UUID> requiredSet = new LinkedHashSet<>(requiredPlayers);
-        if (playersByUuid.size() != requiredSet.size()) {
-            return ValidationResult.invalid("Result must include exactly " + requiredSet.size() + " player outcomes.");
-        }
-        for (UUID requiredPlayer : requiredSet) {
-            if (!playersByUuid.containsKey(requiredPlayer)) {
-                return ValidationResult.invalid("Result is missing required player " + requiredPlayer + ".");
-            }
-        }
-        for (UUID submittedPlayer : playersByUuid.keySet()) {
-            if (!requiredSet.contains(submittedPlayer)) {
-                return ValidationResult.invalid("Result contains unexpected player " + submittedPlayer + ".");
-            }
-        }
-
-        List<SubmitMatchPlayerResult> orderedPlayers = new ArrayList<>();
-        for (UUID requiredPlayer : requiredSet) {
-            orderedPlayers.add(playersByUuid.get(requiredPlayer));
-        }
-        return ValidationResult.valid(orderedPlayers, metadataResult.metadata(), reason);
-    }
-
-    @Nonnull
-    private FinalValidationResult validateFinalMatchResult(
-        @Nonnull ArenaActiveMatch match,
-        @Nonnull String rawReason,
-        @Nonnull Map<String, String> rawMetadata,
-        JsonObject rawCustomData
-    ) {
-        String reason = normalizeOptional(rawReason);
-        if (reason.length() > MAX_RESULT_REASON_LENGTH) {
-            return FinalValidationResult.invalid("Result reason exceeds " + MAX_RESULT_REASON_LENGTH + " characters.");
-        }
-        MetadataValidationResult metadataResult = normalizeResultMetadata(rawMetadata);
-        if (!metadataResult.valid()) {
-            return FinalValidationResult.invalid(metadataResult.message());
-        }
-        CustomDataValidationResult customDataResult = normalizeCustomData(rawCustomData);
-        if (!customDataResult.valid()) {
-            return FinalValidationResult.invalid(customDataResult.message());
-        }
-
-        List<UUID> requiredPlayers = buildRequiredResultPlayerUuids(match);
-        if (requiredPlayers.isEmpty()) {
-            return FinalValidationResult.invalid("Match has no required players to resolve.");
-        }
-        LinkedHashSet<UUID> requiredSet = new LinkedHashSet<>(requiredPlayers);
-        List<SubmitMatchPlayerResult> orderedPlayers = new ArrayList<>();
-        boolean hasWinner = false;
-        for (UUID requiredPlayer : requiredSet) {
-            ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(requiredPlayer);
-            if (outcome == null || outcome.outcome() == null) {
-                return FinalValidationResult.invalid("Result is missing required player outcome " + requiredPlayer + ".");
-            }
-            if (outcome.outcome() == ArenaPlayerResolutionOutcome.WIN) {
-                hasWinner = true;
-            }
-            orderedPlayers.add(new SubmitMatchPlayerResult(
-                requiredPlayer,
-                outcome.outcome(),
-                normalizeOptional(outcome.backendOutcome(), outcome.outcome().name()),
-                normalizeOptional(outcome.reason())
-            ));
-        }
-        for (UUID submittedPlayer : match.playerOutcomeByUuid().keySet()) {
-            if (!requiredSet.contains(submittedPlayer)) {
-                return FinalValidationResult.invalid("Result contains unexpected player outcome " + submittedPlayer + ".");
-            }
-        }
-        if (!hasWinner) {
-            return FinalValidationResult.invalid("Final match result must include at least one WIN outcome.");
-        }
-        return FinalValidationResult.valid(orderedPlayers, metadataResult.metadata(), reason, customDataResult.customData());
-    }
-
-    @Nonnull
-    private MetadataValidationResult normalizeResultMetadata(@Nonnull Map<String, String> rawMetadata) {
-        if (rawMetadata == null || rawMetadata.isEmpty()) {
-            return MetadataValidationResult.valid(Map.of());
-        }
-        if (rawMetadata.size() > MAX_RESULT_METADATA_ENTRIES) {
-            return MetadataValidationResult.invalid("Result metadata cannot contain more than " + MAX_RESULT_METADATA_ENTRIES + " entries.");
-        }
-        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
-        for (Map.Entry<String, String> entry : rawMetadata.entrySet()) {
-            String key = normalizeOptional(entry.getKey());
-            String value = normalizeOptional(entry.getValue());
-            if (key.isBlank()) {
-                return MetadataValidationResult.invalid("Result metadata keys cannot be blank.");
-            }
-            if (key.length() > MAX_RESULT_METADATA_KEY_LENGTH) {
-                return MetadataValidationResult.invalid("Result metadata key exceeds " + MAX_RESULT_METADATA_KEY_LENGTH + " characters.");
-            }
-            if (value.length() > MAX_RESULT_METADATA_VALUE_LENGTH) {
-                return MetadataValidationResult.invalid("Result metadata value exceeds " + MAX_RESULT_METADATA_VALUE_LENGTH + " characters.");
-            }
-            normalized.put(key, value);
-        }
-        LinkedHashMap<String, String> sorted = new LinkedHashMap<>();
-        normalized.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> sorted.put(entry.getKey(), entry.getValue()));
-        return MetadataValidationResult.valid(Map.copyOf(sorted));
-    }
-
-    @Nonnull
-    private CustomDataValidationResult normalizeCustomData(JsonObject rawCustomData) {
-        JsonObject customData = rawCustomData == null ? new JsonObject() : rawCustomData;
-        CustomDataCounter counter = new CustomDataCounter();
-        String validationError = validateCustomDataElement(customData, 1, counter, true);
-        if (!validationError.isBlank()) {
-            return CustomDataValidationResult.invalid(validationError);
-        }
-        JsonObject canonical = canonicalizeJsonObject(customData);
-        int bytes = GSON.toJson(canonical).getBytes(StandardCharsets.UTF_8).length;
-        if (bytes > MAX_CUSTOM_DATA_BYTES) {
-            return CustomDataValidationResult.invalid("customData exceeds " + MAX_CUSTOM_DATA_BYTES + " UTF-8 bytes.");
-        }
-        return CustomDataValidationResult.valid(canonical);
-    }
-
-    @Nonnull
-    private String validateCustomDataElement(
-        JsonElement element,
-        int depth,
-        @Nonnull CustomDataCounter counter,
-        boolean root
-    ) {
-        if (depth > MAX_CUSTOM_DATA_DEPTH) {
-            return "customData exceeds max depth " + MAX_CUSTOM_DATA_DEPTH + ".";
-        }
-        if (element == null || element.isJsonNull()) {
-            return "";
-        }
-        if (root && !element.isJsonObject()) {
-            return "customData root must be a JSON object.";
-        }
-        if (element.isJsonObject()) {
-            JsonObject object = element.getAsJsonObject();
-            for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
-                String key = normalizeOptional(entry.getKey());
-                if (key.isBlank()) {
-                    return "customData property names cannot be blank.";
-                }
-                if (key.length() > MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH) {
-                    return "customData property name exceeds " + MAX_CUSTOM_DATA_PROPERTY_NAME_LENGTH + " characters.";
-                }
-                counter.properties++;
-                if (counter.properties > MAX_CUSTOM_DATA_PROPERTIES) {
-                    return "customData cannot contain more than " + MAX_CUSTOM_DATA_PROPERTIES + " properties.";
-                }
-                String childError = validateCustomDataElement(entry.getValue(), depth + 1, counter, false);
-                if (!childError.isBlank()) {
-                    return childError;
-                }
-            }
-            return "";
-        }
-        if (element.isJsonArray()) {
-            JsonArray array = element.getAsJsonArray();
-            if (array.size() > MAX_CUSTOM_DATA_ARRAY_LENGTH) {
-                return "customData arrays cannot contain more than " + MAX_CUSTOM_DATA_ARRAY_LENGTH + " elements.";
-            }
-            for (JsonElement child : array) {
-                String childError = validateCustomDataElement(child, depth + 1, counter, false);
-                if (!childError.isBlank()) {
-                    return childError;
-                }
-            }
-            return "";
-        }
-        if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
-            String value = element.getAsString();
-            if (value != null && value.length() > MAX_CUSTOM_DATA_STRING_LENGTH) {
-                return "customData string value exceeds " + MAX_CUSTOM_DATA_STRING_LENGTH + " characters.";
-            }
-        }
-        return "";
-    }
-
-    @Nonnull
-    private JsonObject canonicalizeJsonObject(@Nonnull JsonObject object) {
-        JsonObject canonical = new JsonObject();
-        object.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> canonical.add(entry.getKey().trim(), canonicalizeJsonElement(entry.getValue())));
-        return canonical;
-    }
-
-    @Nonnull
-    private JsonElement canonicalizeJsonElement(JsonElement element) {
-        if (element == null || element.isJsonNull()) {
-            return com.google.gson.JsonNull.INSTANCE;
-        }
-        if (element.isJsonObject()) {
-            return canonicalizeJsonObject(element.getAsJsonObject());
-        }
-        if (element.isJsonArray()) {
-            JsonArray array = new JsonArray();
-            for (JsonElement child : element.getAsJsonArray()) {
-                array.add(canonicalizeJsonElement(child));
-            }
-            return array;
-        }
-        return element.deepCopy();
     }
 
     @Nonnull
@@ -1226,6 +988,44 @@ public final class ArenaMatchService {
             .sorted(Map.Entry.comparingByKey())
             .forEach(entry -> root.addProperty(entry.getKey(), entry.getValue()));
         return root;
+    }
+
+    @Nonnull
+    private List<MatchResultValidationResult.PlayerResult> toValidationPlayerResults(List<SubmitMatchPlayerResult> rawPlayerResults) {
+        if (rawPlayerResults == null || rawPlayerResults.isEmpty()) {
+            return List.of();
+        }
+        List<MatchResultValidationResult.PlayerResult> results = new ArrayList<>();
+        for (SubmitMatchPlayerResult playerResult : rawPlayerResults) {
+            if (playerResult == null) {
+                results.add(null);
+                continue;
+            }
+            results.add(new MatchResultValidationResult.PlayerResult(
+                playerResult.playerUuid(),
+                playerResult.runtimeOutcome(),
+                playerResult.backendOutcome(),
+                playerResult.reason()
+            ));
+        }
+        return List.copyOf(results);
+    }
+
+    @Nonnull
+    private List<SubmitMatchPlayerResult> toSubmitMatchPlayerResults(@Nonnull List<MatchResultValidationResult.PlayerResult> rawPlayerResults) {
+        if (rawPlayerResults.isEmpty()) {
+            return List.of();
+        }
+        List<SubmitMatchPlayerResult> results = new ArrayList<>();
+        for (MatchResultValidationResult.PlayerResult playerResult : rawPlayerResults) {
+            results.add(new SubmitMatchPlayerResult(
+                playerResult.playerUuid(),
+                playerResult.runtimeOutcome(),
+                playerResult.backendOutcome(),
+                playerResult.reason()
+            ));
+        }
+        return List.copyOf(results);
     }
 
     private void handleLaunchArrival(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
@@ -2810,88 +2610,6 @@ public final class ArenaMatchService {
         String reason,
         long updatedAtEpochMs
     ) {
-    }
-
-    private record ValidationResult(
-        boolean valid,
-        List<SubmitMatchPlayerResult> players,
-        Map<String, String> metadata,
-        String reason,
-        String message
-    ) {
-        @Nonnull
-        private static ValidationResult valid(
-            @Nonnull List<SubmitMatchPlayerResult> players,
-            @Nonnull Map<String, String> metadata,
-            @Nonnull String reason
-        ) {
-            return new ValidationResult(true, List.copyOf(players), Map.copyOf(metadata), reason, "");
-        }
-
-        @Nonnull
-        private static ValidationResult invalid(@Nonnull String message) {
-            return new ValidationResult(false, List.of(), Map.of(), "", normalizeOptional(message, "Invalid match result."));
-        }
-    }
-
-    private record FinalValidationResult(
-        boolean valid,
-        List<SubmitMatchPlayerResult> players,
-        Map<String, String> metadata,
-        String reason,
-        JsonObject customData,
-        String message
-    ) {
-        @Nonnull
-        private static FinalValidationResult valid(
-            @Nonnull List<SubmitMatchPlayerResult> players,
-            @Nonnull Map<String, String> metadata,
-            @Nonnull String reason,
-            @Nonnull JsonObject customData
-        ) {
-            return new FinalValidationResult(true, List.copyOf(players), Map.copyOf(metadata), reason, customData.deepCopy(), "");
-        }
-
-        @Nonnull
-        private static FinalValidationResult invalid(@Nonnull String message) {
-            return new FinalValidationResult(false, List.of(), Map.of(), "", new JsonObject(), normalizeOptional(message, "Invalid final match result."));
-        }
-    }
-
-    private record MetadataValidationResult(
-        boolean valid,
-        Map<String, String> metadata,
-        String message
-    ) {
-        @Nonnull
-        private static MetadataValidationResult valid(@Nonnull Map<String, String> metadata) {
-            return new MetadataValidationResult(true, Map.copyOf(metadata), "");
-        }
-
-        @Nonnull
-        private static MetadataValidationResult invalid(@Nonnull String message) {
-            return new MetadataValidationResult(false, Map.of(), normalizeOptional(message, "Invalid result metadata."));
-        }
-    }
-
-    private record CustomDataValidationResult(
-        boolean valid,
-        JsonObject customData,
-        String message
-    ) {
-        @Nonnull
-        private static CustomDataValidationResult valid(@Nonnull JsonObject customData) {
-            return new CustomDataValidationResult(true, customData.deepCopy(), "");
-        }
-
-        @Nonnull
-        private static CustomDataValidationResult invalid(@Nonnull String message) {
-            return new CustomDataValidationResult(false, new JsonObject(), normalizeOptional(message, "Invalid customData."));
-        }
-    }
-
-    private static final class CustomDataCounter {
-        private int properties;
     }
 
     public record ReturnHudState(
