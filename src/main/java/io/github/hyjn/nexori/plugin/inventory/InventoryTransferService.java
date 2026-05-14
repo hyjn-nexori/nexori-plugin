@@ -22,6 +22,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlanner;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlan;
@@ -63,6 +65,7 @@ public final class InventoryTransferService {
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
     private final InventoryInboundApplyPlanner inboundApplyPlanner = new InventoryInboundApplyPlanner();
+    private final InventoryOutboundTransferPlanner outboundTransferPlanner = new InventoryOutboundTransferPlanner();
     private final InventoryReceiptQueryPlanner receiptQueryPlanner = new InventoryReceiptQueryPlanner();
     private final InventoryRecoveryFinalizePlanner recoveryFinalizePlanner = new InventoryRecoveryFinalizePlanner();
     private final InventoryRecoveryStartPlanner recoveryStartPlanner = new InventoryRecoveryStartPlanner();
@@ -130,6 +133,36 @@ public final class InventoryTransferService {
      */
     @Nonnull
     public InventoryTransferBackupRecord saveOriginBackup(
+        @Nonnull InventoryOutboundTransferPlan plan,
+        @Nonnull PlayerRef playerRef
+    ) throws IOException {
+        InventoryTransferBackupRecord saved = backupStore.save(plan.toBackupRecord(System.currentTimeMillis()));
+        trimBackupsForPlayer(playerRef.getUuid());
+        logger.atInfo().log("Saved Nexori inventory backup " + saved.transferId()
+            + " for " + playerRef.getUsername()
+            + " toward " + saved.destinationConnectionAddress()
+            + " -> " + saved.destinationTargetId() + ".");
+        diagnosticsService.record(
+            DiagnosticsCategory.RECOVERY,
+            DiagnosticsAction.RECOVERY_BACKUP_ORIGIN_SAVE,
+            DiagnosticsOutcome.SUCCEEDED,
+            DiagnosticsReasonClass.NORMAL,
+            DiagnosticsReasonCode.ORIGIN_BACKUP_SAVED,
+            "Saved an origin inventory backup for APPLY_INVENTORY travel.",
+            plan.transferId(),
+            event -> event
+                .playerUuid(playerRef.getUuid().toString())
+                .playerNameClaimed(playerRef.getUsername())
+                .transferId(plan.transferId())
+                .targetId(plan.destinationTargetId())
+                .travelProfileId(plan.travelProfileId())
+                .remoteConnectionAddress(plan.destinationConnectionAddress())
+        );
+        return saved;
+    }
+
+    @Nonnull
+    public InventoryTransferBackupRecord saveOriginBackup(
         @Nonnull String transferId,
         @Nonnull PlayerRef playerRef,
         @Nonnull String destinationConnectionAddress,
@@ -169,6 +202,26 @@ public final class InventoryTransferService {
                 .remoteConnectionAddress(destinationConnectionAddress)
         );
         return saved;
+    }
+
+    @Nonnull
+    public InventoryOutboundTransferPlan planOutboundTransfer(
+        @Nonnull TravelProfileType profileType,
+        @Nonnull String transferId,
+        @Nonnull UUID playerUuid,
+        InventoryTransferState capturedInventory,
+        @Nonnull String destinationConnectionAddress,
+        @Nonnull String destinationTargetId
+    ) {
+        return outboundTransferPlanner.plan(
+            profileType,
+            transferId,
+            playerUuid,
+            capturedInventory,
+            shouldTransferInventory(capturedInventory),
+            destinationConnectionAddress,
+            destinationTargetId
+        );
     }
 
     /**

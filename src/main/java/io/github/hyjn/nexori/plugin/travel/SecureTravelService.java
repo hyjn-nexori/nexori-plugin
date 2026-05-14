@@ -30,6 +30,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlan;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaInstanceRuntime;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
@@ -223,16 +224,20 @@ public final class SecureTravelService implements SecureReferralHandler {
         SecureTravelPayload payload = dispatchPlan.payload();
         byte[] encodedPayload = secureReferralService.createPayload(playerRef, PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
 
+        InventoryOutboundTransferPlan outboundTransferPlan = inventoryTransferService.planOutboundTransfer(
+            profileType,
+            finalInventoryTransferId,
+            playerRef.getUuid(),
+            inventoryState,
+            destination.connectionAddress(),
+            destinationTargetId
+        );
         if (dispatchPlan.shouldPrepareOriginInventoryTransfer()
-            && inventoryTransferService.shouldTransferInventory(inventoryState)) {
-            inventoryTransferService.saveOriginBackup(
-                finalInventoryTransferId,
-                playerRef,
-                destination.connectionAddress(),
-                destinationTargetId,
-                profileType.id(),
-                inventoryState
-            );
+            && outboundTransferPlan.shouldSaveBackup()) {
+            inventoryTransferService.saveOriginBackup(outboundTransferPlan, playerRef);
+        }
+        if (dispatchPlan.shouldPrepareOriginInventoryTransfer()
+            && outboundTransferPlan.shouldClearOriginInventory()) {
             inventoryTransferService.clearOriginInventory(playerRef, inventoryState);
         }
 
