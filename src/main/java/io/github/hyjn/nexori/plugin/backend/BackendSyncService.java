@@ -5,6 +5,8 @@ import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidationResult;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidator;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentProcessingPlan;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentProcessingPlanner;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuildInput;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuilder;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncResponseDecision;
@@ -50,7 +52,6 @@ public final class BackendSyncService {
     private static final long ERROR_BACKOFF_MS = 5_000L;
     private static final long STALE_SAFETY_WINDOW_MS = 1_000L;
     private static final int MAX_SYNC_LOG_ENTRIES = 80;
-    private static final String ASSIGNMENT_TYPE_BACKFILL = BackendAssignmentValidator.ASSIGNMENT_TYPE_BACKFILL;
 
     private final HytaleLogger logger;
     private BackendMatchmakingConfig config;
@@ -62,6 +63,7 @@ public final class BackendSyncService {
     private final ArenaService arenaService;
     private final ArenaMatchService arenaMatchService;
     private final BackendAssignmentValidator assignmentValidator = new BackendAssignmentValidator();
+    private final BackendAssignmentProcessingPlanner assignmentProcessingPlanner = new BackendAssignmentProcessingPlanner();
     private final BackendSyncRequestPayloadBuilder syncRequestPayloadBuilder = new BackendSyncRequestPayloadBuilder();
     private final BackendSyncResponsePolicy syncResponsePolicy = new BackendSyncResponsePolicy();
     private HttpClient httpClient;
@@ -371,19 +373,32 @@ public final class BackendSyncService {
     }
 
     private void processAssignment(BackendAssignmentPayload assignment, long nowEpochMs) {
-        if (assignment == null || assignment.assignmentId() == null || assignment.assignmentId().isBlank()) {
+        BackendAssignmentProcessingPlan initialPlan = assignmentProcessingPlanner.planBeforeLaunch(assignment, "", "", null, "");
+        if (initialPlan.action() == BackendAssignmentProcessingPlan.Action.IGNORE) {
             return;
         }
         String assignmentHash = hashAssignment(assignment);
         Optional<BackendAssignmentStore.BackendAssignmentRecord> existing = assignmentStore.findAssignment(assignment.assignmentId());
-        if (existing.isPresent()) {
-            if (existing.get().assignmentHash().equals(assignmentHash)) {
-                return;
-            }
+        String existingAssignmentHash = existing.map(BackendAssignmentStore.BackendAssignmentRecord::assignmentHash).orElse("");
+        BackendAssignmentValidationResult validation = assignmentValidator.validate(assignment);
+        String activeMatchValidationError = validation.valid()
+            ? validatePlayersNotAlreadyInActiveMatch(validation.playerUuids())
+            : "";
+        BackendAssignmentProcessingPlan plan = assignmentProcessingPlanner.planBeforeLaunch(
+            assignment,
+            assignmentHash,
+            existingAssignmentHash,
+            validation,
+            activeMatchValidationError
+        );
+        if (plan.action() == BackendAssignmentProcessingPlan.Action.IGNORE) {
+            return;
+        }
+        if (plan.action() == BackendAssignmentProcessingPlan.Action.REJECT_DUPLICATE) {
             try {
                 assignmentStore.recordRejectedDuplicate(
                     assignment,
-                    "assignmentId reused with different payload",
+                    plan.reason(),
                     nowEpochMs
                 );
             } catch (IOException exception) {
@@ -391,47 +406,46 @@ public final class BackendSyncService {
             }
             return;
         }
-
-        BackendAssignmentValidationResult validation = assignmentValidator.validate(assignment);
-        if (!validation.valid()) {
-            persistAssignmentAck(assignment, assignmentHash, "REJECTED", "", validation.message(), nowEpochMs);
-            return;
-        }
-        String activeMatchValidationError = validatePlayersNotAlreadyInActiveMatch(validation.playerUuids());
-        if (!activeMatchValidationError.isBlank()) {
-            persistAssignmentAck(assignment, assignmentHash, "REJECTED", "", activeMatchValidationError, nowEpochMs);
+        if (plan.action() == BackendAssignmentProcessingPlan.Action.REJECT_VALIDATION
+            || plan.action() == BackendAssignmentProcessingPlan.Action.REJECT_ACTIVE_MATCH) {
+            persistAssignmentAck(assignment, assignmentHash, plan.status(), plan.localMatchId(), plan.reason(), nowEpochMs);
             return;
         }
 
         QueueCoordinatorService.AssignmentLaunchResult result;
-        if (ASSIGNMENT_TYPE_BACKFILL.equals(validation.assignmentType())) {
+        if (plan.action() == BackendAssignmentProcessingPlan.Action.LAUNCH_BACKFILL) {
             result = queueCoordinatorService.launchBackendBackfillAssignment(
                 assignment.assignmentId(),
-                validation.matchId(),
+                plan.matchId(),
                 normalize(assignment.externalMatchId()),
                 assignment.queueId(),
                 assignment.arenaId(),
-                toQueueCoordinatorTickets(validation.backfillPlayerTickets()),
+                toQueueCoordinatorTickets(plan.backfillPlayerTickets()),
                 normalize(assignment.reportingServerId()),
                 normalize(assignment.targetConnectionAddress())
             );
         } else {
             result = queueCoordinatorService.launchBackendAssignment(
                 assignment.assignmentId(),
-                validation.matchId(),
+                plan.matchId(),
                 normalize(assignment.externalMatchId()),
                 assignment.queueId(),
                 assignment.arenaId(),
-                validation.playerUuids(),
-                validation.expectedPlayerUuids()
+                plan.playerUuids(),
+                plan.expectedPlayerUuids()
             );
         }
+        BackendAssignmentProcessingPlan ackPlan = assignmentProcessingPlanner.planLaunchResult(
+            result.outcome().name(),
+            result.localMatchId(),
+            result.reason()
+        );
         persistAssignmentAck(
             assignment,
             assignmentHash,
-            result.outcome().name(),
-            result.localMatchId(),
-            result.reason(),
+            ackPlan.status(),
+            ackPlan.localMatchId(),
+            ackPlan.reason(),
             nowEpochMs
         );
     }
