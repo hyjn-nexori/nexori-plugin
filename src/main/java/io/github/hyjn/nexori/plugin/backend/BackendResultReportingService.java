@@ -7,6 +7,8 @@ import com.google.gson.JsonSyntaxException;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuildResult;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuilder;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultResponseDecision;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultResponsePolicy;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendResultResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
@@ -48,6 +50,7 @@ public final class BackendResultReportingService {
     private final ServerIdentity localIdentity;
     private HttpClient httpClient;
     private final BackendResultPayloadBuilder resultPayloadBuilder = new BackendResultPayloadBuilder();
+    private final BackendResultResponsePolicy resultResponsePolicy = new BackendResultResponsePolicy();
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendResultHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Set<String> staleRequestIds = new HashSet<>();
@@ -325,9 +328,22 @@ public final class BackendResultReportingService {
 
     private void handleHttpResult(@Nonnull BackendResultHttpResult result, long nowEpochMs) {
         recordResultLogEntry(result, nowEpochMs);
-        if (isAcceptedOrDuplicate(result)) {
+        BackendResultResponsePayload response = result.response();
+        BackendResultResponseDecision decision = resultResponsePolicy.decide(
+            result.resultId(),
+            result.statusCode(),
+            response == null ? "" : response.receivedResultId(),
+            response == null ? "" : response.status(),
+            result.errorClass(),
+            result.message(),
+            nowEpochMs,
+            config.resultRetryIntervalMs(),
+            AUTH_BACKOFF_MS,
+            ERROR_BACKOFF_MS
+        );
+        if (decision.action() == BackendResultResponseDecision.Action.ACKNOWLEDGE) {
             try {
-                resultStore.markAcknowledged(result.resultId(), result.statusCode(), result.response().status(), nowEpochMs);
+                resultStore.markAcknowledged(result.resultId(), decision.statusCode(), decision.backendStatus(), nowEpochMs);
                 healthState = BackendResultReportingHealthState.healthy(nowEpochMs);
             } catch (IOException exception) {
                 logger.atWarning().withCause(exception).log("Failed to mark Nexori backend result acknowledged.");
@@ -335,43 +351,38 @@ public final class BackendResultReportingService {
             return;
         }
 
-        if (result.statusCode() == 400 || result.statusCode() == 422) {
-            markPermanentQuietly(result.resultId(), result.statusCode(), result.errorClass(), result.message(), nowEpochMs);
+        if (decision.action() == BackendResultResponseDecision.Action.PERMANENT_FAILURE) {
+            markPermanentQuietly(result.resultId(), decision.statusCode(), decision.errorClass(), decision.errorMessage(), nowEpochMs);
             healthState = BackendResultReportingHealthState.failed(
-                "FAILED_PERMANENT",
-                result.statusCode(),
-                result.errorClass(),
-                result.message(),
+                decision.healthStatus(),
+                decision.statusCode(),
+                decision.errorClass(),
+                decision.errorMessage(),
                 nowEpochMs,
                 0L
             );
             return;
         }
 
-        long backoffMs = result.isAuthFailure() || result.isForbidden() ? AUTH_BACKOFF_MS : retryBackoffMs(result);
-        long nextAttemptAt = nowEpochMs + backoffMs;
         markRetryQuietly(
             result.resultId(),
-            result.statusCode(),
-            result.errorClass(),
-            result.message(),
+            decision.statusCode(),
+            decision.errorClass(),
+            decision.errorMessage(),
             nowEpochMs,
-            nextAttemptAt
+            decision.nextAttemptAtEpochMs()
         );
-        String health = result.isAuthFailure()
-            ? "AUTH_FAILED"
-            : result.isForbidden() ? "AUTH_FORBIDDEN" : "RESULT_REPORT_FAILED";
         healthState = BackendResultReportingHealthState.failed(
-            health,
-            result.statusCode(),
-            result.errorClass(),
-            result.message(),
+            decision.healthStatus(),
+            decision.statusCode(),
+            decision.errorClass(),
+            decision.errorMessage(),
             nowEpochMs,
-            nextAttemptAt
+            decision.nextAttemptAtEpochMs()
         );
-        if (result.isAuthFailure() || result.isForbidden()) {
+        if (decision.authWarning()) {
             logger.atWarning().log(
-                "Nexori backend result reporting auth failed status=" + result.statusCode() + " path=/nexori/results."
+                "Nexori backend result reporting auth failed status=" + decision.statusCode() + " path=/nexori/results."
             );
         }
     }
@@ -422,13 +433,6 @@ public final class BackendResultReportingService {
         }
         String status = response.status() == null ? "" : response.status().trim();
         return "ACCEPTED".equalsIgnoreCase(status) || "DUPLICATE".equalsIgnoreCase(status);
-    }
-
-    private long retryBackoffMs(@Nonnull BackendResultHttpResult result) {
-        if (result.statusCode() == 429 || result.statusCode() >= 500 || result.statusCode() <= 0) {
-            return config.resultRetryIntervalMs();
-        }
-        return ERROR_BACKOFF_MS;
     }
 
     @Nonnull
