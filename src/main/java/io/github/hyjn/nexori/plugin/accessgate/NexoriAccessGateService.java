@@ -6,6 +6,9 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
+import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateAdmissionDecider;
+import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateAdmissionDecision;
+import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateBypassType;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 
@@ -31,6 +34,7 @@ public final class NexoriAccessGateService {
     private final HytaleLogger logger;
     private final SecureReferralService secureReferralService;
     private final NexoriAccessGateStore store;
+    private final AccessGateAdmissionDecider admissionDecider = new AccessGateAdmissionDecider();
     private final Map<UUID, Long> pendingSetupConnections = new ConcurrentHashMap<>();
     private final Set<UUID> connectedPlayers = ConcurrentHashMap.newKeySet();
     private volatile NexoriAccessGateConfigDocument config;
@@ -216,35 +220,37 @@ public final class NexoriAccessGateService {
         }
 
         int occupancy = pendingSetupConnections.size() + connectedPlayers.size();
-        int maxPlayers = Math.max(1, currentConfig.maxPlayers());
-        int publicCap = Math.max(0, maxPlayers - currentConfig.reservedPrioritySlots());
-        BypassType bypassType = resolveBypass(event, currentConfig);
-        boolean bypass = bypassType != BypassType.NONE;
+        AccessGateBypassType bypassType = resolveBypass(event, currentConfig);
+        AccessGateAdmissionDecision admissionDecision = admissionDecider.decide(currentConfig, occupancy, bypassType);
+        int maxPlayers = admissionDecision.maxPlayers();
+        int publicCap = admissionDecision.publicCap();
 
-        if (currentConfig.enabled() && occupancy >= maxPlayers) {
-            deny(event, playerUuid, currentConfig.fullMessage());
+        if (admissionDecision.outcome() == AccessGateAdmissionDecision.Outcome.DENY_HARD_CAP) {
+            deny(event, playerUuid, admissionDecision.message());
             logger.atInfo().log("NEXORI_ACCESS_GATE denied_hard_cap player=" + event.getUsername()
                 + " occupancy=" + occupancy + " maxPlayers=" + maxPlayers);
             return;
         }
 
-        if (currentConfig.enabled() && !bypass && occupancy >= publicCap) {
-            deny(event, playerUuid, currentConfig.fullMessage());
+        if (admissionDecision.outcome() == AccessGateAdmissionDecision.Outcome.DENY_PUBLIC_CAP) {
+            deny(event, playerUuid, admissionDecision.message());
             logger.atInfo().log("NEXORI_ACCESS_GATE denied_public_cap player=" + event.getUsername()
                 + " occupancy=" + occupancy + " publicCap=" + publicCap + " maxPlayers=" + maxPlayers);
             return;
         }
 
-        pendingSetupConnections.put(playerUuid, now);
+        if (admissionDecision.shouldTrackPending()) {
+            pendingSetupConnections.put(playerUuid, now);
+        }
         if (!currentConfig.enabled()) {
             return;
         }
-        if (bypassType == BypassType.TRUSTED_REFERRAL) {
+        if (bypassType == AccessGateBypassType.TRUSTED_REFERRAL) {
             logger.atInfo().log("NEXORI_ACCESS_GATE accepted_trusted_referral_bypass player=" + event.getUsername()
                 + " occupancy=" + occupancy + " publicCap=" + publicCap + " maxPlayers=" + maxPlayers);
             return;
         }
-        if (bypass) {
+        if (bypassType != AccessGateBypassType.NONE) {
             logger.atInfo().log("NEXORI_ACCESS_GATE accepted_bypass player=" + event.getUsername()
                 + " bypassType=" + bypassType.name().toLowerCase(Locale.ROOT)
                 + " occupancy=" + occupancy + " publicCap=" + publicCap + " maxPlayers=" + maxPlayers);
@@ -275,19 +281,19 @@ public final class NexoriAccessGateService {
     }
 
     @Nonnull
-    private BypassType resolveBypass(
+    private AccessGateBypassType resolveBypass(
         @Nonnull PlayerSetupConnectEvent event,
         @Nonnull NexoriAccessGateConfigDocument currentConfig
     ) {
         if (currentConfig.bypassReferralConnections() && secureReferralService.isTrustedNexoriReferral(event)) {
-            return BypassType.TRUSTED_REFERRAL;
+            return AccessGateBypassType.TRUSTED_REFERRAL;
         }
 
         if (currentConfig.containsBypassUuid(event.getUuid())) {
-            return BypassType.UUID;
+            return AccessGateBypassType.UUID;
         }
 
-        return BypassType.NONE;
+        return AccessGateBypassType.NONE;
     }
 
     private void deny(@Nonnull PlayerSetupConnectEvent event, @Nonnull UUID playerUuid, @Nonnull String fullMessage) {
@@ -318,9 +324,4 @@ public final class NexoriAccessGateService {
         }
     }
 
-    private enum BypassType {
-        NONE,
-        UUID,
-        TRUSTED_REFERRAL
-    }
 }
