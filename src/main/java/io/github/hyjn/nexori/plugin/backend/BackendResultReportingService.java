@@ -7,6 +7,8 @@ import com.google.gson.JsonSyntaxException;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuildResult;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuilder;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultEnqueuePlan;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultEnqueuePlanner;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultResponseDecision;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendResultResponsePolicy;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendResultResponsePayload;
@@ -23,9 +25,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Deque;
-import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +49,7 @@ public final class BackendResultReportingService {
     private final BackendResultStore resultStore;
     private final ServerIdentity localIdentity;
     private HttpClient httpClient;
+    private final BackendResultEnqueuePlanner resultEnqueuePlanner = new BackendResultEnqueuePlanner();
     private final BackendResultPayloadBuilder resultPayloadBuilder = new BackendResultPayloadBuilder();
     private final BackendResultResponsePolicy resultResponsePolicy = new BackendResultResponsePolicy();
     private final Gson gson = new GsonBuilder().create();
@@ -113,46 +114,26 @@ public final class BackendResultReportingService {
         @Nonnull String payloadHash,
         long endedAtEpochMs
     ) {
-        BackendMatchmakingConfig normalized = config.normalized();
-        if (!normalized.resultReportingEnabled()) {
-            return new EnqueueResult(EnqueueOutcome.DISABLED, "", "Result reporting is disabled.");
-        }
-        if (normalized.baseUrl().isBlank() || normalized.serverToken().isBlank()) {
-            return new EnqueueResult(EnqueueOutcome.DISABLED, "", "Result reporting requires baseUrl and serverToken.");
-        }
-        if (match.externalMatchId().isBlank()) {
-            return new EnqueueResult(EnqueueOutcome.EXTERNAL_MATCH_MISSING, "", "Match has no externalMatchId.");
-        }
-
         String resultId = UUID.randomUUID().toString().toLowerCase();
-        BackendResultStore.BackendResultRecord record = new BackendResultStore.BackendResultRecord(
-            resultId,
-            match.matchId(),
-            match.externalMatchId(),
-            match.assignmentId(),
-            toStoreAssignmentIdsByPlayerUuid(match),
-            match.queueId(),
-            match.arenaId(),
-            match.rulesEngineId(),
-            toStorePlayers(players),
-            reason,
+        BackendResultEnqueuePlan plan = resultEnqueuePlanner.plan(
+            config,
+            match,
+            players,
             metadata,
-            customData.deepCopy(),
+            customData,
+            reason,
             payloadHash,
-            BackendResultStore.BackendResultStatus.PENDING.name(),
-            0,
-            endedAtEpochMs,
-            endedAtEpochMs,
-            endedAtEpochMs,
-            0L,
-            0L,
-            "",
-            "",
-            0,
-            ""
+            resultId,
+            endedAtEpochMs
         );
+        if (plan.outcome() == BackendResultEnqueuePlan.Outcome.DISABLED) {
+            return new EnqueueResult(EnqueueOutcome.DISABLED, "", plan.message());
+        }
+        if (plan.outcome() == BackendResultEnqueuePlan.Outcome.EXTERNAL_MATCH_MISSING) {
+            return new EnqueueResult(EnqueueOutcome.EXTERNAL_MATCH_MISSING, "", plan.message());
+        }
         try {
-            BackendResultStore.StorePutResult stored = resultStore.putPending(record);
+            BackendResultStore.StorePutResult stored = resultStore.putPending(plan.record());
             return switch (stored.outcome()) {
                 case QUEUED -> new EnqueueResult(EnqueueOutcome.QUEUED, stored.resultId(), stored.message());
                 case ALREADY_SUBMITTED -> new EnqueueResult(EnqueueOutcome.ALREADY_SUBMITTED, stored.resultId(), stored.message());
@@ -433,38 +414,6 @@ public final class BackendResultReportingService {
         }
         String status = response.status() == null ? "" : response.status().trim();
         return "ACCEPTED".equalsIgnoreCase(status) || "DUPLICATE".equalsIgnoreCase(status);
-    }
-
-    @Nonnull
-    private List<BackendResultStore.BackendResultPlayerRecord> toStorePlayers(
-        @Nonnull List<ArenaMatchService.SubmitMatchPlayerResult> players
-    ) {
-        List<BackendResultStore.BackendResultPlayerRecord> records = new ArrayList<>();
-        for (ArenaMatchService.SubmitMatchPlayerResult player : players) {
-            records.add(new BackendResultStore.BackendResultPlayerRecord(
-                player.playerUuid().toString(),
-                player.backendOutcome(),
-                player.reason()
-            ));
-        }
-        return List.copyOf(records);
-    }
-
-    @Nonnull
-    private Map<String, String> toStoreAssignmentIdsByPlayerUuid(@Nonnull ArenaActiveMatch match) {
-        if (match.assignmentIdsByPlayerUuid().isEmpty()) {
-            return Map.of();
-        }
-        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
-        match.assignmentIdsByPlayerUuid().entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> {
-                if (entry.getKey() == null || entry.getValue() == null || entry.getValue().isBlank()) {
-                    return;
-                }
-                normalized.put(entry.getKey().toString().toLowerCase(), entry.getValue().trim());
-            });
-        return Map.copyOf(normalized);
     }
 
     @Nonnull
