@@ -20,6 +20,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryStateAnalyzer;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
@@ -53,6 +54,7 @@ public final class InventoryTransferService {
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
+    private final InventoryStateAnalyzer inventoryStateAnalyzer = new InventoryStateAnalyzer();
     private final Map<UUID, InventoryTransferState> pendingRuntimeApplies = new ConcurrentHashMap<>();
     private final Set<UUID> pendingRuntimeClears = ConcurrentHashMap.newKeySet();
     private final Map<String, PendingRecoveryQuery> pendingRecoveryQueries = new ConcurrentHashMap<>();
@@ -408,7 +410,7 @@ public final class InventoryTransferService {
      * Returns whether the supplied inventory state contains any visible items worth transferring.
      */
     public boolean shouldTransferInventory(InventoryTransferState state) {
-        return state != null && occupiedVisibleSlots(state) > 0;
+        return inventoryStateAnalyzer.shouldTransferInventory(state);
     }
 
     /**
@@ -423,8 +425,8 @@ public final class InventoryTransferService {
         }
 
         if (currentState != null) {
-            int occupied = occupiedVisibleSlots(currentState);
-            int capacity = totalVisibleCapacity(currentState);
+            int occupied = inventoryStateAnalyzer.occupiedVisibleSlots(currentState);
+            int capacity = inventoryStateAnalyzer.totalVisibleCapacity(currentState);
             if (occupied > 0) {
                 throw new IllegalStateException("Your current inventory is not empty (" + occupied + "/" + capacity + "). Empty it before trying Nexori recovery because recovery overwrites your current origin inventory.");
             }
@@ -759,28 +761,6 @@ public final class InventoryTransferService {
         pendingRuntimeClears.remove(playerUuid);
         inventorySnapshotService.applyToPlayer(player, emptied);
         logger.atInfo().log("Applied deferred Nexori inventory clear for " + playerUuid + ".");
-    }
-
-    private static int occupiedVisibleSlots(@Nonnull InventoryTransferState state) {
-        return occupiedSlots(state.storage())
-            + occupiedSlots(state.armor())
-            + occupiedSlots(state.hotBar())
-            + occupiedSlots(state.utility())
-            + occupiedSlots(state.backpack());
-    }
-
-    private static int totalVisibleCapacity(@Nonnull InventoryTransferState state) {
-        return Math.max(state.storage().capacity(), 0)
-            + Math.max(state.armor().capacity(), 0)
-            + Math.max(state.hotBar().capacity(), 0)
-            + Math.max(state.utility().capacity(), 0)
-            + Math.max(state.backpack().capacity(), 0);
-    }
-
-    private static int occupiedSlots(@Nonnull ContainerTransferState container) {
-        return (int) container.items().values().stream()
-            .filter(item -> item != null && item.quantity() > 0)
-            .count();
     }
 
     private record PendingRecoveryQuery(
