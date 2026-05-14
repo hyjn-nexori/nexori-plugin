@@ -6,6 +6,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextBuildResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextFactory;
+import io.github.hyjn.nexori.plugin.minigame.logic.QueueCountdownPlanner;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -41,6 +42,7 @@ public final class QueueCoordinatorService {
     private final SecureTravelService secureTravelService;
     private final HytaleLogger logger;
     private final MinigameLaunchContextFactory launchContextFactory = new MinigameLaunchContextFactory();
+    private final QueueCountdownPlanner countdownPlanner = new QueueCountdownPlanner();
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
     private long lastWorldTickAdvanceAtEpochMs;
@@ -236,38 +238,7 @@ public final class QueueCoordinatorService {
             if (currentState.phase() != QueuePhase.COUNTDOWN) {
                 continue;
             }
-            if (currentState.waitingMembers().size() < queue.minPlayers()) {
-                stateByQueueId.put(queue.queueId(), new QueueRuntimeState(
-                    currentState.queueId(),
-                    QueuePhase.WAITING,
-                    currentState.waitingMembers(),
-                    currentState.readyMembers(),
-                    0L,
-                    currentState.readyAtEpochMs(),
-                    nowEpochMs,
-                    currentState.lastLaunchAttemptAtEpochMs(),
-                    currentState.lastLaunchError()
-                ).normalized());
-                continue;
-            }
-            if (currentState.countdownEndsAtEpochMs() > nowEpochMs) {
-                continue;
-            }
-
-            int readyCount = Math.min(queue.maxPlayers(), currentState.waitingMembers().size());
-            List<QueueMemberState> readyMembers = new ArrayList<>(currentState.waitingMembers().subList(0, readyCount));
-            List<QueueMemberState> remainingWaiting = new ArrayList<>(currentState.waitingMembers().subList(readyCount, currentState.waitingMembers().size()));
-            QueueRuntimeState updated = new QueueRuntimeState(
-                currentState.queueId(),
-                QueuePhase.READY,
-                List.copyOf(remainingWaiting),
-                List.copyOf(readyMembers),
-                0L,
-                nowEpochMs,
-                nowEpochMs,
-                0L,
-                ""
-            ).normalized();
+            QueueRuntimeState updated = countdownPlanner.advanceCountdown(currentState, queue, nowEpochMs);
             stateByQueueId.put(queue.queueId(), updated);
         }
     }
@@ -810,53 +781,7 @@ public final class QueueCoordinatorService {
 
     @Nonnull
     private QueueRuntimeState maybeStartCountdown(@Nonnull QueueRuntimeState state, @Nonnull QueueDefinition queue, long nowEpochMs) {
-        if (queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN) {
-            return new QueueRuntimeState(
-                state.queueId(),
-                QueuePhase.WAITING,
-                state.waitingMembers(),
-                state.readyMembers(),
-                0L,
-                state.readyAtEpochMs(),
-                nowEpochMs,
-                state.lastLaunchAttemptAtEpochMs(),
-                state.lastLaunchError()
-            ).normalized();
-        }
-        if (state.phase() == QueuePhase.READY || state.hasReadyBatch()) {
-            return state;
-        }
-        if (state.waitingMembers().size() < queue.minPlayers()) {
-            if (state.phase() == QueuePhase.WAITING && state.countdownEndsAtEpochMs() == 0L) {
-                return state;
-            }
-            return new QueueRuntimeState(
-                state.queueId(),
-                QueuePhase.WAITING,
-                state.waitingMembers(),
-                state.readyMembers(),
-                0L,
-                state.readyAtEpochMs(),
-                nowEpochMs,
-                state.lastLaunchAttemptAtEpochMs(),
-                state.lastLaunchError()
-            ).normalized();
-        }
-        if (state.phase() == QueuePhase.COUNTDOWN && state.countdownEndsAtEpochMs() > 0L) {
-            return state;
-        }
-        long countdownEndsAt = nowEpochMs + (queue.countdownSeconds() * 1000L);
-        return new QueueRuntimeState(
-            state.queueId(),
-            QueuePhase.COUNTDOWN,
-            state.waitingMembers(),
-            state.readyMembers(),
-            countdownEndsAt,
-            state.readyAtEpochMs(),
-            nowEpochMs,
-            state.lastLaunchAttemptAtEpochMs(),
-            state.lastLaunchError()
-        ).normalized();
+        return countdownPlanner.maybeStartCountdown(state, queue, nowEpochMs);
     }
 
     @Nonnull
