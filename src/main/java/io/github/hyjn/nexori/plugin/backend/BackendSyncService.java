@@ -7,6 +7,8 @@ import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidationRes
 import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidator;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuildInput;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuilder;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncResponseDecision;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncResponsePolicy;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentAckPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncRequestPayload;
@@ -61,6 +63,7 @@ public final class BackendSyncService {
     private final ArenaMatchService arenaMatchService;
     private final BackendAssignmentValidator assignmentValidator = new BackendAssignmentValidator();
     private final BackendSyncRequestPayloadBuilder syncRequestPayloadBuilder = new BackendSyncRequestPayloadBuilder();
+    private final BackendSyncResponsePolicy syncResponsePolicy = new BackendSyncResponsePolicy();
     private HttpClient httpClient;
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendSyncHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
@@ -287,28 +290,22 @@ public final class BackendSyncService {
 
     private void handleHttpResult(@Nonnull BackendSyncHttpResult result, long nowEpochMs) {
         recordSyncLogEntry(result, nowEpochMs);
-        if (result.isAuthFailure()) {
-            healthState = BackendSyncHealthState.failed("AUTH_FAILED", 401, "HTTP", "Backend sync auth failed.", nowEpochMs, nowEpochMs + AUTH_BACKOFF_MS);
-            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, healthState.nextAttemptAtEpochMs());
+        BackendSyncResponseDecision decision = syncResponsePolicy.decide(result, nowEpochMs, AUTH_BACKOFF_MS, ERROR_BACKOFF_MS);
+        if (decision.action() == BackendSyncResponseDecision.Action.AUTH_FAILED) {
+            healthState = decision.healthState();
+            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, decision.nextAttemptAtEpochMs());
             logger.atWarning().log("Nexori backend sync auth failed with status=401 path=/nexori/sync.");
             return;
         }
-        if (result.isForbidden()) {
-            healthState = BackendSyncHealthState.failed("AUTH_FORBIDDEN", 403, "HTTP", "Backend sync forbidden.", nowEpochMs, nowEpochMs + AUTH_BACKOFF_MS);
-            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, healthState.nextAttemptAtEpochMs());
+        if (decision.action() == BackendSyncResponseDecision.Action.FORBIDDEN) {
+            healthState = decision.healthState();
+            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, decision.nextAttemptAtEpochMs());
             logger.atWarning().log("Nexori backend sync forbidden with status=403 path=/nexori/sync.");
             return;
         }
-        if (!result.hasResponse()) {
-            healthState = BackendSyncHealthState.failed(
-                "SYNC_FAILED",
-                result.statusCode(),
-                result.errorClass(),
-                result.message(),
-                nowEpochMs,
-                nowEpochMs + ERROR_BACKOFF_MS
-            );
-            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, healthState.nextAttemptAtEpochMs());
+        if (decision.action() == BackendSyncResponseDecision.Action.FAILED_NO_RESPONSE) {
+            healthState = decision.healthState();
+            nextSyncAllowedAtEpochMs = Math.max(nextSyncAllowedAtEpochMs, decision.nextAttemptAtEpochMs());
             logger.atWarning().log(
                 "Nexori backend sync failed status=" + result.statusCode()
                     + " path=/nexori/sync errorClass=" + result.errorClass()
@@ -324,7 +321,7 @@ public final class BackendSyncService {
             return;
         }
         processAssignments(response.assignments(), nowEpochMs);
-        healthState = BackendSyncHealthState.healthy(nowEpochMs);
+        healthState = decision.healthState();
     }
 
     private void recordSyncLogEntry(@Nonnull BackendSyncHttpResult result, long nowEpochMs) {
