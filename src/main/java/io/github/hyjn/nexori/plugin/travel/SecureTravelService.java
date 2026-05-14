@@ -45,6 +45,8 @@ import io.github.hyjn.nexori.plugin.target.ResolvedDestinationTarget;
 import io.github.hyjn.nexori.plugin.target.WorldSpawnResolver;
 import io.github.hyjn.nexori.plugin.travel.logic.TravelContextData;
 import io.github.hyjn.nexori.plugin.travel.logic.TravelContextParser;
+import io.github.hyjn.nexori.plugin.travel.logic.SecureTravelDispatchPlan;
+import io.github.hyjn.nexori.plugin.travel.logic.SecureTravelDispatchPlanner;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -80,6 +82,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final DiagnosticsService diagnosticsService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final TravelContextParser travelContextParser = new TravelContextParser();
+    private final SecureTravelDispatchPlanner dispatchPlanner = new SecureTravelDispatchPlanner();
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
@@ -196,32 +199,28 @@ public final class SecureTravelService implements SecureReferralHandler {
             throw new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle.");
         }
 
-        TravelProfileType profileType = TravelProfileType.parse(travelProfileId);
+        TravelProfileType profileType = dispatchPlanner.travelProfileType(travelProfileId);
         InventoryTransferState inventoryState = null;
         String inventoryTransferId = "";
-        if (profileType == TravelProfileType.APPLY_INVENTORY) {
+        if (dispatchPlanner.requiresInventoryCapture(travelProfileId)) {
             inventoryState = inventoryTransferService.captureCurrentInventory(playerRef);
             inventoryTransferId = UUID.randomUUID().toString();
         }
         final String finalInventoryTransferId = inventoryTransferId;
-
-        SecureTravelPayload payload = new SecureTravelPayload(
+        SecureTravelDispatchPlan dispatchPlan = dispatchPlanner.plan(
             operationId,
             localIdentity.serverId().toString(),
-            "",
             destinationTargetId,
             arrivalPointId,
-            profileType.id(),
-            "Secure travel accepted from " + localIdentity.serverId() + ".",
-            contextJson == null || contextJson.isBlank() ? "{}" : contextJson,
+            travelProfileId,
+            contextJson,
             finalInventoryTransferId,
             inventoryState
         );
+        SecureTravelPayload payload = dispatchPlan.payload();
         byte[] encodedPayload = secureReferralService.createPayload(playerRef, PAYLOAD_TYPE, payload, Duration.ofSeconds(30));
 
-        if (profileType == TravelProfileType.APPLY_INVENTORY
-            && inventoryState != null
-            && !finalInventoryTransferId.isBlank()
+        if (dispatchPlan.shouldPrepareOriginInventoryTransfer()
             && inventoryTransferService.shouldTransferInventory(inventoryState)) {
             inventoryTransferService.saveOriginBackup(
                 finalInventoryTransferId,
