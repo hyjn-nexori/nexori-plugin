@@ -20,6 +20,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryStartPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryStartPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryStateAnalyzer;
@@ -56,6 +58,7 @@ public final class InventoryTransferService {
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
+    private final InventoryRecoveryFinalizePlanner recoveryFinalizePlanner = new InventoryRecoveryFinalizePlanner();
     private final InventoryRecoveryStartPlanner recoveryStartPlanner = new InventoryRecoveryStartPlanner();
     private final InventoryStateAnalyzer inventoryStateAnalyzer = new InventoryStateAnalyzer();
     private final Map<UUID, InventoryTransferState> pendingRuntimeApplies = new ConcurrentHashMap<>();
@@ -629,45 +632,46 @@ public final class InventoryTransferService {
         }
 
         PendingRecoveryQuery pendingQuery = pendingRecoveryQueries.remove(payload.transferId().trim().toLowerCase());
-        if (pendingQuery == null || pendingQuery.isExpired() || !pendingQuery.playerUuid().equals(event.getUuid())) {
+        InventoryRecoveryFinalizePlan pendingPlan = recoveryFinalizePlanner.planPending(
+            event.getUuid(),
+            pendingQuery != null,
+            pendingQuery != null && pendingQuery.isExpired(),
+            pendingQuery == null ? null : pendingQuery.playerUuid()
+        );
+        if (pendingPlan.action() == InventoryRecoveryFinalizePlan.Action.IGNORE) {
             return;
         }
 
         InventoryTransferBackupRecord backup = findPlayerBackup(event.getUuid(), payload.transferId()).orElse(null);
-        InventoryTransferQueryResult result = InventoryTransferQueryResult.parse(payload.result());
+        InventoryRecoveryFinalizePlan plan = recoveryFinalizePlanner.planFinalization(
+            payload.transferId(),
+            backup,
+            payload.result()
+        );
 
         try {
-            String message;
-            if (result == InventoryTransferQueryResult.APPLIED) {
-                if (backup != null) {
-                    backupStore.remove(backup.transferId());
-                }
-                message = "Nexori recovery confirmed that the destination already applied your inventory transfer.";
-            } else {
-                if (backup == null) {
-                    message = "Nexori recovery could not restore that backup because it no longer exists on this origin server.";
-                } else {
-                    restoreOriginBackup(backup);
-                    backupStore.remove(backup.transferId());
-                    message = "Nexori recovery restored your origin inventory because the destination did not report an applied transfer.";
-                }
+            if (plan.shouldRestoreBackup() && backup != null) {
+                restoreOriginBackup(backup);
+            }
+            if (plan.shouldRemoveBackup() && backup != null) {
+                backupStore.remove(backup.transferId());
             }
 
             pendingRecoveryReturns.put(event.getUuid(), new PendingRecoveryReturn(
                 pendingQuery.originWorldName(),
                 pendingQuery.originTransform(),
-                backup != null && result != InventoryTransferQueryResult.APPLIED ? backup.transferId() : "",
-                message
+                plan.pendingReturnTransferId(),
+                plan.message()
             ));
             diagnosticsService.record(
                 DiagnosticsCategory.RECOVERY,
                 DiagnosticsAction.RECOVERY_FINALIZE,
                 DiagnosticsOutcome.SUCCEEDED,
                 DiagnosticsReasonClass.NORMAL,
-                result == InventoryTransferQueryResult.APPLIED
+                plan.result() == InventoryTransferQueryResult.APPLIED
                     ? DiagnosticsReasonCode.RECOVERY_QUERY_ANSWERED_APPLIED
                     : DiagnosticsReasonCode.ORIGIN_BACKUP_RESTORED,
-                message,
+                plan.message(),
                 payload.transferId(),
                 diag -> diag
                     .playerUuid(event.getUuid().toString())
