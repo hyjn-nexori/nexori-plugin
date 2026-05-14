@@ -18,6 +18,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.diagnostics.protocol.DiagnosticsProtocol;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentityManager;
+import io.github.hyjn.nexori.plugin.secure.logic.SecureReferralAcceptanceDecision;
+import io.github.hyjn.nexori.plugin.secure.logic.SecureReferralAcceptancePolicy;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -39,6 +41,7 @@ public final class SecureReferralService {
     private final ServerIdentity localIdentity;
     private final TrustBundleStore trustBundleStore;
     private final SecureReferralPayloadCodec codec;
+    private final SecureReferralAcceptancePolicy acceptancePolicy = new SecureReferralAcceptancePolicy();
     private final DiagnosticsService diagnosticsService;
     private final Gson gson;
     private final Map<String, SecureReferralHandler> handlersByType = new ConcurrentHashMap<>();
@@ -146,28 +149,18 @@ public final class SecureReferralService {
             return true;
         }
 
-        if (envelope.isExpired(Instant.now())) {
-            recordDenied(
-                event,
-                envelope,
-                DiagnosticsAction.SECURITY_REFERRAL_EXPIRY,
-                DiagnosticsReasonCode.REFERRAL_EXPIRED,
-                "This Nexori referral expired before it could be used."
-            );
-            deny(event, "This Nexori referral expired before it could be used.");
+        SecureReferralAcceptanceDecision expiredDecision = acceptancePolicy.decide(true, envelope.isExpired(Instant.now()), true, true, true);
+        if (!expiredDecision.acceptedReferral()) {
+            recordDenied(event, envelope, expiredDecision);
+            deny(event, expiredDecision.denyMessage());
             return true;
         }
 
         BundleMember issuer = findTrustedIssuer(envelope.issuerServerId());
-        if (issuer == null) {
-            recordDenied(
-                event,
-                envelope,
-                DiagnosticsAction.SECURITY_REFERRAL_ISSUER_LOOKUP,
-                DiagnosticsReasonCode.ISSUER_NOT_TRUSTED,
-                "This Nexori referral came from a server that is not in the current trust bundle."
-            );
-            deny(event, "This Nexori referral came from a server that is not in the current trust bundle.");
+        SecureReferralAcceptanceDecision issuerDecision = acceptancePolicy.decide(true, false, issuer != null, true, true);
+        if (!issuerDecision.acceptedReferral()) {
+            recordDenied(event, envelope, issuerDecision);
+            deny(event, issuerDecision.denyMessage());
             return true;
         }
 
@@ -177,15 +170,10 @@ public final class SecureReferralService {
                 issuer.publicKeyBase64(),
                 envelope.signatureBase64()
             );
-            if (!valid) {
-                recordDenied(
-                    event,
-                    envelope,
-                    DiagnosticsAction.SECURITY_REFERRAL_SIGNATURE_VERIFY,
-                    DiagnosticsReasonCode.SIGNATURE_INVALID,
-                    "This Nexori referral signature was invalid."
-                );
-                deny(event, "This Nexori referral signature was invalid.");
+            SecureReferralAcceptanceDecision signatureDecision = acceptancePolicy.decide(true, false, true, valid, true);
+            if (!signatureDecision.acceptedReferral()) {
+                recordDenied(event, envelope, signatureDecision);
+                deny(event, signatureDecision.denyMessage());
                 return true;
             }
         } catch (GeneralSecurityException exception) {
@@ -202,15 +190,10 @@ public final class SecureReferralService {
         }
 
         SecureReferralHandler handler = handlersByType.get(envelope.payloadType());
-        if (handler == null) {
-            recordDenied(
-                event,
-                envelope,
-                DiagnosticsAction.SECURITY_REFERRAL_PAYLOAD_TYPE_LOOKUP,
-                DiagnosticsReasonCode.PAYLOAD_TYPE_UNSUPPORTED,
-                "This Nexori referral type is not supported on the destination server."
-            );
-            deny(event, "This Nexori referral type is not supported on the destination server.");
+        SecureReferralAcceptanceDecision handlerDecision = acceptancePolicy.decide(true, false, true, true, handler != null);
+        if (!handlerDecision.acceptedReferral()) {
+            recordDenied(event, envelope, handlerDecision);
+            deny(event, handlerDecision.denyMessage());
             return true;
         }
 
@@ -234,12 +217,14 @@ public final class SecureReferralService {
             }
 
             SecureReferralEnvelope envelope = decoded.get();
-            if (envelope.isExpired(Instant.now())) {
+            SecureReferralAcceptanceDecision expiredDecision = acceptancePolicy.decide(true, envelope.isExpired(Instant.now()), true, true, true);
+            if (!expiredDecision.acceptedReferral()) {
                 return false;
             }
 
             BundleMember issuer = findTrustedIssuer(envelope.issuerServerId());
-            if (issuer == null) {
+            SecureReferralAcceptanceDecision issuerDecision = acceptancePolicy.decide(true, false, issuer != null, true, true);
+            if (!issuerDecision.acceptedReferral()) {
                 return false;
             }
 
@@ -248,11 +233,12 @@ public final class SecureReferralService {
                 issuer.publicKeyBase64(),
                 envelope.signatureBase64()
             );
-            if (!valid) {
+            SecureReferralAcceptanceDecision signatureDecision = acceptancePolicy.decide(true, false, true, valid, true);
+            if (!signatureDecision.acceptedReferral()) {
                 return false;
             }
 
-            return handlersByType.containsKey(envelope.payloadType());
+            return acceptancePolicy.decide(true, false, true, true, handlersByType.containsKey(envelope.payloadType())).acceptedReferral();
         } catch (IOException | GeneralSecurityException exception) {
             return false;
         }
@@ -302,6 +288,45 @@ public final class SecureReferralService {
                 diagnostics.payloadPreview(buildPayloadPreview(envelope));
             }
         );
+    }
+
+    private void recordDenied(
+        @Nonnull PlayerSetupConnectEvent event,
+        @Nonnull SecureReferralEnvelope envelope,
+        @Nonnull SecureReferralAcceptanceDecision decision
+    ) {
+        switch (decision.outcome()) {
+            case EXPIRED -> recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_EXPIRY,
+                DiagnosticsReasonCode.REFERRAL_EXPIRED,
+                decision.denyMessage()
+            );
+            case ISSUER_NOT_TRUSTED -> recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_ISSUER_LOOKUP,
+                DiagnosticsReasonCode.ISSUER_NOT_TRUSTED,
+                decision.denyMessage()
+            );
+            case SIGNATURE_INVALID -> recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_SIGNATURE_VERIFY,
+                DiagnosticsReasonCode.SIGNATURE_INVALID,
+                decision.denyMessage()
+            );
+            case PAYLOAD_TYPE_UNSUPPORTED -> recordDenied(
+                event,
+                envelope,
+                DiagnosticsAction.SECURITY_REFERRAL_PAYLOAD_TYPE_LOOKUP,
+                DiagnosticsReasonCode.PAYLOAD_TYPE_UNSUPPORTED,
+                decision.denyMessage()
+            );
+            default -> {
+            }
+        }
     }
 
     private boolean shouldRecordReferralDiagnostics(@Nonnull String payloadType) {
