@@ -2,13 +2,13 @@ package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonParser;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluation;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluator;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStatePayloadBuildResult;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStatePayloadBuilder;
-import io.github.hyjn.nexori.plugin.backend.payload.BackendMatchAdmissionStateResponsePayload;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateResponseDecision;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateResponsePolicy;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
@@ -55,6 +55,7 @@ public final class BackendMatchAdmissionStateReportingService {
     private HttpClient httpClient;
     private final AdmissionStateEvaluator admissionStateEvaluator = new AdmissionStateEvaluator();
     private final AdmissionStatePayloadBuilder admissionStatePayloadBuilder = new AdmissionStatePayloadBuilder();
+    private final AdmissionStateResponsePolicy admissionStateResponsePolicy = new AdmissionStateResponsePolicy();
     private final Gson gson = new GsonBuilder().create();
     private final Queue<AdmissionHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Map<String, MatchPublicationState> publicationStatesByMatchId = new LinkedHashMap<>();
@@ -369,55 +370,83 @@ public final class BackendMatchAdmissionStateReportingService {
             state.inFlightSnapshot = null;
 
             int statusCode = result.statusCode();
-            if (statusCode >= 200 && statusCode < 300) {
-                lastHealthStatus = "HEALTHY";
-                nextGlobalAttemptAtEpochMs = 0L;
-                String backendStatus = parseBackendStatus(result.body());
-                if (!isSemanticallyAcceptedBackendStatus(backendStatus)) {
-                    markDirtyFromSnapshot(state, result.snapshot(), nowEpochMs);
-                    state.scheduledFlushAtEpochMs = nowEpochMs;
-                    logEntry(
-                        "Admission state was not semantically acknowledged matchId=" + result.matchId()
-                            + " sequence=" + result.snapshot().payload().admissionStateSequence()
-                            + " status=" + backendStatus
-                    );
-                    continue;
-                }
-                ackConsumedAdmissionReservationIds(state, result.snapshot().consumedAdmissionReservationIdsIncluded());
-                if (result.snapshot().payload().admissionReportingClosed()) {
-                    rememberClosedMatch(result.matchId());
-                    publicationStatesByMatchId.remove(result.matchId());
-                } else if (state.dirty) {
-                    state.scheduledFlushAtEpochMs = nowEpochMs;
-                }
+            boolean snapshotClosed = result.snapshot().payload().admissionReportingClosed();
+            boolean retryable = statusCode == 408 || statusCode == 429 || statusCode >= 500 || statusCode == 0;
+            boolean reportableMatchStillExists = true;
+            if ((statusCode == 400 || statusCode == 422) && !snapshotClosed) {
+                reportableMatchStillExists = findReportableMatchContext(result.matchId()) != null;
+            } else if (retryable
+                && !state.dirty
+                && nowEpochMs > result.snapshot().payload().stateExpiresAtEpochMs()) {
+                reportableMatchStillExists = findReportableMatchContext(result.matchId()) != null;
+            }
+            AdmissionStateResponseDecision decision = admissionStateResponsePolicy.decide(
+                statusCode,
+                result.body(),
+                nowEpochMs,
+                AUTH_BACKOFF_MS,
+                config.matchStateRetryIntervalMs(),
+                snapshotClosed,
+                result.snapshot().payload().stateExpiresAtEpochMs(),
+                state.dirty,
+                reportableMatchStillExists
+            );
+            if (!decision.lastHealthStatus().isBlank()) {
+                lastHealthStatus = decision.lastHealthStatus();
+            }
+            if (decision.nextGlobalAttemptAtEpochMs() > 0L || decision.outcome() == AdmissionStateResponseDecision.Outcome.ACKNOWLEDGED
+                || decision.outcome() == AdmissionStateResponseDecision.Outcome.NOT_SEMANTICALLY_ACKNOWLEDGED) {
+                nextGlobalAttemptAtEpochMs = decision.nextGlobalAttemptAtEpochMs();
+            }
+            if (decision.shouldMarkDirtyFromSnapshot()) {
+                markDirtyFromSnapshot(state, result.snapshot(), nowEpochMs);
+            }
+            if (decision.shouldScheduleImmediateFlush()) {
+                state.scheduledFlushAtEpochMs = nowEpochMs;
+            }
+
+            if (decision.outcome() == AdmissionStateResponseDecision.Outcome.NOT_SEMANTICALLY_ACKNOWLEDGED) {
                 logEntry(
-                    "Admission state acknowledged matchId=" + result.matchId()
+                    "Admission state was not semantically acknowledged matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
-                        + " status=" + backendStatus
+                        + " status=" + decision.backendStatus()
                 );
                 continue;
             }
 
-            if (statusCode == 400 || statusCode == 422) {
+            if (decision.outcome() == AdmissionStateResponseDecision.Outcome.ACKNOWLEDGED) {
+                ackConsumedAdmissionReservationIds(state, result.snapshot().consumedAdmissionReservationIdsIncluded());
+                if (decision.shouldRememberClosedMatch()) {
+                    rememberClosedMatch(result.matchId());
+                }
+                if (decision.shouldRemovePublicationState()) {
+                    publicationStatesByMatchId.remove(result.matchId());
+                }
+                logEntry(
+                    "Admission state acknowledged matchId=" + result.matchId()
+                        + " sequence=" + result.snapshot().payload().admissionStateSequence()
+                        + " status=" + decision.backendStatus()
+                );
+                continue;
+            }
+
+            if (decision.outcome() == AdmissionStateResponseDecision.Outcome.PERMANENT_FAILURE) {
                 logEntry(
                     "Admission state permanent failure matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
                         + " statusCode=" + statusCode
                         + " error=" + result.errorClass()
                 );
-                if (result.snapshot().payload().admissionReportingClosed()) {
+                if (decision.shouldRememberClosedMatch()) {
                     rememberClosedMatch(result.matchId());
-                    publicationStatesByMatchId.remove(result.matchId());
-                } else if (findReportableMatchContext(result.matchId()) == null) {
+                }
+                if (decision.shouldRemovePublicationState()) {
                     publicationStatesByMatchId.remove(result.matchId());
                 }
                 continue;
             }
 
-            if (statusCode == 401 || statusCode == 403) {
-                lastHealthStatus = "AUTH_FAILED";
-                nextGlobalAttemptAtEpochMs = nowEpochMs + AUTH_BACKOFF_MS;
-                markDirtyFromSnapshot(state, result.snapshot(), nowEpochMs);
+            if (decision.outcome() == AdmissionStateResponseDecision.Outcome.AUTH_FAILURE) {
                 logEntry(
                     "Admission state auth failure matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
@@ -426,24 +455,19 @@ public final class BackendMatchAdmissionStateReportingService {
                 continue;
             }
 
-            boolean retryable = statusCode == 408 || statusCode == 429 || statusCode >= 500 || statusCode == 0;
-            if (!retryable) {
+            if (decision.outcome() == AdmissionStateResponseDecision.Outcome.UNEXPECTED_FAILURE) {
                 logEntry(
                     "Admission state unexpected failure matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
                         + " statusCode=" + statusCode
                         + " error=" + result.errorClass()
                 );
-                if (state.dirty) {
-                    state.scheduledFlushAtEpochMs = nowEpochMs;
-                }
                 continue;
             }
 
-            nextGlobalAttemptAtEpochMs = nowEpochMs + config.matchStateRetryIntervalMs();
-            if (state.dirty) {
+            if (decision.shouldClearPendingRetrySnapshot()) {
                 state.pendingRetrySnapshot = null;
-                state.retryNotBeforeEpochMs = nextGlobalAttemptAtEpochMs;
+                state.retryNotBeforeEpochMs = decision.retryNotBeforeEpochMs();
                 logEntry(
                     "Admission state dropped stale retry in favor of newer state matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
@@ -451,9 +475,9 @@ public final class BackendMatchAdmissionStateReportingService {
                 continue;
             }
 
-            if (nowEpochMs <= result.snapshot().payload().stateExpiresAtEpochMs()) {
+            if (decision.shouldStorePendingRetrySnapshot()) {
                 state.pendingRetrySnapshot = result.snapshot();
-                state.retryNotBeforeEpochMs = nextGlobalAttemptAtEpochMs;
+                state.retryNotBeforeEpochMs = decision.retryNotBeforeEpochMs();
                 logEntry(
                     "Admission state scheduled retry matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
@@ -464,9 +488,9 @@ public final class BackendMatchAdmissionStateReportingService {
                     "Admission state expired before retry matchId=" + result.matchId()
                         + " sequence=" + result.snapshot().payload().admissionStateSequence()
                 );
-                if (findReportableMatchContext(result.matchId()) != null) {
+                if (decision.shouldMarkMatchStartedDirty()) {
                     markDirty(state, CHANGE_REASON_MATCH_STARTED, nowEpochMs);
-                } else {
+                } else if (decision.shouldRemovePublicationState()) {
                     publicationStatesByMatchId.remove(result.matchId());
                 }
             }
@@ -619,33 +643,6 @@ public final class BackendMatchAdmissionStateReportingService {
     private void cleanupUnreportableState(@Nonnull String matchId, @Nonnull String message) {
         publicationStatesByMatchId.remove(matchId);
         logger.atWarning().log(message + " matchId=" + matchId);
-    }
-
-    @Nonnull
-    private String parseBackendStatus(@Nonnull String responseBody) {
-        if (responseBody.isBlank()) {
-            return "OK";
-        }
-        try {
-            BackendMatchAdmissionStateResponsePayload response = gson.fromJson(
-                JsonParser.parseString(responseBody),
-                BackendMatchAdmissionStateResponsePayload.class
-            );
-            if (response != null && response.status() != null && !response.status().isBlank()) {
-                return response.status().trim();
-            }
-        } catch (RuntimeException ignored) {
-        }
-        return "OK";
-    }
-
-    private boolean isSemanticallyAcceptedBackendStatus(@Nonnull String rawStatus) {
-        String status = normalizeOptional(rawStatus).toUpperCase();
-        return status.isBlank()
-            || "OK".equals(status)
-            || "ACCEPTED".equals(status)
-            || "DUPLICATE".equals(status)
-            || "DUPLICATE_ACCEPTED".equals(status);
     }
 
     @Nonnull
