@@ -17,6 +17,8 @@ import com.hypixel.hytale.protocol.HostAddress;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncApplyPlan;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncApplyPlanner;
 import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuildInput;
 import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuilder;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
@@ -55,6 +57,7 @@ public final class NetworkCatalogSyncService {
     private final SecureReferralService secureReferralService;
     private final ArenaService arenaService;
     private final QueueService queueService;
+    private final CatalogSyncApplyPlanner applyPlanner = new CatalogSyncApplyPlanner();
     private final CatalogSyncRequestBuilder requestBuilder = new CatalogSyncRequestBuilder();
     private final Map<String, PendingCatalogSyncRequest> pendingRequests = new ConcurrentHashMap<>();
     private final Map<UUID, PendingCatalogSyncReturn> pendingReturns = new ConcurrentHashMap<>();
@@ -261,8 +264,16 @@ public final class NetworkCatalogSyncService {
 
         CatalogEntitySyncResultPayload result;
         try {
-            validateRequestPayload(payload, sourceServerId);
-            result = applyRequestPayload(payload);
+            CatalogSyncApplyPlan plan = applyPlanner.plan(
+                payload,
+                sourceServerId,
+                localIdentity.serverId().toString(),
+                SCHEMA_VERSION
+            );
+            if (plan.action() == CatalogSyncApplyPlan.Action.REJECT) {
+                throw new IllegalArgumentException(plan.reason());
+            }
+            result = applyRequestPayload(payload, plan);
         } catch (IllegalArgumentException | IllegalStateException exception) {
             logger.atWarning().withCause(exception).log(
                 "Catalog sync request failed validation or apply. operationId="
@@ -341,75 +352,15 @@ public final class NetworkCatalogSyncService {
         ));
     }
 
-    private void validateRequestPayload(@Nonnull CatalogEntitySyncRequestPayload payload, @Nonnull String trustedSourceServerId) {
-        if (payload.schemaVersion() != SCHEMA_VERSION) {
-            throw new IllegalArgumentException("Unsupported catalog sync schemaVersion: " + payload.schemaVersion() + ".");
-        }
-        if (payload.operationId() == null || payload.operationId().isBlank()) {
-            throw new IllegalArgumentException("Catalog sync operationId cannot be blank.");
-        }
-        if (payload.sourceServerId() == null || payload.sourceServerId().isBlank()) {
-            throw new IllegalArgumentException("Catalog sync sourceServerId cannot be blank.");
-        }
-        if (!trustedSourceServerId.equals(payload.sourceServerId())) {
-            throw new IllegalArgumentException("Catalog sync sourceServerId does not match the trusted sender.");
-        }
-        if (payload.targetServerId() == null || payload.targetServerId().isBlank()) {
-            throw new IllegalArgumentException("Catalog sync targetServerId cannot be blank.");
-        }
-        if (!localIdentity.serverId().toString().equals(payload.targetServerId())) {
-            throw new IllegalArgumentException("Catalog sync targetServerId does not match this server.");
-        }
-        if (payload.entityType() == null) {
-            throw new IllegalArgumentException("Catalog sync entityType cannot be blank.");
-        }
-        if (payload.entityId() == null || payload.entityId().isBlank()) {
-            throw new IllegalArgumentException("Catalog sync entityId cannot be blank.");
-        }
-        if (payload.entityHash() == null || payload.entityHash().isBlank()) {
-            throw new IllegalArgumentException("Catalog sync entityHash cannot be blank.");
-        }
-        switch (payload.entityType()) {
-            case GAME -> {
-                if (payload.arena() == null) {
-                    throw new IllegalArgumentException("Catalog sync game payload cannot be blank.");
-                }
-                if (payload.queue() != null) {
-                    throw new IllegalArgumentException("Catalog sync game payload cannot include queue data.");
-                }
-                ArenaDefinition normalized = payload.arena().normalized();
-                if (!normalized.arenaId().equals(payload.entityId())) {
-                    throw new IllegalArgumentException("Catalog sync entityId does not match the game payload.");
-                }
-                String computedHash = requestBuilder.hashArena(normalized);
-                if (!computedHash.equals(payload.entityHash())) {
-                    throw new IllegalArgumentException("Catalog sync game hash validation failed.");
-                }
-            }
-            case QUEUE -> {
-                if (payload.queue() == null) {
-                    throw new IllegalArgumentException("Catalog sync queue payload cannot be blank.");
-                }
-                if (payload.arena() != null) {
-                    throw new IllegalArgumentException("Catalog sync queue payload cannot include game data.");
-                }
-                QueueDefinition normalized = payload.queue().normalized();
-                if (!normalized.queueId().equals(payload.entityId())) {
-                    throw new IllegalArgumentException("Catalog sync entityId does not match the queue payload.");
-                }
-                String computedHash = requestBuilder.hashQueue(normalized);
-                if (!computedHash.equals(payload.entityHash())) {
-                    throw new IllegalArgumentException("Catalog sync queue hash validation failed.");
-                }
-            }
-        }
-    }
-
     @Nonnull
-    private CatalogEntitySyncResultPayload applyRequestPayload(@Nonnull CatalogEntitySyncRequestPayload payload) {
-        return switch (payload.entityType()) {
-            case GAME -> applyArenaPayload(payload, payload.arena().normalized());
-            case QUEUE -> applyQueuePayload(payload, payload.queue().normalized());
+    private CatalogEntitySyncResultPayload applyRequestPayload(
+        @Nonnull CatalogEntitySyncRequestPayload payload,
+        @Nonnull CatalogSyncApplyPlan plan
+    ) {
+        return switch (plan.action()) {
+            case APPLY_GAME -> applyArenaPayload(payload, plan.arena());
+            case APPLY_QUEUE -> applyQueuePayload(payload, plan.queue());
+            case REJECT -> throw new IllegalArgumentException(plan.reason());
         };
     }
 
