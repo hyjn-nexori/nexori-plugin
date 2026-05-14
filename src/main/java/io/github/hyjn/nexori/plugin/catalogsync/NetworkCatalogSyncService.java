@@ -17,6 +17,8 @@ import com.hypixel.hytale.protocol.HostAddress;
 import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuildInput;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuilder;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
@@ -30,10 +32,7 @@ import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +55,7 @@ public final class NetworkCatalogSyncService {
     private final SecureReferralService secureReferralService;
     private final ArenaService arenaService;
     private final QueueService queueService;
+    private final CatalogSyncRequestBuilder requestBuilder = new CatalogSyncRequestBuilder();
     private final Map<String, PendingCatalogSyncRequest> pendingRequests = new ConcurrentHashMap<>();
     private final Map<UUID, PendingCatalogSyncReturn> pendingReturns = new ConcurrentHashMap<>();
     private final Map<UUID, String> pendingLocalFailureMessages = new ConcurrentHashMap<>();
@@ -183,22 +183,16 @@ public final class NetworkCatalogSyncService {
             .orElseThrow(() -> new IllegalStateException("The destination " + destination.connectionAddress() + " is not in the current Nexori trust bundle."));
 
         String operationId = UUID.randomUUID().toString();
-        String entityId = entityType == CatalogSyncEntityType.GAME ? arena.arenaId() : queue.queueId();
-        String entityHash = entityType == CatalogSyncEntityType.GAME
-            ? computeArenaHash(arena)
-            : computeQueueHash(queue);
-        CatalogEntitySyncRequestPayload payload = new CatalogEntitySyncRequestPayload(
+        CatalogEntitySyncRequestPayload payload = requestBuilder.build(new CatalogSyncRequestBuildInput(
             SCHEMA_VERSION,
             operationId,
             localIdentity.serverId().toString(),
             trustedMember.serverId(),
             entityType,
-            entityId,
-            entityHash,
             System.currentTimeMillis(),
             arena,
             queue
-        );
+        ));
 
         byte[] encoded = secureReferralService.createPayload(
             playerRef,
@@ -218,7 +212,7 @@ public final class NetworkCatalogSyncService {
             destination.connectionAddress(),
             trustedMember.serverId(),
             entityType,
-            entityId,
+            payload.entityId(),
             originWorldName,
             originTransform.clone(),
             System.currentTimeMillis() + REFERRAL_TTL.toMillis(),
@@ -231,7 +225,7 @@ public final class NetworkCatalogSyncService {
                 + " type="
                 + entityType.name()
                 + " entityId="
-                + entityId
+                + payload.entityId()
                 + " targetServerId="
                 + trustedMember.serverId()
                 + " targetConnectionAddress="
@@ -387,7 +381,7 @@ public final class NetworkCatalogSyncService {
                 if (!normalized.arenaId().equals(payload.entityId())) {
                     throw new IllegalArgumentException("Catalog sync entityId does not match the game payload.");
                 }
-                String computedHash = computeArenaHash(normalized);
+                String computedHash = requestBuilder.hashArena(normalized);
                 if (!computedHash.equals(payload.entityHash())) {
                     throw new IllegalArgumentException("Catalog sync game hash validation failed.");
                 }
@@ -403,7 +397,7 @@ public final class NetworkCatalogSyncService {
                 if (!normalized.queueId().equals(payload.entityId())) {
                     throw new IllegalArgumentException("Catalog sync entityId does not match the queue payload.");
                 }
-                String computedHash = computeQueueHash(normalized);
+                String computedHash = requestBuilder.hashQueue(normalized);
                 if (!computedHash.equals(payload.entityHash())) {
                     throw new IllegalArgumentException("Catalog sync queue hash validation failed.");
                 }
@@ -519,31 +513,6 @@ public final class NetworkCatalogSyncService {
             return "Synced " + payload.entityType().singularLabel() + " '" + payload.entityId() + "' to '" + targetServerId + "'.";
         }
         return "Failed to sync " + payload.entityType().singularLabel() + " '" + payload.entityId() + "' to '" + targetServerId + "': The remote apply failed.";
-    }
-
-    @Nonnull
-    private String computeArenaHash(@Nonnull ArenaDefinition arena) {
-        return sha256Hex(secureReferralService.gson().toJson(arena.normalized()));
-    }
-
-    @Nonnull
-    private String computeQueueHash(@Nonnull QueueDefinition queue) {
-        return sha256Hex(secureReferralService.gson().toJson(queue.normalized()));
-    }
-
-    @Nonnull
-    private static String sha256Hex(@Nonnull String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                hex.append(String.format("%02x", b));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable.", exception);
-        }
     }
 
     @Nonnull
