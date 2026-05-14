@@ -1,12 +1,11 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextBuildResult;
+import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextFactory;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -29,7 +28,6 @@ import java.util.UUID;
  */
 public final class QueueCoordinatorService {
 
-    private static final Gson GSON = new Gson();
     private static final int ADMISSION_POLICY_SCHEMA_VERSION = 1;
     private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;
     private static final long WORLD_TICK_ADVANCE_INTERVAL_MS = 1000L;
@@ -42,6 +40,7 @@ public final class QueueCoordinatorService {
     private final LocalConnectionAddressService localConnectionAddressService;
     private final SecureTravelService secureTravelService;
     private final HytaleLogger logger;
+    private final MinigameLaunchContextFactory launchContextFactory = new MinigameLaunchContextFactory();
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
     private long lastWorldTickAdvanceAtEpochMs;
@@ -1137,78 +1136,20 @@ public final class QueueCoordinatorService {
         @Nonnull List<BackendAssignmentPlayerTicket> assignmentPlayerTickets,
         @Nonnull String reportingServerId
     ) {
-        if (readyMembers.isEmpty()) {
-            throw new IllegalStateException("Cannot build a BACKFILL launch context for an empty assignment.");
-        }
-        String originLobbyId = normalizeSourceContextId(readyMembers.get(0).sourceLobbyId());
         String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
-        if (returnConnectionAddress.isBlank()) {
-            throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
-        }
-        String originReturnTargetId = defaultReturnTargetId(originLobbyId);
-        LinkedHashMap<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid = new LinkedHashMap<>();
-        for (QueueMemberState member : readyMembers) {
-            String memberSourceContextId = normalizeSourceContextId(member.sourceLobbyId());
-            playerReturnTargetsByUuid.put(
-                member.playerUuid(),
-                new ArenaPlayerReturnTarget(
-                    memberSourceContextId,
-                    returnConnectionAddress,
-                    defaultReturnTargetId(memberSourceContextId),
-                    queue.launchTravelProfileId()
-                ).normalized()
-            );
-        }
-        LinkedHashMap<UUID, BackendAssignmentPlayerTicket> assignmentTicketsByPlayerUuid = new LinkedHashMap<>();
-        for (BackendAssignmentPlayerTicket ticket : assignmentPlayerTickets) {
-            if (ticket != null && ticket.playerUuid() != null) {
-                assignmentTicketsByPlayerUuid.put(ticket.playerUuid(), ticket.normalized());
-            }
-        }
-
-        JsonObject root = new JsonObject();
-        root.addProperty("flowType", "minigame.launch");
-        root.addProperty("assignmentType", ASSIGNMENT_TYPE_BACKFILL);
-        root.addProperty("assignmentId", assignmentId);
-        root.addProperty("matchId", matchId);
-        if (externalMatchId != null && !externalMatchId.isBlank()) {
-            root.addProperty("externalMatchId", externalMatchId);
-        }
-        root.addProperty("queueId", queue.queueId());
-        root.addProperty("arenaId", arenaId);
-        if (reportingServerId != null && !reportingServerId.isBlank()) {
-            root.addProperty("reportingServerId", reportingServerId.trim());
-        }
-        root.addProperty("originLobbyId", originLobbyId);
-        root.addProperty("returnConnectionAddress", returnConnectionAddress);
-        root.addProperty("returnFallbackTargetId", originReturnTargetId);
-        root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
-
-        MatchSessionState matchSessionState = new MatchSessionState(
-            matchId,
-            queue.queueId(),
+        MinigameLaunchContextBuildResult result = launchContextFactory.buildBackfillLaunchContext(
+            queue,
             arenaId,
-            originLobbyId,
-            returnConnectionAddress,
-            originReturnTargetId,
-            queue.launchTravelProfileId(),
-            List.of(),
-            List.of(),
+            readyMembers,
             nowEpochMs,
-            nowEpochMs,
-            0L,
-            nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
-            ""
-        ).normalized();
-        return new PreparedLaunch(
+            assignmentId,
             matchId,
-            GSON.toJson(root),
-            matchSessionState,
-            Map.copyOf(playerReturnTargetsByUuid),
-            ASSIGNMENT_TYPE_BACKFILL,
-            Map.copyOf(assignmentTicketsByPlayerUuid),
-            reportingServerId == null ? "" : reportingServerId.trim()
+            externalMatchId,
+            toLaunchTickets(assignmentPlayerTickets),
+            reportingServerId,
+            returnConnectionAddress
         );
+        return toPreparedLaunch(result);
     }
 
     @Nonnull
@@ -1225,131 +1166,25 @@ public final class QueueCoordinatorService {
         @Nonnull List<BackendAssignmentPlayerTicket> assignmentPlayerTickets,
         @Nonnull String reportingServerId
     ) {
-        if (readyMembers.isEmpty()) {
-            throw new IllegalStateException("Cannot build a launch context for an empty ready batch.");
-        }
-        String originLobbyId = normalizeSourceContextId(readyMembers.get(0).sourceLobbyId());
         String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
-        if (returnConnectionAddress.isBlank()) {
-            throw new IllegalStateException("This server does not have a local connection address configured for minigame return.");
-        }
-        String originReturnTargetId = defaultReturnTargetId(originLobbyId);
-        String matchId = matchIdOverride != null && !matchIdOverride.isBlank()
-            ? NexoriMatchIds.normalizeBackendOwnedMatchId(matchIdOverride)
-            : NexoriMatchIds.normalizeGeneratedMatchId(UUID.randomUUID().toString().toLowerCase());
-        QueueBackfillMode backfillMode = queue.effectiveBackfillMode();
-        int admissionCapacity = Math.max(queue.maxPlayers(), 0);
-        int arenaCapacity = Math.max(arena.maxSupportedPlayers(), 0);
-        if (arenaCapacity > 0) {
-            admissionCapacity = Math.min(admissionCapacity, arenaCapacity);
-        }
-        List<UUID> expectedPlayerUuids;
-        if (expectedPlayerUuidsOverride != null && !expectedPlayerUuidsOverride.isEmpty()) {
-            expectedPlayerUuids = PlayerUuidLists.canonicalize(expectedPlayerUuidsOverride);
-        } else if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)) {
-            expectedPlayerUuids = List.of();
-        } else {
-            expectedPlayerUuids = PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList());
-        }
-        LinkedHashMap<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid = new LinkedHashMap<>();
-        LinkedHashMap<UUID, BackendAssignmentPlayerTicket> assignmentTicketsByPlayerUuid = new LinkedHashMap<>();
-        for (QueueMemberState member : readyMembers) {
-            String memberSourceContextId = normalizeSourceContextId(member.sourceLobbyId());
-            playerReturnTargetsByUuid.put(
-                member.playerUuid(),
-                new ArenaPlayerReturnTarget(
-                    memberSourceContextId,
-                    returnConnectionAddress,
-                    defaultReturnTargetId(memberSourceContextId),
-                    queue.launchTravelProfileId()
-                ).normalized()
-            );
-        }
-        if (assignmentPlayerTickets != null) {
-            for (BackendAssignmentPlayerTicket ticket : assignmentPlayerTickets) {
-                if (ticket != null && ticket.playerUuid() != null) {
-                    assignmentTicketsByPlayerUuid.put(ticket.playerUuid(), ticket.normalized());
-                }
-            }
-        }
-        JsonObject root = new JsonObject();
-        root.addProperty("flowType", "minigame.launch");
-        root.addProperty("assignmentType", assignmentType);
-        root.addProperty("matchId", matchId);
-        root.addProperty("queueId", queue.queueId());
-        root.addProperty("arenaId", arena.arenaId());
-        root.addProperty("originLobbyId", originLobbyId);
-        root.addProperty("returnConnectionAddress", returnConnectionAddress);
-        root.addProperty("returnFallbackTargetId", originReturnTargetId);
-        root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
-        root.addProperty("instanceTemplateId", arena.instanceTemplateId());
-        root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
-        root.addProperty("rulesEngineId", arena.rulesEngineId());
-        root.addProperty("expectedPlayerCount", expectedPlayerUuids.size());
-        root.addProperty("admissionPolicySchemaVersion", ADMISSION_POLICY_SCHEMA_VERSION);
-        root.addProperty(
-            "matchSource",
-            queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN
-                ? ArenaMatchSource.BACKEND_DRIVEN.id()
-                : ArenaMatchSource.LOCAL_FIFO.id()
-        );
-        root.addProperty("admissionCapacity", admissionCapacity);
-        root.addProperty("backfillEnabled", queue.backfillEnabled());
-        root.addProperty("backfillMode", backfillMode.id());
-        root.addProperty("backfillWindowSeconds", Math.max(queue.backfillWindowSeconds(), 0));
-        JsonArray expectedPlayerUuidsJson = new JsonArray();
-        for (UUID expectedPlayerUuid : expectedPlayerUuids) {
-            expectedPlayerUuidsJson.add(expectedPlayerUuid.toString());
-        }
-        root.add("expectedPlayerUuids", expectedPlayerUuidsJson);
-        root.addProperty("launchedAtEpochMs", nowEpochMs);
-        if (assignmentId != null && !assignmentId.isBlank()) {
-            root.addProperty("assignmentId", assignmentId);
-        }
-        if (externalMatchId != null && !externalMatchId.isBlank()) {
-            root.addProperty("externalMatchId", externalMatchId);
-        }
-        if (reportingServerId != null && !reportingServerId.isBlank()) {
-            root.addProperty("reportingServerId", reportingServerId);
-        }
-        if (arena.usesInstanceTemplate()) {
-            root.addProperty("serverEntryMode", "default_world_natural_spawn");
-        }
-        MatchSessionState matchSessionState = new MatchSessionState(
-            matchId,
-            queue.queueId(),
-            arena.arenaId(),
-            originLobbyId,
-            returnConnectionAddress,
-            originReturnTargetId,
-            queue.launchTravelProfileId(),
-            PlayerUuidLists.canonicalize(readyMembers.stream().map(QueueMemberState::playerUuid).toList()),
-            List.of(),
+        String generatedMatchId = UUID.randomUUID().toString().toLowerCase();
+        MinigameLaunchContextBuildResult result = launchContextFactory.buildInitialMatchLaunchContext(
+            queue,
+            arena,
+            readyMembers,
             nowEpochMs,
-            nowEpochMs,
-            0L,
-            nowEpochMs + MatchSessionService.PREPARED_SESSION_GRACE_MS,
-            ""
-        ).normalized();
-        return new PreparedLaunch(
-            matchId,
-            GSON.toJson(root),
-            matchSessionState,
-            Map.copyOf(playerReturnTargetsByUuid),
+            assignmentId,
             assignmentType,
-            Map.copyOf(assignmentTicketsByPlayerUuid),
-            reportingServerId == null ? "" : reportingServerId.trim()
+            matchIdOverride,
+            generatedMatchId,
+            externalMatchId,
+            expectedPlayerUuidsOverride,
+            toLaunchTickets(assignmentPlayerTickets),
+            reportingServerId,
+            returnConnectionAddress,
+            ADMISSION_POLICY_SCHEMA_VERSION
         );
-    }
-
-    @Nonnull
-    private static String normalizeSourceContextId(@Nonnull String rawSourceContextId) {
-        return SourceContextId.normalizeId(rawSourceContextId);
-    }
-
-    @Nonnull
-    private static String defaultReturnTargetId(@Nonnull String sourceContextId) {
-        return normalizeSourceContextId(sourceContextId) + ".natural_spawn";
+        return toPreparedLaunch(result);
     }
 
     @Nonnull
@@ -1359,36 +1194,18 @@ public final class QueueCoordinatorService {
         @Nonnull QueueMemberState member,
         @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
         @Nonnull String assignmentType,
-        @Nonnull Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        @Nonnull Map<UUID, MinigameLaunchContextFactory.AssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
         @Nonnull String reportingServerId
     ) {
-        JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
-        if (root == null) {
-            root = new JsonObject();
-        }
-        root.addProperty("launchIndex", Math.max(launchIndex, 0));
-        root.addProperty("assignmentType", assignmentType);
-        ArenaPlayerReturnTarget returnTarget = playerReturnTargetsByUuid.get(member.playerUuid());
-        if (returnTarget == null) {
-            throw new IllegalStateException("Missing per-player return target for launched player " + member.playerUuid() + ".");
-        }
-        root.addProperty("originLobbyId", returnTarget.originLobbyId());
-        root.addProperty("returnConnectionAddress", returnTarget.returnConnectionAddress());
-        root.addProperty("returnFallbackTargetId", returnTarget.returnFallbackTargetId());
-        root.addProperty("launchTravelProfileId", returnTarget.launchTravelProfileId());
-        if (ASSIGNMENT_TYPE_BACKFILL.equals(assignmentType)) {
-            BackendAssignmentPlayerTicket ticket = assignmentPlayerTicketsByUuid.get(member.playerUuid());
-            if (ticket == null) {
-                throw new IllegalStateException("Missing backfill ticket for launched player " + member.playerUuid() + ".");
-            }
-            root.addProperty("playerUuid", member.playerUuid().toString());
-            root.addProperty("admissionReservationId", ticket.admissionReservationId());
-            root.addProperty("admissionExpiresAtEpochMs", ticket.admissionExpiresAtEpochMs());
-            if (!reportingServerId.isBlank()) {
-                root.addProperty("reportingServerId", reportingServerId);
-            }
-        }
-        return GSON.toJson(root);
+        return launchContextFactory.contextJsonWithLaunchIndex(
+            baseContextJson,
+            launchIndex,
+            member,
+            playerReturnTargetsByUuid,
+            assignmentType,
+            assignmentPlayerTicketsByUuid,
+            reportingServerId
+        );
     }
 
     @Nonnull
@@ -1396,33 +1213,47 @@ public final class QueueCoordinatorService {
         @Nonnull String baseContextJson,
         @Nonnull QueueMemberState member,
         @Nonnull Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
-        @Nonnull Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        @Nonnull Map<UUID, MinigameLaunchContextFactory.AssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
         @Nonnull String reportingServerId
     ) {
-        JsonObject root = GSON.fromJson(baseContextJson, JsonObject.class);
-        if (root == null) {
-            root = new JsonObject();
+        return launchContextFactory.backfillContextJsonForPlayer(
+            baseContextJson,
+            member,
+            playerReturnTargetsByUuid,
+            assignmentPlayerTicketsByUuid,
+            reportingServerId
+        );
+    }
+
+    @Nonnull
+    private static List<MinigameLaunchContextFactory.AssignmentPlayerTicket> toLaunchTickets(List<BackendAssignmentPlayerTicket> tickets) {
+        if (tickets == null || tickets.isEmpty()) {
+            return List.of();
         }
-        root.addProperty("assignmentType", ASSIGNMENT_TYPE_BACKFILL);
-        ArenaPlayerReturnTarget returnTarget = playerReturnTargetsByUuid.get(member.playerUuid());
-        if (returnTarget == null) {
-            throw new IllegalStateException("Missing per-player return target for launched player " + member.playerUuid() + ".");
+        List<MinigameLaunchContextFactory.AssignmentPlayerTicket> converted = new ArrayList<>();
+        for (BackendAssignmentPlayerTicket ticket : tickets) {
+            if (ticket != null) {
+                converted.add(new MinigameLaunchContextFactory.AssignmentPlayerTicket(
+                    ticket.playerUuid(),
+                    ticket.admissionReservationId(),
+                    ticket.admissionExpiresAtEpochMs()
+                ));
+            }
         }
-        BackendAssignmentPlayerTicket ticket = assignmentPlayerTicketsByUuid.get(member.playerUuid());
-        if (ticket == null) {
-            throw new IllegalStateException("Missing backfill ticket for launched player " + member.playerUuid() + ".");
-        }
-        root.addProperty("originLobbyId", returnTarget.originLobbyId());
-        root.addProperty("returnConnectionAddress", returnTarget.returnConnectionAddress());
-        root.addProperty("returnFallbackTargetId", returnTarget.returnFallbackTargetId());
-        root.addProperty("launchTravelProfileId", returnTarget.launchTravelProfileId());
-        root.addProperty("playerUuid", member.playerUuid().toString());
-        root.addProperty("admissionReservationId", ticket.admissionReservationId());
-        root.addProperty("admissionExpiresAtEpochMs", ticket.admissionExpiresAtEpochMs());
-        if (!reportingServerId.isBlank()) {
-            root.addProperty("reportingServerId", reportingServerId);
-        }
-        return GSON.toJson(root);
+        return List.copyOf(converted);
+    }
+
+    @Nonnull
+    private static PreparedLaunch toPreparedLaunch(@Nonnull MinigameLaunchContextBuildResult result) {
+        return new PreparedLaunch(
+            result.matchId(),
+            result.contextJson(),
+            result.matchSessionState(),
+            result.playerReturnTargetsByUuid(),
+            result.assignmentType(),
+            result.assignmentPlayerTicketsByUuid(),
+            result.reportingServerId()
+        );
     }
 
     @Nonnull
@@ -1558,7 +1389,7 @@ public final class QueueCoordinatorService {
         MatchSessionState matchSessionState,
         Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
         String assignmentType,
-        Map<UUID, BackendAssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
+        Map<UUID, MinigameLaunchContextFactory.AssignmentPlayerTicket> assignmentPlayerTicketsByUuid,
         String reportingServerId
     ) {
     }
