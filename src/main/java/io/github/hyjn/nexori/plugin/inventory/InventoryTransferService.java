@@ -20,6 +20,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryStartPlan;
@@ -58,6 +60,7 @@ public final class InventoryTransferService {
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
+    private final InventoryReceiptQueryPlanner receiptQueryPlanner = new InventoryReceiptQueryPlanner();
     private final InventoryRecoveryFinalizePlanner recoveryFinalizePlanner = new InventoryRecoveryFinalizePlanner();
     private final InventoryRecoveryStartPlanner recoveryStartPlanner = new InventoryRecoveryStartPlanner();
     private final InventoryStateAnalyzer inventoryStateAnalyzer = new InventoryStateAnalyzer();
@@ -589,26 +592,27 @@ public final class InventoryTransferService {
             return;
         }
 
-        InventoryTransferQueryResult result = receiptStore.find(payload.transferId()).isPresent()
-            ? InventoryTransferQueryResult.APPLIED
-            : InventoryTransferQueryResult.NOT_FOUND;
+        InventoryReceiptQueryPlan plan = receiptQueryPlanner.plan(
+            payload,
+            receiptStore.find(payload.transferId()).orElse(null)
+        );
 
         try {
             byte[] replyPayload = secureReferralService.createPayload(
                 event.getUuid(),
                 event.getUsername(),
                 REPLY_PAYLOAD_TYPE,
-                new InventoryTransferReceiptReplyPayload(payload.transferId(), result.name()),
+                plan.replyPayload(),
                 Duration.ofSeconds(30)
             );
             event.referToServer(referralSource.host, referralSource.port, replyPayload);
-            logger.atInfo().log("Answered Nexori inventory transfer query " + payload.transferId() + " with " + result + ".");
+            logger.atInfo().log("Answered Nexori inventory transfer query " + payload.transferId() + " with " + plan.result() + ".");
             diagnosticsService.record(
                 DiagnosticsCategory.RECOVERY,
                 DiagnosticsAction.RECOVERY_QUERY_ANSWER,
                 DiagnosticsOutcome.SUCCEEDED,
                 DiagnosticsReasonClass.NORMAL,
-                result == InventoryTransferQueryResult.APPLIED
+                plan.result() == InventoryTransferQueryResult.APPLIED
                     ? DiagnosticsReasonCode.RECOVERY_QUERY_ANSWERED_APPLIED
                     : DiagnosticsReasonCode.RECOVERY_QUERY_ANSWERED_NOT_FOUND,
                 "Answered a Nexori inventory transfer recovery query.",
