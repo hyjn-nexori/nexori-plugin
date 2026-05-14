@@ -6,13 +6,14 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.hypixel.hytale.logger.HytaleLogger;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluation;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluator;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendMatchAdmissionStatePayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendMatchAdmissionStateResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
-import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 
 import javax.annotation.Nonnull;
 import java.net.URI;
@@ -47,20 +48,15 @@ public final class BackendMatchAdmissionStateReportingService {
     private static final String CHANGE_REASON_MATCH_CREATED = "MATCH_CREATED";
     private static final String CHANGE_REASON_PLAYER_ARRIVED = "PLAYER_ARRIVED";
     private static final String CHANGE_REASON_PLACEMENT_COMPLETED = "PLACEMENT_COMPLETED";
-    private static final String CHANGE_REASON_MATCH_STARTED = "MATCH_STARTED";
-    private static final String CHANGE_REASON_ADMISSION_WINDOW_EXPIRED = "ADMISSION_WINDOW_EXPIRED";
     private static final String CHANGE_REASON_ADMISSION_CLOSED = "ADMISSION_CLOSED";
-    private static final String CLOSE_REASON_WINDOW_EXPIRED = "BACKFILL_WINDOW_EXPIRED";
-    private static final String CLOSE_REASON_NO_LONGER_ACCEPTING = "MATCH_NO_LONGER_ACCEPTING_PLAYERS";
-    private static final String CLOSE_REASON_NOT_REPORTABLE = "MATCH_NOT_REPORTABLE";
-    private static final String STATUS_PLACEMENT = "PLACEMENT";
-    private static final String STATUS_ACTIVE = "ACTIVE";
+    private static final String CHANGE_REASON_MATCH_STARTED = AdmissionStateEvaluator.CHANGE_REASON_MATCH_STARTED;
 
     private final HytaleLogger logger;
     private BackendMatchmakingConfig config;
     private final ServerIdentity localIdentity;
     private final ArenaMatchService arenaMatchService;
     private HttpClient httpClient;
+    private final AdmissionStateEvaluator admissionStateEvaluator = new AdmissionStateEvaluator();
     private final Gson gson = new GsonBuilder().create();
     private final Queue<AdmissionHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Map<String, MatchPublicationState> publicationStatesByMatchId = new LinkedHashMap<>();
@@ -271,7 +267,7 @@ public final class BackendMatchAdmissionStateReportingService {
                 }
                 continue;
             }
-            AdmissionSnapshotView view = evaluateAdmissionState(context, nowEpochMs, state);
+            AdmissionStateEvaluation view = evaluateAdmissionState(context, nowEpochMs, state);
             if (view.admissionReportingClosed()) {
                 String closeReason = normalizeOptional(view.primaryChangeReason());
                 if (closeReason.isBlank()) {
@@ -294,7 +290,7 @@ public final class BackendMatchAdmissionStateReportingService {
                 toRemove.add(entry.getKey());
                 continue;
             }
-            AdmissionSnapshotView view = evaluateAdmissionState(context, nowEpochMs, state);
+            AdmissionStateEvaluation view = evaluateAdmissionState(context, nowEpochMs, state);
             if (view.admissionReportingClosed() && closedAdmissionReportingMatchIds.contains(entry.getKey())) {
                 toRemove.add(entry.getKey());
             }
@@ -541,7 +537,7 @@ public final class BackendMatchAdmissionStateReportingService {
             return null;
         }
 
-        AdmissionSnapshotView view = evaluateAdmissionState(context, nowEpochMs, state);
+        AdmissionStateEvaluation view = evaluateAdmissionState(context, nowEpochMs, state);
         long sequence = ++state.lastAllocatedSequence;
         long sentAtEpochMs = nowEpochMs;
         long expiresAtEpochMs = nowEpochMs + config.matchStateStaleAfterMs();
@@ -623,127 +619,32 @@ public final class BackendMatchAdmissionStateReportingService {
         return new BuiltAdmissionSnapshot(payload, gson.toJson(payload), List.copyOf(consumedAdmissionReservationIdsIncluded));
     }
 
-    private AdmissionSnapshotView evaluateAdmissionState(
+    private AdmissionStateEvaluation evaluateAdmissionState(
         @Nonnull ReportableMatchContext context,
         long nowEpochMs,
         @Nonnull MatchPublicationState state
     ) {
         ArenaActiveMatch match = context.match();
-        int admissionCapacity = Math.max(match.admissionCapacity(), 0);
-        int initialRosterSize = Math.max(match.expectedPlayerCount(), match.expectedPlayerUuids().size());
-        int arrivedInitialPlayerCount = countArrivedInitialPlayers(match);
-        int admittedSlotCount = Math.min(admissionCapacity, initialRosterSize + Math.max(match.consumedBackfillAdmissionCount(), 0));
-        int unfilledInitialRosterCount = Math.max(0, initialRosterSize - arrivedInitialPlayerCount);
-        if (initialRosterSize > admissionCapacity) {
-            logger.atWarning().log(
-                "Backend-driven match " + match.matchId()
-                    + " reserved initial roster size "
-                    + initialRosterSize
-                    + " above admission capacity "
-                    + admissionCapacity
-                    + "; clamping admitted slots."
-            );
-        }
         boolean placementComplete = arenaMatchService.findMatchPlacementState(match.matchId())
             .map(ArenaMatchService.MatchPlacementState::placementComplete)
             .orElse(match.placementCompletedAtEpochMs() > 0L);
-        String lifecycleStatus = lifecycleStatus(match, placementComplete);
-        QueueBackfillMode mode = match.effectiveBackfillMode();
-        long admissionOpenUntilEpochMs = 0L;
-        boolean admissionOpen = false;
-        boolean admissionReportingClosed = false;
-        String closeReason = "";
-        int availableAdmissionSlots = 0;
-
-        if (match.explicitAdmissionClosed()) {
-            return new AdmissionSnapshotView(
-                lifecycleStatus,
-                false,
-                0L,
-                admissionCapacity,
-                admittedSlotCount,
-                0,
-                initialRosterSize,
-                arrivedInitialPlayerCount,
-                unfilledInitialRosterCount,
-                true,
-                normalizeOptional(match.explicitAdmissionCloseReason()),
-                normalizeOptional(match.explicitAdmissionCloseReason())
+        AdmissionStateEvaluation evaluation = admissionStateEvaluator.evaluate(
+            match,
+            placementComplete,
+            nowEpochMs,
+            state.primaryChangeReason
+        );
+        if (evaluation.initialRosterExceedsAdmissionCapacity()) {
+            logger.atWarning().log(
+                "Backend-driven match " + match.matchId()
+                    + " reserved initial roster size "
+                    + evaluation.initialRosterSize()
+                    + " above admission capacity "
+                    + evaluation.admissionCapacity()
+                    + "; clamping admitted slots."
             );
         }
-
-        switch (mode) {
-            case NONE -> {
-                availableAdmissionSlots = 0;
-                if (STATUS_ACTIVE.equals(lifecycleStatus)) {
-                    admissionReportingClosed = true;
-                    closeReason = CLOSE_REASON_NO_LONGER_ACCEPTING;
-                }
-            }
-            case PLACEMENT_ONLY -> {
-                admissionOpen = !placementComplete;
-                availableAdmissionSlots = admissionOpen ? Math.max(0, admissionCapacity - admittedSlotCount) : 0;
-                if (placementComplete) {
-                    admissionReportingClosed = true;
-                    closeReason = CLOSE_REASON_NO_LONGER_ACCEPTING;
-                }
-            }
-            case ACTIVE_WINDOW -> {
-                if (STATUS_PLACEMENT.equals(lifecycleStatus)) {
-                    admissionOpen = true;
-                    admissionOpenUntilEpochMs = 0L;
-                    availableAdmissionSlots = Math.max(0, admissionCapacity - admittedSlotCount);
-                } else {
-                    long startedAtEpochMs = match.matchStartedAtEpochMs();
-                    admissionOpenUntilEpochMs = startedAtEpochMs > 0L
-                        ? startedAtEpochMs + Math.max(match.backfillWindowSeconds(), 0) * 1000L
-                        : 0L;
-                    admissionOpen = admissionOpenUntilEpochMs > 0L && nowEpochMs <= admissionOpenUntilEpochMs;
-                    availableAdmissionSlots = admissionOpen ? Math.max(0, admissionCapacity - admittedSlotCount) : 0;
-                    if (!admissionOpen && admissionOpenUntilEpochMs > 0L) {
-                        admissionReportingClosed = true;
-                        closeReason = CLOSE_REASON_WINDOW_EXPIRED;
-                    } else if (admissionOpen && availableAdmissionSlots == 0) {
-                        admissionOpen = false;
-                        admissionReportingClosed = true;
-                        closeReason = CLOSE_REASON_NO_LONGER_ACCEPTING;
-                        availableAdmissionSlots = 0;
-                    }
-                }
-            }
-        }
-
-        if (admissionReportingClosed && closeReason.isBlank()) {
-            closeReason = CLOSE_REASON_NOT_REPORTABLE;
-        }
-
-        String primaryReason = normalizeOptional(state.primaryChangeReason);
-        if (admissionReportingClosed) {
-            if (CLOSE_REASON_WINDOW_EXPIRED.equals(closeReason)) {
-                primaryReason = CHANGE_REASON_ADMISSION_WINDOW_EXPIRED;
-            } else {
-                primaryReason = CHANGE_REASON_ADMISSION_CLOSED;
-            }
-        }
-
-        return new AdmissionSnapshotView(
-            lifecycleStatus,
-            admissionOpen,
-            admissionOpenUntilEpochMs,
-            admissionCapacity,
-            admittedSlotCount,
-            availableAdmissionSlots,
-            initialRosterSize,
-            arrivedInitialPlayerCount,
-            unfilledInitialRosterCount,
-            admissionReportingClosed,
-            closeReason,
-            primaryReason
-        );
-    }
-
-    private String lifecycleStatus(@Nonnull ArenaActiveMatch match, boolean placementComplete) {
-        return placementComplete ? STATUS_ACTIVE : STATUS_PLACEMENT;
+        return evaluation;
     }
 
     private ReportableMatchContext findReportableMatchContext(@Nonnull String matchId) {
@@ -778,20 +679,6 @@ public final class BackendMatchAdmissionStateReportingService {
             return false;
         }
         return true;
-    }
-
-    private static int countArrivedInitialPlayers(@Nonnull ArenaActiveMatch match) {
-        if (match.expectedPlayerUuids().isEmpty()) {
-            return 0;
-        }
-        LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
-        int arrivedInitialPlayers = 0;
-        for (UUID playerUuid : match.arrivedPlayerUuids()) {
-            if (expected.contains(playerUuid)) {
-                arrivedInitialPlayers++;
-            }
-        }
-        return arrivedInitialPlayers;
     }
 
     private void cleanupUnreportableState(@Nonnull String matchId, @Nonnull String message) {
@@ -963,22 +850,6 @@ public final class BackendMatchAdmissionStateReportingService {
         BackendMatchAdmissionStatePayload payload,
         String body,
         List<String> consumedAdmissionReservationIdsIncluded
-    ) {
-    }
-
-    private record AdmissionSnapshotView(
-        String matchLifecycleStatus,
-        boolean admissionOpen,
-        long admissionOpenUntilEpochMs,
-        int admissionCapacity,
-        int admittedSlotCount,
-        int availableAdmissionSlots,
-        int initialRosterSize,
-        int arrivedInitialPlayerCount,
-        int unfilledInitialRosterCount,
-        boolean admissionReportingClosed,
-        String admissionReportingCloseReason,
-        String primaryChangeReason
     ) {
     }
 
