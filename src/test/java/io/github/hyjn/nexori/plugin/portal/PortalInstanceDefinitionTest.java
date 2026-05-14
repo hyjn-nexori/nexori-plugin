@@ -1,6 +1,6 @@
 package io.github.hyjn.nexori.plugin.portal;
 
-import com.hypixel.hytale.math.vector.Vector3i;
+import io.github.hyjn.nexori.plugin.portal.logic.PortalAutoTargetPlanner;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,16 +41,14 @@ final class PortalInstanceDefinitionTest {
 
     @Test
     void buildAutoDestinationTargetIdFormat() {
-        Vector3i position = new Vector3i(10, 64, -5);
-        String id = PortalInstanceService.buildAutoDestinationTargetId("overworld", position);
+        String id = PortalAutoTargetPlanner.buildAutoDestinationTargetId("overworld", 10, 64, -5);
 
         assertEquals("overworld.portal.10_64_-5", id);
     }
 
     @Test
     void buildAutoDestinationTargetIdLowercasesWorldName() {
-        Vector3i position = new Vector3i(0, 0, 0);
-        String id = PortalInstanceService.buildAutoDestinationTargetId("OverWorld", position);
+        String id = PortalAutoTargetPlanner.buildAutoDestinationTargetId("OverWorld", 0, 0, 0);
 
         assertTrue(id.startsWith("overworld."), "Should start with lowercased world name: " + id);
     }

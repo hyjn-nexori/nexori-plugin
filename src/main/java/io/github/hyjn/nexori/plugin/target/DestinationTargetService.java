@@ -6,6 +6,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.target.logic.DestinationTargetResolutionPlanner;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -17,6 +18,8 @@ import java.util.Map;
 import java.util.Optional;
 
 public final class DestinationTargetService {
+
+    private static final DestinationTargetResolutionPlanner RESOLUTION_PLANNER = new DestinationTargetResolutionPlanner();
 
     private final DestinationTargetStore store;
     private final DiagnosticsService diagnosticsService;
@@ -122,17 +125,7 @@ public final class DestinationTargetService {
         if (definition.isEmpty()) {
             return Optional.empty();
         }
-
-        String effectiveArrivalPointId = rawArrivalPointId == null ? "" : rawArrivalPointId.trim();
-        if (effectiveArrivalPointId.isBlank()) {
-            effectiveArrivalPointId = definition.get().arrivalPointId();
-        }
-
-        return Optional.of(new ResolvedDestinationTarget(
-            definition.get(),
-            definition.get().worldName(),
-            effectiveArrivalPointId
-        ));
+        return Optional.of(RESOLUTION_PLANNER.plan(definition.get(), rawArrivalPointId));
     }
 
     private void persist() throws IOException {

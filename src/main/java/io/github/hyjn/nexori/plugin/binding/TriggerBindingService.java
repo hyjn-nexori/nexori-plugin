@@ -5,9 +5,9 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
+import io.github.hyjn.nexori.plugin.binding.logic.TriggerBindingSelectionPolicy;
+import io.github.hyjn.nexori.plugin.binding.logic.TriggerBindingValidationPolicy;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
-import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
-import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -15,7 +15,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -57,12 +56,7 @@ public final class TriggerBindingService {
 
     @Nonnull
     public synchronized List<TriggerBindingDefinition> listPortalCollisionBindings(@Nonnull String portalId) {
-        String normalizedSourceId = portalId.trim().toLowerCase(Locale.ROOT);
-        return bindingsById.values().stream()
-            .filter(binding -> binding.triggerKind() == TriggerBindingKind.PORTAL_COLLISION_ENTER)
-            .filter(binding -> binding.sourceId().equals(normalizedSourceId))
-            .sorted(Comparator.comparingInt(binding -> actionPriority(binding.action())))
-            .toList();
+        return TriggerBindingSelectionPolicy.listPortalCollisionBindings(bindingsById.values(), portalId);
     }
 
     @Nonnull
@@ -214,49 +208,7 @@ public final class TriggerBindingService {
 
     @Nonnull
     private TriggerBindingDefinition normalizeAndValidate(@Nonnull TriggerBindingDefinition definition) {
-        TriggerBindingDefinition normalized = definition.normalized();
-        if (normalized.action() == TriggerBindingAction.JOIN_QUEUE || normalized.action() == TriggerBindingAction.LEAVE_QUEUE) {
-            if (normalized.action() == TriggerBindingAction.JOIN_QUEUE && normalized.queueId().isBlank()) {
-                throw new IllegalArgumentException("Join-queue trigger bindings require a queue id.");
-            }
-            return normalized;
-        }
-
-        if (normalized.action() == TriggerBindingAction.LOCAL_TARGET) {
-            if (normalized.destinationTargetId().isBlank()) {
-                throw new IllegalArgumentException("Local target trigger bindings require a destination target id.");
-            }
-            return new TriggerBindingDefinition(
-                normalized.id(),
-                normalized.triggerKind(),
-                normalized.sourceId(),
-                TriggerBindingAction.LOCAL_TARGET,
-                "",
-                "",
-                normalized.destinationTargetId(),
-                "",
-                "{}",
-                normalized.enabled()
-            );
-        }
-
-        ConfiguredPeer destination = ConfiguredPeer.parse(normalized.destinationConnectionAddress());
-        if (normalized.destinationTargetId().isBlank()) {
-            throw new IllegalArgumentException("Travel trigger bindings require a destination target id.");
-        }
-        TravelProfileType profile = TravelProfileType.parse(normalized.travelProfileId());
-        return new TriggerBindingDefinition(
-            normalized.id(),
-            normalized.triggerKind(),
-            normalized.sourceId(),
-            TriggerBindingAction.TRAVEL,
-            "",
-            destination.connectionAddress(),
-            normalized.destinationTargetId(),
-            profile.id(),
-            normalized.contextJson(),
-            normalized.enabled()
-        );
+        return TriggerBindingValidationPolicy.normalizeAndValidate(definition);
     }
 
     private void upsertBinding(@Nonnull TriggerBindingDefinition binding) {
@@ -269,7 +221,7 @@ public final class TriggerBindingService {
                 bindingsById.remove(existing.id());
                 continue;
             }
-            if (isQueueAction(existing.action()) && isQueueAction(binding.action())) {
+            if (TriggerBindingSelectionPolicy.isQueueAction(existing.action()) && TriggerBindingSelectionPolicy.isQueueAction(binding.action())) {
                 bindingsById.remove(existing.id());
                 continue;
             }
@@ -280,19 +232,6 @@ public final class TriggerBindingService {
             }
         }
         bindingsById.put(binding.id(), binding);
-    }
-
-    private static int actionPriority(@Nonnull TriggerBindingAction action) {
-        return switch (action) {
-            case JOIN_QUEUE -> 0;
-            case LEAVE_QUEUE -> 1;
-            case LOCAL_TARGET -> 2;
-            case TRAVEL -> 3;
-        };
-    }
-
-    private static boolean isQueueAction(@Nonnull TriggerBindingAction action) {
-        return action == TriggerBindingAction.JOIN_QUEUE || action == TriggerBindingAction.LEAVE_QUEUE;
     }
 
     private void persist() throws IOException {

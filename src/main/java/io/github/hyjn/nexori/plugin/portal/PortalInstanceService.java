@@ -1,7 +1,5 @@
 package io.github.hyjn.nexori.plugin.portal;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.math.vector.Vector3i;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
@@ -14,6 +12,8 @@ import io.github.hyjn.nexori.plugin.binding.TriggerBindingService;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetDefinition;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
+import io.github.hyjn.nexori.plugin.portal.logic.PortalAutoTargetPlanner;
+import io.github.hyjn.nexori.plugin.portal.logic.PortalLocationMatcher;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -29,8 +29,6 @@ import java.util.UUID;
  * Persists placed Nexori portals and keeps their auto-generated destination targets in sync.
  */
 public final class PortalInstanceService {
-
-    private static final Gson GSON = new Gson();
 
     private final PortalInstanceStore store;
     private final DestinationTargetService destinationTargetService;
@@ -113,30 +111,9 @@ public final class PortalInstanceService {
         int horizontalRadius,
         int verticalRadius
     ) {
-        String normalizedWorldName = worldName.trim().toLowerCase();
-        PortalInstanceDefinition bestMatch = null;
-        int bestDistance = Integer.MAX_VALUE;
-
-        for (PortalInstanceDefinition portal : portalsById.values()) {
-            if (!portal.worldName().equals(normalizedWorldName)) {
-                continue;
-            }
-
-            int dx = Math.abs(portal.blockX() - blockPosition.getX());
-            int dy = Math.abs(portal.blockY() - blockPosition.getY());
-            int dz = Math.abs(portal.blockZ() - blockPosition.getZ());
-            if (dx > horizontalRadius || dy > verticalRadius || dz > horizontalRadius) {
-                continue;
-            }
-
-            int distance = dx + dy + dz;
-            if (bestMatch == null || distance < bestDistance) {
-                bestMatch = portal;
-                bestDistance = distance;
-            }
-        }
-
-        return Optional.ofNullable(bestMatch);
+        return PortalLocationMatcher.findNearest(portalsById.values(), worldName,
+            blockPosition.getX(), blockPosition.getY(), blockPosition.getZ(),
+            horizontalRadius, verticalRadius);
     }
 
     /**
@@ -150,7 +127,8 @@ public final class PortalInstanceService {
     ) throws IOException {
         long now = System.currentTimeMillis();
         String normalizedWorldName = worldName.trim().toLowerCase();
-        String autoTargetId = buildAutoDestinationTargetId(normalizedWorldName, blockPosition);
+        String autoTargetId = PortalAutoTargetPlanner.buildAutoDestinationTargetId(
+            normalizedWorldName, blockPosition.getX(), blockPosition.getY(), blockPosition.getZ());
         DestinationTargetDefinition autoTarget = new DestinationTargetDefinition(
             autoTargetId,
             "Portal Arrival (" + normalizedWorldName + ")",
@@ -158,7 +136,9 @@ public final class PortalInstanceService {
             normalizedWorldName,
             "portal_entry",
             "",
-            buildPortalTargetMetadataJson(blockPosition, arrivalRotation)
+            PortalAutoTargetPlanner.buildPortalTargetMetadataJson(
+                blockPosition.getX(), blockPosition.getY(), blockPosition.getZ(),
+                arrivalRotation.x, arrivalRotation.y, arrivalRotation.z)
         );
         destinationTargetService.upsert(autoTarget);
 
@@ -322,26 +302,4 @@ public final class PortalInstanceService {
         );
     }
 
-    @Nonnull
-    public static String buildAutoDestinationTargetId(@Nonnull String worldName, @Nonnull Vector3i blockPosition) {
-        return (worldName + ".portal." + blockPosition.getX() + "_" + blockPosition.getY() + "_" + blockPosition.getZ())
-            .toLowerCase();
-    }
-
-    @Nonnull
-    private static String buildPortalTargetMetadataJson(@Nonnull Vector3i blockPosition, @Nonnull Vector3f rotation) {
-        JsonObject root = new JsonObject();
-        JsonObject position = new JsonObject();
-        position.addProperty("x", blockPosition.getX() + 0.5);
-        position.addProperty("y", blockPosition.getY() + 1.0);
-        position.addProperty("z", blockPosition.getZ() + 0.5);
-        root.add("position", position);
-
-        JsonObject rotationObject = new JsonObject();
-        rotationObject.addProperty("pitch", rotation.x);
-        rotationObject.addProperty("yaw", rotation.y);
-        rotationObject.addProperty("roll", rotation.z);
-        root.add("rotation", rotationObject);
-        return GSON.toJson(root);
-    }
 }
