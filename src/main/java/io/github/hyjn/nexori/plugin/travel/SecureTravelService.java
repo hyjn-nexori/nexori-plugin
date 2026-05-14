@@ -47,6 +47,8 @@ import io.github.hyjn.nexori.plugin.travel.logic.TravelContextData;
 import io.github.hyjn.nexori.plugin.travel.logic.TravelContextParser;
 import io.github.hyjn.nexori.plugin.travel.logic.SecureTravelDispatchPlan;
 import io.github.hyjn.nexori.plugin.travel.logic.SecureTravelDispatchPlanner;
+import io.github.hyjn.nexori.plugin.travel.logic.TravelArrivalPlan;
+import io.github.hyjn.nexori.plugin.travel.logic.TravelArrivalPlanner;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -83,6 +85,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final TravelContextParser travelContextParser = new TravelContextParser();
     private final SecureTravelDispatchPlanner dispatchPlanner = new SecureTravelDispatchPlanner();
+    private final TravelArrivalPlanner arrivalPlanner = new TravelArrivalPlanner();
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
@@ -274,7 +277,12 @@ public final class SecureTravelService implements SecureReferralHandler {
 
         JsonObject context = parseContext(payload.contextJson());
         ResolvedDestinationTarget resolvedTarget;
-        String effectiveTargetIdForErrors = normalizeOptional(payload.destinationTargetId());
+        TravelArrivalPlan routePlan = arrivalPlanner.route(
+            payload,
+            travelContextParser.shouldUseDefaultWorldNaturalSpawnEntry(context),
+            travelContextParser.isMinigameLaunchContext(context)
+        );
+        String effectiveTargetIdForErrors = routePlan.effectiveTargetIdForErrors();
 
         logger.atInfo().log(
                 "NEXORI_TRAVEL_HANDLE payloadTargetId=" + normalizeOptional(payload.destinationTargetId())
@@ -284,8 +292,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                         : "")
         );
 
-        if (payload.destinationTargetId() == null || payload.destinationTargetId().isBlank()) {
-            if (travelContextParser.shouldUseDefaultWorldNaturalSpawnEntry(context) || travelContextParser.isMinigameLaunchContext(context)) {
+        if (routePlan.route() == TravelArrivalPlan.Route.RESOLVE_DEFAULT_WORLD_NATURAL_SPAWN) {
                 resolvedTarget = resolveDefaultWorldNaturalSpawnEntry().orElse(null);
                 if (resolvedTarget == null) {
                     recordTravel(
@@ -309,7 +316,7 @@ public final class SecureTravelService implements SecureReferralHandler {
                     return;
                 }
                 effectiveTargetIdForErrors = resolvedTarget.definition().id();
-            } else {
+        } else if (routePlan.route() == TravelArrivalPlan.Route.SERVER_HOP_WITHOUT_TARGET) {
                 try {
                     TravelProfileType profileType = TravelProfileType.parse(payload.travelProfileId());
                     inventoryTransferService.prepareInboundArrival(
@@ -360,7 +367,6 @@ public final class SecureTravelService implements SecureReferralHandler {
                     event.setReason(Message.raw("This Nexori travel could not apply its inventory profile: " + exception.getMessage()));
                 }
                 return;
-            }
         } else {
             resolvedTarget = destinationTargetService.resolve(payload.destinationTargetId(), payload.arrivalPointId()).orElse(null);
             if (resolvedTarget == null) {
@@ -425,23 +431,13 @@ public final class SecureTravelService implements SecureReferralHandler {
             return;
         }
 
-        String arrivalMessage = resolvedTarget.definition().arrivalMessage().isBlank()
-            ? payload.arrivalMessage()
-            : resolvedTarget.definition().arrivalMessage();
-        pendingArrivals.put(event.getUuid(), new PendingArrival(
+        TravelArrivalPlan acceptedPlan = arrivalPlanner.acceptResolvedTarget(
             operationId,
-            payload.sourceServerId(),
-            payload.sourceConnectionAddress(),
-            resolvedTarget.definition().id(),
-            resolvedTarget.definition().displayName(),
-            resolvedTarget.definition().kind().name(),
-            resolvedTarget.effectiveWorldName(),
-            resolvedTarget.effectiveArrivalPointId(),
-            profileType.id(),
-            arrivalMessage,
-            payload.contextJson(),
-            resolvedTarget.definition().metadataJson()
-        ));
+            payload,
+            profileType,
+            resolvedTarget
+        );
+        pendingArrivals.put(event.getUuid(), acceptedPlan.pendingArrival());
         ResolvedDestinationTarget finalResolvedTarget1 = resolvedTarget;
         recordTravel(
             operationId,
@@ -500,7 +496,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         if (!tryQueueInstanceArrival(event, playerRef, arrival)) {
             applyArrivalTeleport(event, playerRef, arrival);
         }
-        event.getPlayer().sendMessage(Message.raw(buildArrivalMessage(arrival)));
+        event.getPlayer().sendMessage(Message.raw(arrivalPlanner.buildArrivalMessage(arrival)));
         inventoryTransferService.handlePlayerReady(event);
     }
 
@@ -673,30 +669,6 @@ public final class SecureTravelService implements SecureReferralHandler {
         logger.atInfo().log("Queued Nexori ready teleport for " + playerRef.getUsername()
             + " targetId=" + arrival.destinationTargetId()
             + " position=" + transform.getPosition());
-    }
-
-    @Nonnull
-    private String buildArrivalMessage(@Nonnull PendingArrival arrival) {
-        StringBuilder message = new StringBuilder();
-        message.append(arrival.arrivalMessage().isBlank()
-            ? "Secure Nexori travel accepted."
-            : arrival.arrivalMessage());
-        if (!arrival.destinationTargetId().isBlank()) {
-            message.append(" target=").append(arrival.destinationTargetId());
-        }
-        if (!arrival.destinationTargetKind().isBlank()) {
-            message.append(" kind=").append(arrival.destinationTargetKind());
-        }
-        if (!arrival.worldName().isBlank()) {
-            message.append(" world=").append(arrival.worldName());
-        }
-        if (!arrival.arrivalPointId().isBlank()) {
-            message.append(" arrivalPoint=").append(arrival.arrivalPointId());
-        }
-        if (!arrival.travelProfileId().isBlank()) {
-            message.append(" travelProfile=").append(arrival.travelProfileId());
-        }
-        return message.toString();
     }
 
     private Transform resolveArrivalTransform(@Nonnull PendingArrival arrival, @Nonnull UUID playerUuid) {
