@@ -20,6 +20,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryStartPlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryStartPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryStateAnalyzer;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
@@ -54,6 +56,7 @@ public final class InventoryTransferService {
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
+    private final InventoryRecoveryStartPlanner recoveryStartPlanner = new InventoryRecoveryStartPlanner();
     private final InventoryStateAnalyzer inventoryStateAnalyzer = new InventoryStateAnalyzer();
     private final Map<UUID, InventoryTransferState> pendingRuntimeApplies = new ConcurrentHashMap<>();
     private final Set<UUID> pendingRuntimeClears = ConcurrentHashMap.newKeySet();
@@ -293,20 +296,22 @@ public final class InventoryTransferService {
         @Nonnull Transform originTransform
     ) throws IOException, GeneralSecurityException {
         if (!policyStore.isApplyInventoryBackupsEnabled()) {
+            InventoryRecoveryStartPlan plan = recoveryStartPlanner.plan(false, null);
             diagnosticsService.record(
                 DiagnosticsCategory.RECOVERY,
                 DiagnosticsAction.RECOVERY_QUERY_START,
                 DiagnosticsOutcome.DENIED,
                 DiagnosticsReasonClass.VALIDATION,
                 DiagnosticsReasonCode.RECOVERY_DISABLED,
-                "Nexori inventory recovery is currently disabled by this server's admin.",
+                plan.message(),
                 transferId == null || transferId.isBlank() ? diagnosticsService.newOperationId("recovery") : transferId,
                 event -> event.playerUuid(playerRef.getUuid().toString()).playerNameClaimed(playerRef.getUsername()).transferId(transferId == null ? "" : transferId)
             );
-            throw new IllegalStateException("Nexori inventory recovery is currently disabled by this server's admin.");
+            throw new IllegalStateException(plan.message());
         }
         InventoryTransferBackupRecord backup = findPlayerBackup(playerRef.getUuid(), transferId).orElse(null);
-        if (backup == null) {
+        InventoryRecoveryStartPlan plan = recoveryStartPlanner.plan(true, backup);
+        if (plan.action() == InventoryRecoveryStartPlan.Action.BACKUP_MISSING) {
             diagnosticsService.record(
                 DiagnosticsCategory.RECOVERY,
                 DiagnosticsAction.RECOVERY_QUERY_START,
@@ -317,16 +322,15 @@ public final class InventoryTransferService {
                 transferId == null || transferId.isBlank() ? diagnosticsService.newOperationId("recovery") : transferId,
                 event -> event.playerUuid(playerRef.getUuid().toString()).playerNameClaimed(playerRef.getUsername()).transferId(transferId == null ? "" : transferId)
             );
-            throw new IllegalArgumentException("That Nexori inventory backup does not exist for your player.");
+            throw new IllegalArgumentException(plan.message());
         }
 
-        InventoryTransferBackupMode backupMode = InventoryTransferBackupMode.parse(backup.backupModeId());
-        if (backupMode == InventoryTransferBackupMode.LOCAL_RESTORE) {
+        if (plan.action() == InventoryRecoveryStartPlan.Action.LOCAL_RESTORE) {
             restoreBackupForActivePlayer(playerRef, backup);
             backupStore.remove(backup.transferId());
             return new RecoveryStartResult(
-                false,
-                "Nexori claim restored your saved local inventory backup on this server."
+                plan.remoteTravelStarted(),
+                plan.message()
             );
         }
 
@@ -363,8 +367,8 @@ public final class InventoryTransferService {
                 .remoteConnectionAddress(backup.destinationConnectionAddress())
         );
         return new RecoveryStartResult(
-            true,
-            "Started Nexori inventory recovery query. If the destination is reachable, you will be sent there and back to resolve it."
+            plan.remoteTravelStarted(),
+            plan.message()
         );
     }
 
