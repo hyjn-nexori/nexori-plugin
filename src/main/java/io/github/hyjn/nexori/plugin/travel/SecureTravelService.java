@@ -43,6 +43,8 @@ import io.github.hyjn.nexori.plugin.target.DestinationTargetKind;
 import io.github.hyjn.nexori.plugin.target.DestinationTargetService;
 import io.github.hyjn.nexori.plugin.target.ResolvedDestinationTarget;
 import io.github.hyjn.nexori.plugin.target.WorldSpawnResolver;
+import io.github.hyjn.nexori.plugin.travel.logic.TravelContextData;
+import io.github.hyjn.nexori.plugin.travel.logic.TravelContextParser;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -77,6 +79,7 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final InventoryTransferService inventoryTransferService;
     private final DiagnosticsService diagnosticsService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
+    private final TravelContextParser travelContextParser = new TravelContextParser();
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
@@ -283,7 +286,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         );
 
         if (payload.destinationTargetId() == null || payload.destinationTargetId().isBlank()) {
-            if (shouldUseDefaultWorldNaturalSpawnEntry(context) || isMinigameLaunchContext(context)) {
+            if (travelContextParser.shouldUseDefaultWorldNaturalSpawnEntry(context) || travelContextParser.isMinigameLaunchContext(context)) {
                 resolvedTarget = resolveDefaultWorldNaturalSpawnEntry().orElse(null);
                 if (resolvedTarget == null) {
                     recordTravel(
@@ -776,36 +779,20 @@ public final class SecureTravelService implements SecureReferralHandler {
     }
 
     private JsonObject parseContext(String rawContextJson) {
-        if (rawContextJson == null || rawContextJson.isBlank()) {
-            return null;
+        TravelContextData data = travelContextParser.parseContext(rawContextJson);
+        if (data.parseFailed()) {
+            data.parseExceptionOptional()
+                .ifPresentOrElse(
+                    exception -> logger.atWarning().withCause(exception).log("Failed to parse Nexori travel context JSON."),
+                    () -> logger.atWarning().log("Failed to parse Nexori travel context JSON.")
+                );
         }
-        try {
-            return GSON.fromJson(rawContextJson, JsonObject.class);
-        } catch (Exception exception) {
-            logger.atWarning().withCause(exception).log("Failed to parse Nexori travel context JSON.");
-            return null;
-        }
+        return data.contextOptional().orElse(null);
     }
 
     @Nonnull
     private String normalizeOptional(String rawValue) {
-        if (rawValue == null) {
-            return "";
-        }
-        String normalized = rawValue.trim();
-        return normalized.isBlank() ? "" : normalized;
-    }
-
-    private boolean shouldUseDefaultWorldNaturalSpawnEntry(JsonObject context) {
-        return context != null
-                && context.has("serverEntryMode")
-                && "default_world_natural_spawn".equalsIgnoreCase(normalizeOptional(context.get("serverEntryMode").getAsString()));
-    }
-
-    private boolean isMinigameLaunchContext(JsonObject context) {
-        return context != null
-                && context.has("flowType")
-                && "minigame.launch".equalsIgnoreCase(normalizeOptional(context.get("flowType").getAsString()));
+        return travelContextParser.normalizeOptional(rawValue);
     }
 
     @Nonnull
