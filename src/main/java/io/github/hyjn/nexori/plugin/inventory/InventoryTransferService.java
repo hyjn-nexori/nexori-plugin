@@ -20,6 +20,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonClass;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryRecoveryFinalizePlan;
@@ -60,6 +62,7 @@ public final class InventoryTransferService {
     private final InventorySnapshotService inventorySnapshotService;
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
+    private final InventoryInboundApplyPlanner inboundApplyPlanner = new InventoryInboundApplyPlanner();
     private final InventoryReceiptQueryPlanner receiptQueryPlanner = new InventoryReceiptQueryPlanner();
     private final InventoryRecoveryFinalizePlanner recoveryFinalizePlanner = new InventoryRecoveryFinalizePlanner();
     private final InventoryRecoveryStartPlanner recoveryStartPlanner = new InventoryRecoveryStartPlanner();
@@ -247,30 +250,29 @@ public final class InventoryTransferService {
         String sourceServerId,
         String sourceConnectionAddress
     ) throws IOException {
-        switch (profileType) {
-            case KEEP_INVENTORY -> {
-                return;
-            }
-            case CLEAR_INVENTORY -> clearDestinationInventory(playerUuid);
-            case APPLY_INVENTORY -> {
-                boolean hasTransferId = transferId != null && !transferId.isBlank();
-                boolean hasInventorySnapshot = inventoryState != null;
-                if (!hasTransferId && !hasInventorySnapshot) {
+        InventoryInboundApplyPlan plan = inboundApplyPlanner.plan(
+            profileType,
+            transferId,
+            inventoryState,
+            sourceServerId,
+            sourceConnectionAddress
+        );
+        switch (plan.action()) {
+            case IGNORE -> {
+                if (profileType == TravelProfileType.APPLY_INVENTORY) {
                     logger.atInfo().log(
                         "Skipping Nexori APPLY_INVENTORY inbound apply for " + playerUuid
                             + " because no visible inventory was transferred."
                     );
-                    return;
                 }
-
-                applyInboundInventory(
-                    playerUuid,
-                    transferId,
-                    inventoryState,
-                    sourceServerId == null ? "" : sourceServerId,
-                    sourceConnectionAddress == null ? "" : sourceConnectionAddress
-                );
             }
+            case CLEAR_INVENTORY -> clearDestinationInventory(playerUuid);
+            case APPLY_AND_CREATE_RECEIPT -> applyInboundInventory(
+                playerUuid,
+                plan,
+                sourceServerId == null ? "" : sourceServerId,
+                sourceConnectionAddress == null ? "" : sourceConnectionAddress
+            );
         }
     }
 
@@ -514,18 +516,10 @@ public final class InventoryTransferService {
 
     private void applyInboundInventory(
         @Nonnull UUID playerUuid,
-        String transferId,
-        InventoryTransferState inventoryState,
+        @Nonnull InventoryInboundApplyPlan plan,
         @Nonnull String sourceServerId,
         @Nonnull String sourceConnectionAddress
     ) throws IOException {
-        if (transferId == null || transferId.isBlank()) {
-            throw new IllegalArgumentException("APPLY_INVENTORY travel requires a transferId.");
-        }
-        if (inventoryState == null) {
-            throw new IllegalArgumentException("APPLY_INVENTORY travel requires an inventory snapshot.");
-        }
-
         InventoryTransferState currentState = playerSaveRepository.readInventoryState(playerUuid).orElse(null);
         if (currentState != null && shouldTransferInventory(currentState)) {
             saveLocalOverwriteBackup(
@@ -537,18 +531,12 @@ public final class InventoryTransferService {
             );
         }
 
-        if (!playerSaveRepository.applyInventoryState(playerUuid, inventoryState)) {
-            pendingRuntimeApplies.put(playerUuid, inventoryState);
+        if (!playerSaveRepository.applyInventoryState(playerUuid, plan.inventoryState())) {
+            pendingRuntimeApplies.put(playerUuid, plan.inventoryState());
         }
 
-        receiptStore.save(new InventoryTransferReceiptRecord(
-            transferId,
-            System.currentTimeMillis(),
-            playerUuid,
-            sourceServerId,
-            sourceConnectionAddress
-        ));
-        logger.atInfo().log("Persisted Nexori APPLY_INVENTORY receipt " + transferId + " for " + playerUuid + ".");
+        receiptStore.save(plan.toReceiptRecord(playerUuid, System.currentTimeMillis()));
+        logger.atInfo().log("Persisted Nexori APPLY_INVENTORY receipt " + plan.transferId() + " for " + playerUuid + ".");
         diagnosticsService.record(
             DiagnosticsCategory.RECOVERY,
             DiagnosticsAction.RECOVERY_RECEIPT_SAVE,
@@ -556,10 +544,10 @@ public final class InventoryTransferService {
             DiagnosticsReasonClass.NORMAL,
             DiagnosticsReasonCode.TRANSFER_RECEIPT_SAVED,
             "Persisted an APPLY_INVENTORY transfer receipt on the destination server.",
-            transferId,
+            plan.transferId(),
             event -> event
                 .playerUuid(playerUuid.toString())
-                .transferId(transferId)
+                .transferId(plan.transferId())
                 .remoteServerId(sourceServerId)
                 .remoteConnectionAddress(sourceConnectionAddress)
         );
