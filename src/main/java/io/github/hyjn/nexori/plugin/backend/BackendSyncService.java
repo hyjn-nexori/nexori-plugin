@@ -5,19 +5,16 @@ import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidationResult;
 import io.github.hyjn.nexori.plugin.backend.logic.BackendAssignmentValidator;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuildInput;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendSyncRequestPayloadBuilder;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentAckPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendAssignmentPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncRequestPayload;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
-import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
-import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
-import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
-import io.github.hyjn.nexori.plugin.minigame.QueueMemberState;
-import io.github.hyjn.nexori.plugin.minigame.QueueRuntimeState;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 
@@ -35,9 +32,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
@@ -65,6 +60,7 @@ public final class BackendSyncService {
     private final ArenaService arenaService;
     private final ArenaMatchService arenaMatchService;
     private final BackendAssignmentValidator assignmentValidator = new BackendAssignmentValidator();
+    private final BackendSyncRequestPayloadBuilder syncRequestPayloadBuilder = new BackendSyncRequestPayloadBuilder();
     private HttpClient httpClient;
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendSyncHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
@@ -485,103 +481,21 @@ public final class BackendSyncService {
 
     @Nonnull
     private BackendSyncRequestPayload buildRequestPayload(@Nonnull String syncId, long sequence, long nowEpochMs) {
-        Map<String, QueueRuntimeState> runtimeByQueueId = new LinkedHashMap<>();
-        for (QueueRuntimeState state : queueCoordinatorService.listQueueStates()) {
-            runtimeByQueueId.put(state.queueId(), state);
-        }
-
-        List<BackendSyncRequestPayload.QueueSnapshot> queues = new ArrayList<>();
-        for (QueueDefinition queue : queueService.list()) {
-            QueueRuntimeState runtime = runtimeByQueueId.get(queue.queueId());
-            queues.add(new BackendSyncRequestPayload.QueueSnapshot(
-                queue.queueId(),
-                queue.displayName(),
-                queue.minPlayers(),
-                queue.maxPlayers(),
-                queue.countdownSeconds(),
-                queue.launchTravelProfileId(),
-                queue.effectiveMatchmakingMode().id(),
-                queue.enabled(),
-                queue.arenaIds(),
-                runtime == null ? null : buildRuntimeSnapshot(runtime)
-            ));
-        }
-
-        List<BackendSyncRequestPayload.ArenaSnapshot> arenas = new ArrayList<>();
-        for (ArenaDefinition arena : arenaService.list()) {
-            arenas.add(new BackendSyncRequestPayload.ArenaSnapshot(
-                arena.arenaId(),
-                arena.displayName(),
-                arena.destinationConnectionAddress(),
-                arena.destinationTargetId(),
-                arena.instanceTemplateId(),
-                arena.matchResolutionTriggerId(),
-                arena.maxSupportedPlayers(),
-                arena.enabled()
-            ));
-        }
-
-        List<BackendSyncRequestPayload.ActiveMatchSnapshot> activeMatches = new ArrayList<>();
-        for (ArenaActiveMatch match : arenaMatchService.listMatches()) {
-            activeMatches.add(new BackendSyncRequestPayload.ActiveMatchSnapshot(
-                match.matchId(),
-                match.queueId(),
-                match.arenaId(),
-                match.expectedPlayerCount(),
-                match.arrivedPlayerUuids().size(),
-                match.activePlayerUuids().size(),
-                match.createdAtEpochMs(),
-                match.lastUpdatedAtEpochMs(),
-                match.lastError()
-            ));
-        }
-
-        return new BackendSyncRequestPayload(
+        return syncRequestPayloadBuilder.build(new BackendSyncRequestPayloadBuildInput(
             SCHEMA_VERSION,
             syncId,
             sequence,
             nowEpochMs,
             localIdentity.serverId().toString(),
-            new BackendSyncRequestPayload.ServerSnapshot(
-                localIdentity.fingerprint(),
-                localConnectionAddressService.getConnectionAddressOrBlank(),
-                "SERVER",
-                config.region()
-            ),
-            List.copyOf(queues),
-            List.copyOf(arenas),
-            List.copyOf(activeMatches),
+            localIdentity.fingerprint(),
+            localConnectionAddressService.getConnectionAddressOrBlank(),
+            config.region(),
+            queueService.list(),
+            queueCoordinatorService.listQueueStates(),
+            arenaService.list(),
+            arenaMatchService.listMatches(),
             assignmentStore.listPendingAcks()
-        );
-    }
-
-    @Nonnull
-    private BackendSyncRequestPayload.RuntimeSnapshot buildRuntimeSnapshot(@Nonnull QueueRuntimeState runtime) {
-        return new BackendSyncRequestPayload.RuntimeSnapshot(
-            runtime.phase().name(),
-            runtime.countdownEndsAtEpochMs(),
-            runtime.readyAtEpochMs(),
-            runtime.lastStateChangeEpochMs(),
-            runtime.lastLaunchAttemptAtEpochMs(),
-            runtime.lastLaunchError(),
-            buildMemberSnapshots(runtime.waitingMembers()),
-            buildMemberSnapshots(runtime.readyMembers())
-        );
-    }
-
-    @Nonnull
-    private List<BackendSyncRequestPayload.QueueMemberSnapshot> buildMemberSnapshots(@Nonnull List<QueueMemberState> members) {
-        List<BackendSyncRequestPayload.QueueMemberSnapshot> snapshots = new ArrayList<>();
-        for (QueueMemberState member : members) {
-            snapshots.add(new BackendSyncRequestPayload.QueueMemberSnapshot(
-                member.playerUuid().toString(),
-                member.playerNameSnapshot(),
-                member.sourceLobbyId(),
-                member.sourcePortalId(),
-                member.joinedAtEpochMs()
-            ));
-        }
-        return List.copyOf(snapshots);
+        ));
     }
 
     @Nonnull
