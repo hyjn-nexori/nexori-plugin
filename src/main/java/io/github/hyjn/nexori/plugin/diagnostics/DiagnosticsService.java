@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.diagnostics;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.logger.HytaleLogger;
+import io.github.hyjn.nexori.plugin.diagnostics.logic.DiagnosticsEventTruncationPolicy;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 
 import javax.annotation.Nonnull;
@@ -24,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,7 +40,7 @@ public final class DiagnosticsService {
     private static final long MAX_SEGMENT_BYTES = 1024L * 1024L;
     private static final long MAX_SEGMENT_LINES = 5000L;
     private static final long RETENTION_MILLIS = 30L * 24L * 60L * 60L * 1000L;
-    private static final int MAX_EVENT_BYTES = 2048;
+    private static final DiagnosticsEventTruncationPolicy TRUNCATION = new DiagnosticsEventTruncationPolicy();
 
     private final HytaleLogger logger;
     private final Path journalDir;
@@ -104,7 +104,7 @@ public final class DiagnosticsService {
                 customizer.accept(builder);
             }
 
-            DiagnosticsEvent event = truncate(builder.build());
+            DiagnosticsEvent event = TRUNCATION.apply(builder.build());
             append(event);
         } catch (IOException exception) {
             logger.atWarning().withCause(exception).log("Failed to persist a Nexori diagnostics event.");
@@ -131,74 +131,8 @@ public final class DiagnosticsService {
         return buildOperationTimeline(loadAllEvents(), operationId);
     }
 
-    private DiagnosticsEvent truncate(@Nonnull DiagnosticsEvent event) {
-        DiagnosticsEvent current = event;
-        if (serializedSize(current) <= MAX_EVENT_BYTES) {
-            return current;
-        }
-
-        LinkedHashSet<String> truncatedFields = new LinkedHashSet<>(current.truncatedFieldsOrEmpty());
-        if (current.payloadPreview() != null && !current.payloadPreview().isEmpty()) {
-            truncatedFields.add("payloadPreview");
-            current = current.toBuilder()
-                .payloadPreview(null)
-                .truncated(true)
-                .truncatedFields(new ArrayList<>(truncatedFields))
-                .build();
-        }
-
-        while (serializedSize(current) > MAX_EVENT_BYTES && !current.message().isEmpty()) {
-            truncatedFields.add("message");
-            current = current.toBuilder()
-                .message(shrinkMessage(current.message()))
-                .truncated(true)
-                .truncatedFields(new ArrayList<>(truncatedFields))
-                .build();
-        }
-
-        if (serializedSize(current) > MAX_EVENT_BYTES && !current.tagsOrEmpty().isEmpty()) {
-            truncatedFields.add("tags");
-            current = current.toBuilder()
-                .tags(null)
-                .truncated(true)
-                .truncatedFields(new ArrayList<>(truncatedFields))
-                .build();
-        }
-
-        if (serializedSize(current) > MAX_EVENT_BYTES) {
-            current = current.toBuilder()
-                .message("Diagnostics event truncated.")
-                .truncated(true)
-                .truncatedFields(new ArrayList<>(truncatedFields))
-                .build();
-        }
-
-        return current;
-    }
-
-    @Nonnull
-    private String shrinkMessage(@Nonnull String message) {
-        if (message.length() > 512) {
-            return message.substring(0, 512);
-        }
-        if (message.length() > 256) {
-            return message.substring(0, 256);
-        }
-        if (message.length() > 128) {
-            return message.substring(0, 128);
-        }
-        if (message.length() > 64) {
-            return message.substring(0, 64);
-        }
-        return "";
-    }
-
-    private int serializedSize(@Nonnull DiagnosticsEvent event) {
-        return GSON.toJson(event).getBytes(StandardCharsets.UTF_8).length;
-    }
-
     private void append(@Nonnull DiagnosticsEvent event) throws IOException {
-        ensureActiveSegment(event.occurredAtEpochMs(), serializedSize(event) + 1);
+        ensureActiveSegment(event.occurredAtEpochMs(), TRUNCATION.serializedSize(event) + 1);
         try (BufferedWriter writer = Files.newBufferedWriter(
             activeSegment.file,
             StandardCharsets.UTF_8,

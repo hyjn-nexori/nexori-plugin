@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b \"D:\\\\JanielNunez\\\\hyjn-nexori\\\\nexori-plugin\\\\src\\\\main\\\\java\\\\io\\\\github\\\\hyjn\\\\nexori\\\\plugin\\\\diagnostics\")",
+      "Bash(dir /s /b \"D:\\\\JanielNunez\\\\hyjn-nexori\\\\nexori-plugin\\\\src\\\\test\")",
+      "Bash(findstr -i \"diagnostic\")",
+      "Bash(find src/test -name \"*Diagnostic*\")",
+      "Bash(find src/test -name \"*diagnostic*\")",
+      "Bash(./gradlew.bat compileJava)",
+      "Bash(./gradlew.bat test *)",
+      "Bash(./gradlew.bat build *)"
+    ]
+  }
+}
