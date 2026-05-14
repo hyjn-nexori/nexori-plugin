@@ -21,6 +21,8 @@ import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncApplyPlan;
 import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncApplyPlanner;
 import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuildInput;
 import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncRequestBuilder;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncReturnPlan;
+import io.github.hyjn.nexori.plugin.catalogsync.logic.CatalogSyncReturnPlanner;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
@@ -59,6 +61,7 @@ public final class NetworkCatalogSyncService {
     private final QueueService queueService;
     private final CatalogSyncApplyPlanner applyPlanner = new CatalogSyncApplyPlanner();
     private final CatalogSyncRequestBuilder requestBuilder = new CatalogSyncRequestBuilder();
+    private final CatalogSyncReturnPlanner returnPlanner = new CatalogSyncReturnPlanner();
     private final Map<String, PendingCatalogSyncRequest> pendingRequests = new ConcurrentHashMap<>();
     private final Map<UUID, PendingCatalogSyncReturn> pendingReturns = new ConcurrentHashMap<>();
     private final Map<UUID, String> pendingLocalFailureMessages = new ConcurrentHashMap<>();
@@ -283,16 +286,12 @@ public final class NetworkCatalogSyncService {
                     + " entityId="
                     + safe(payload.entityId())
             );
-            result = new CatalogEntitySyncResultPayload(
+            result = returnPlanner.buildRejectedReturn(
                 SCHEMA_VERSION,
-                safe(payload.operationId()),
-                false,
-                payload.entityType(),
-                safe(payload.entityId()),
+                payload,
                 localIdentity.serverId().toString(),
-                "FAILED",
                 exception.getMessage()
-            );
+            ).resultPayload();
         }
 
         try {
@@ -324,13 +323,17 @@ public final class NetworkCatalogSyncService {
         }
 
         PendingCatalogSyncRequest pendingRequest = pendingRequests.remove(payload.operationId());
-        if (pendingRequest == null || pendingRequest.isExpired() || !pendingRequest.playerUuid().equals(event.getUuid())) {
+        CatalogSyncReturnPlan plan = returnPlanner.planReceivedReturn(
+            payload,
+            pendingRequest != null,
+            pendingRequest != null && pendingRequest.isExpired(),
+            pendingRequest != null && pendingRequest.playerUuid().equals(event.getUuid()),
+            pendingRequest == null ? "" : pendingRequest.targetServerId()
+        );
+        if (plan.action() == CatalogSyncReturnPlan.Action.IGNORE_STALE) {
             return;
         }
 
-        String message = payload.message() == null || payload.message().isBlank()
-            ? defaultResultMessage(payload, pendingRequest.targetServerId())
-            : payload.message();
         logger.atInfo().log(
             "Completed catalog sync operation "
                 + payload.operationId()
@@ -346,9 +349,9 @@ public final class NetworkCatalogSyncService {
         pendingReturns.put(event.getUuid(), new PendingCatalogSyncReturn(
             pendingRequest.originWorldName(),
             pendingRequest.originTransform(),
-            message,
+            plan.message(),
             pendingRequest.resumeAction(),
-            payload.success()
+            plan.success()
         ));
     }
 
@@ -373,7 +376,6 @@ public final class NetworkCatalogSyncService {
             boolean existed = arenaService.find(arena.arenaId()).isPresent();
             arenaService.upsert(arena);
             String applyResult = existed ? "UPDATED" : "CREATED";
-            String message = "Synced game '" + arena.arenaId() + "' to '" + localIdentity.serverId() + "' (" + applyResult.toLowerCase() + ").";
             logger.atInfo().log(
                 "Applied catalog sync game operationId="
                     + payload.operationId()
@@ -382,16 +384,14 @@ public final class NetworkCatalogSyncService {
                     + " applyResult="
                     + applyResult
             );
-            return new CatalogEntitySyncResultPayload(
+            return returnPlanner.buildAppliedReturn(
                 SCHEMA_VERSION,
                 payload.operationId(),
-                true,
                 CatalogSyncEntityType.GAME,
                 arena.arenaId(),
                 localIdentity.serverId().toString(),
-                applyResult,
-                message
-            );
+                applyResult
+            ).resultPayload();
         } catch (IOException | IllegalArgumentException exception) {
             throw new IllegalStateException(
                 "Failed to sync game '" + arena.arenaId() + "' to '" + localIdentity.serverId() + "': " + exception.getMessage(),
@@ -420,7 +420,6 @@ public final class NetworkCatalogSyncService {
             boolean existed = queueService.find(queue.queueId()).isPresent();
             queueService.upsert(queue);
             String applyResult = existed ? "UPDATED" : "CREATED";
-            String message = "Synced queue '" + queue.queueId() + "' to '" + localIdentity.serverId() + "' (" + applyResult.toLowerCase() + ").";
             logger.atInfo().log(
                 "Applied catalog sync queue operationId="
                     + payload.operationId()
@@ -429,16 +428,14 @@ public final class NetworkCatalogSyncService {
                     + " applyResult="
                     + applyResult
             );
-            return new CatalogEntitySyncResultPayload(
+            return returnPlanner.buildAppliedReturn(
                 SCHEMA_VERSION,
                 payload.operationId(),
-                true,
                 CatalogSyncEntityType.QUEUE,
                 queue.queueId(),
                 localIdentity.serverId().toString(),
-                applyResult,
-                message
-            );
+                applyResult
+            ).resultPayload();
         } catch (IOException | IllegalArgumentException exception) {
             throw new IllegalStateException(
                 "Failed to sync queue '" + queue.queueId() + "' to '" + localIdentity.serverId() + "': " + exception.getMessage(),
@@ -453,17 +450,6 @@ public final class NetworkCatalogSyncService {
         return bundle.members().stream()
             .filter(member -> destination.connectionAddress().equalsIgnoreCase(member.connectionAddress()))
             .findFirst();
-    }
-
-    @Nonnull
-    private String defaultResultMessage(@Nonnull CatalogEntitySyncResultPayload payload, @Nonnull String fallbackTargetServerId) {
-        String targetServerId = payload.targetServerId() == null || payload.targetServerId().isBlank()
-            ? fallbackTargetServerId
-            : payload.targetServerId();
-        if (payload.success()) {
-            return "Synced " + payload.entityType().singularLabel() + " '" + payload.entityId() + "' to '" + targetServerId + "'.";
-        }
-        return "Failed to sync " + payload.entityType().singularLabel() + " '" + payload.entityId() + "' to '" + targetServerId + "': The remote apply failed.";
     }
 
     @Nonnull
