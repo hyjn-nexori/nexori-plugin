@@ -22,6 +22,8 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsReasonCode;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryInboundApplyPlanner;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryBackupRetentionPlan;
+import io.github.hyjn.nexori.plugin.inventory.logic.InventoryBackupRetentionPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlan;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlanner;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryReceiptQueryPlan;
@@ -65,6 +67,7 @@ public final class InventoryTransferService {
     private final SecureReferralService secureReferralService;
     private final DiagnosticsService diagnosticsService;
     private final InventoryInboundApplyPlanner inboundApplyPlanner = new InventoryInboundApplyPlanner();
+    private final InventoryBackupRetentionPlanner backupRetentionPlanner = new InventoryBackupRetentionPlanner();
     private final InventoryOutboundTransferPlanner outboundTransferPlanner = new InventoryOutboundTransferPlanner();
     private final InventoryReceiptQueryPlanner receiptQueryPlanner = new InventoryReceiptQueryPlanner();
     private final InventoryRecoveryFinalizePlanner recoveryFinalizePlanner = new InventoryRecoveryFinalizePlanner();
@@ -609,8 +612,9 @@ public final class InventoryTransferService {
     private void trimBackupsForPlayer(@Nonnull UUID playerUuid) throws IOException {
         int maxBackups = policyStore.getMaxBackupsPerPlayer();
         List<InventoryTransferBackupRecord> backups = backupStore.listByPlayer(playerUuid);
-        for (int index = maxBackups; index < backups.size(); index++) {
-            backupStore.remove(backups.get(index).transferId());
+        InventoryBackupRetentionPlan plan = backupRetentionPlanner.plan(backups, maxBackups);
+        for (String transferId : plan.transferIdsToRemove()) {
+            backupStore.remove(transferId);
         }
     }
 
