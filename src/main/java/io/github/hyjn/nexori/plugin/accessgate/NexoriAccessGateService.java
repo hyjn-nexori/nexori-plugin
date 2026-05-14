@@ -8,6 +8,7 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerSetupConnectEven
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateAdmissionDecider;
 import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateAdmissionDecision;
+import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateBypassPlayerListEditor;
 import io.github.hyjn.nexori.plugin.accessgate.logic.AccessGateBypassType;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
@@ -15,7 +16,6 @@ import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,6 +35,7 @@ public final class NexoriAccessGateService {
     private final SecureReferralService secureReferralService;
     private final NexoriAccessGateStore store;
     private final AccessGateAdmissionDecider admissionDecider = new AccessGateAdmissionDecider();
+    private final AccessGateBypassPlayerListEditor bypassPlayerListEditor = new AccessGateBypassPlayerListEditor();
     private final Map<UUID, Long> pendingSetupConnections = new ConcurrentHashMap<>();
     private final Set<UUID> connectedPlayers = ConcurrentHashMap.newKeySet();
     private volatile NexoriAccessGateConfigDocument config;
@@ -121,23 +122,11 @@ public final class NexoriAccessGateService {
 
     @Nonnull
     public synchronized NexoriAccessGateConfigDocument addBypassPlayerUuid(@Nonnull UUID playerUuid, @Nonnull String username) throws IOException {
-        String token = playerUuid.toString().toLowerCase(Locale.ROOT);
-        LinkedHashMap<String, String> bypassPlayers = new LinkedHashMap<>();
-        for (NexoriAccessGateBypassPlayer entry : config.bypassPlayerUuids()) {
-            if (entry == null || entry.uuid() == null || entry.uuid().isBlank()) {
-                continue;
-            }
-            bypassPlayers.put(entry.uuid(), entry.username() == null ? "" : entry.username());
-        }
-        String normalizedUsername = username.trim();
-        if (!bypassPlayers.containsKey(token) || !normalizedUsername.isBlank()) {
-            bypassPlayers.put(token, normalizedUsername);
-        }
-
-        List<NexoriAccessGateBypassPlayer> updatedPlayers = new ArrayList<>();
-        for (Map.Entry<String, String> entry : bypassPlayers.entrySet()) {
-            updatedPlayers.add(new NexoriAccessGateBypassPlayer(entry.getKey(), entry.getValue()));
-        }
+        List<NexoriAccessGateBypassPlayer> updatedPlayers = bypassPlayerListEditor.addBypassPlayerUuid(
+            config.bypassPlayerUuids(),
+            playerUuid,
+            username
+        );
         return saveConfig(new NexoriAccessGateConfigDocument(
             config.schemaVersion(),
             config.enabled(),
@@ -158,17 +147,10 @@ public final class NexoriAccessGateService {
 
     @Nonnull
     public synchronized NexoriAccessGateConfigDocument removeBypassPlayerToken(@Nonnull String token) throws IOException {
-        String normalizedToken = token.trim().toLowerCase(Locale.ROOT);
-        List<NexoriAccessGateBypassPlayer> updatedPlayers = new ArrayList<>();
-        for (NexoriAccessGateBypassPlayer entry : config.bypassPlayerUuids()) {
-            if (entry == null || entry.uuid() == null) {
-                continue;
-            }
-            if (entry.uuid().trim().toLowerCase(Locale.ROOT).equals(normalizedToken)) {
-                continue;
-            }
-            updatedPlayers.add(entry);
-        }
+        List<NexoriAccessGateBypassPlayer> updatedPlayers = bypassPlayerListEditor.removeBypassPlayerToken(
+            config.bypassPlayerUuids(),
+            token
+        );
         return saveConfig(new NexoriAccessGateConfigDocument(
             config.schemaVersion(),
             config.enabled(),
