@@ -2,13 +2,12 @@ package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.hypixel.hytale.logger.HytaleLogger;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluation;
 import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStateEvaluator;
-import io.github.hyjn.nexori.plugin.backend.payload.BackendMatchAdmissionStatePayload;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStatePayloadBuildResult;
+import io.github.hyjn.nexori.plugin.backend.logic.AdmissionStatePayloadBuilder;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendMatchAdmissionStateResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
@@ -21,8 +20,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -57,6 +54,7 @@ public final class BackendMatchAdmissionStateReportingService {
     private final ArenaMatchService arenaMatchService;
     private HttpClient httpClient;
     private final AdmissionStateEvaluator admissionStateEvaluator = new AdmissionStateEvaluator();
+    private final AdmissionStatePayloadBuilder admissionStatePayloadBuilder = new AdmissionStatePayloadBuilder();
     private final Gson gson = new GsonBuilder().create();
     private final Queue<AdmissionHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Map<String, MatchPublicationState> publicationStatesByMatchId = new LinkedHashMap<>();
@@ -161,7 +159,7 @@ public final class BackendMatchAdmissionStateReportingService {
             return;
         }
 
-        BuiltAdmissionSnapshot snapshot = buildSnapshot(matchId, state, nowEpochMs);
+        AdmissionStatePayloadBuildResult snapshot = buildSnapshot(matchId, state, nowEpochMs);
         if (snapshot == null) {
             cleanupUnreportableState(matchId, "Admission reporting immediate flush dropped because the match is no longer reportable.");
             return;
@@ -237,7 +235,7 @@ public final class BackendMatchAdmissionStateReportingService {
                 continue;
             }
 
-            BuiltAdmissionSnapshot snapshot = buildSnapshot(matchId, state, nowEpochMs);
+            AdmissionStatePayloadBuildResult snapshot = buildSnapshot(matchId, state, nowEpochMs);
             if (snapshot == null) {
                 cleanupUnreportableState(matchId, "Admission reporting dropped because the match is no longer reportable.");
                 continue;
@@ -303,7 +301,7 @@ public final class BackendMatchAdmissionStateReportingService {
     private void startHttpRequest(
         @Nonnull String matchId,
         @Nonnull MatchPublicationState state,
-        @Nonnull BuiltAdmissionSnapshot snapshot,
+        @Nonnull AdmissionStatePayloadBuildResult snapshot,
         long nowEpochMs
     ) {
         if (!config.isMatchStateReportingUsable()) {
@@ -364,7 +362,7 @@ public final class BackendMatchAdmissionStateReportingService {
             if (state == null) {
                 continue;
             }
-            BuiltAdmissionSnapshot inFlight = state.inFlightSnapshot;
+            AdmissionStatePayloadBuildResult inFlight = state.inFlightSnapshot;
             if (inFlight == null || !inFlight.payload().stateUpdateId().equals(result.snapshot().payload().stateUpdateId())) {
                 continue;
             }
@@ -514,7 +512,7 @@ public final class BackendMatchAdmissionStateReportingService {
         }
     }
 
-    private void markDirtyFromSnapshot(@Nonnull MatchPublicationState state, @Nonnull BuiltAdmissionSnapshot snapshot, long nowEpochMs) {
+    private void markDirtyFromSnapshot(@Nonnull MatchPublicationState state, @Nonnull AdmissionStatePayloadBuildResult snapshot, long nowEpochMs) {
         List<String> reasons = snapshot.payload().coalescedChangeReasons().isEmpty()
             ? List.of(snapshot.payload().primaryChangeReason())
             : snapshot.payload().coalescedChangeReasons();
@@ -531,7 +529,7 @@ public final class BackendMatchAdmissionStateReportingService {
             || (state.pendingRetrySnapshot != null && state.pendingRetrySnapshot.payload().admissionReportingClosed());
     }
 
-    private BuiltAdmissionSnapshot buildSnapshot(@Nonnull String matchId, @Nonnull MatchPublicationState state, long nowEpochMs) {
+    private AdmissionStatePayloadBuildResult buildSnapshot(@Nonnull String matchId, @Nonnull MatchPublicationState state, long nowEpochMs) {
         ReportableMatchContext context = findReportableMatchContext(matchId);
         if (context == null) {
             return null;
@@ -541,82 +539,19 @@ public final class BackendMatchAdmissionStateReportingService {
         long sequence = ++state.lastAllocatedSequence;
         long sentAtEpochMs = nowEpochMs;
         long expiresAtEpochMs = nowEpochMs + config.matchStateStaleAfterMs();
-        List<String> coalescedReasons = state.coalescedReasons.stream()
-            .filter(reason -> reason != null && !reason.isBlank())
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .toList();
-        List<String> consumedAdmissionReservationIdsIncluded = state.pendingConsumedAdmissionReservationIds.stream()
-            .filter(Objects::nonNull)
-            .map(BackendMatchAdmissionStateReportingService::normalizeOptional)
-            .filter(reservationId -> !reservationId.isBlank())
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .toList();
-        String primaryChangeReason = normalizeOptional(state.primaryChangeReason);
-        if (primaryChangeReason.isBlank()) {
-            primaryChangeReason = coalescedReasons.isEmpty() ? CHANGE_REASON_MATCH_STARTED : coalescedReasons.get(coalescedReasons.size() - 1);
-        }
-        BackendMatchAdmissionStatePayload payloadWithoutHash = new BackendMatchAdmissionStatePayload(
+        return admissionStatePayloadBuilder.build(
             SCHEMA_VERSION,
             UUID.randomUUID().toString().toLowerCase(),
             sequence,
-            "",
             sentAtEpochMs,
             expiresAtEpochMs,
             localIdentity.serverId().toString(),
-            context.match().matchId(),
-            context.match().externalMatchId(),
-            context.match().queueId(),
-            context.match().arenaId(),
-            context.match().backfillEnabled(),
-            context.match().effectiveBackfillMode().id(),
-            Math.max(context.match().backfillWindowSeconds(), 0),
-            view.matchLifecycleStatus(),
-            view.admissionOpen(),
-            view.admissionOpenUntilEpochMs(),
-            view.admissionCapacity(),
-            view.admittedSlotCount(),
-            view.availableAdmissionSlots(),
-            view.initialRosterSize(),
-            view.arrivedInitialPlayerCount(),
-            view.unfilledInitialRosterCount(),
-            consumedAdmissionReservationIdsIncluded,
-            view.admissionReportingClosed(),
-            view.admissionReportingCloseReason(),
-            primaryChangeReason,
-            coalescedReasons
+            context.match(),
+            view,
+            state.primaryChangeReason,
+            state.coalescedReasons,
+            state.pendingConsumedAdmissionReservationIds
         );
-        String payloadHash = hashCanonicalPayload(payloadWithoutHash);
-        BackendMatchAdmissionStatePayload payload = new BackendMatchAdmissionStatePayload(
-            payloadWithoutHash.schemaVersion(),
-            payloadWithoutHash.stateUpdateId(),
-            payloadWithoutHash.admissionStateSequence(),
-            payloadHash,
-            payloadWithoutHash.sentAtEpochMs(),
-            payloadWithoutHash.stateExpiresAtEpochMs(),
-            payloadWithoutHash.reportingServerId(),
-            payloadWithoutHash.matchId(),
-            payloadWithoutHash.externalMatchId(),
-            payloadWithoutHash.queueId(),
-            payloadWithoutHash.arenaId(),
-            payloadWithoutHash.backfillEnabled(),
-            payloadWithoutHash.backfillMode(),
-            payloadWithoutHash.backfillWindowSeconds(),
-            payloadWithoutHash.matchLifecycleStatus(),
-            payloadWithoutHash.admissionOpen(),
-            payloadWithoutHash.admissionOpenUntilEpochMs(),
-            payloadWithoutHash.admissionCapacity(),
-            payloadWithoutHash.admittedSlotCount(),
-            payloadWithoutHash.availableAdmissionSlots(),
-            payloadWithoutHash.initialRosterSize(),
-            payloadWithoutHash.arrivedInitialPlayerCount(),
-            payloadWithoutHash.unfilledInitialRosterCount(),
-            payloadWithoutHash.consumedAdmissionReservationIds(),
-            payloadWithoutHash.admissionReportingClosed(),
-            payloadWithoutHash.admissionReportingCloseReason(),
-            payloadWithoutHash.primaryChangeReason(),
-            payloadWithoutHash.coalescedChangeReasons()
-        );
-        return new BuiltAdmissionSnapshot(payload, gson.toJson(payload), List.copyOf(consumedAdmissionReservationIdsIncluded));
     }
 
     private AdmissionStateEvaluation evaluateAdmissionState(
@@ -716,7 +651,7 @@ public final class BackendMatchAdmissionStateReportingService {
     @Nonnull
     private AdmissionHttpResult toHttpResult(
         @Nonnull String matchId,
-        @Nonnull BuiltAdmissionSnapshot snapshot,
+        @Nonnull AdmissionStatePayloadBuildResult snapshot,
         HttpResponse<String> response,
         Throwable throwable
     ) {
@@ -743,62 +678,6 @@ public final class BackendMatchAdmissionStateReportingService {
             "",
             Objects.toString(response.body(), "")
         );
-    }
-
-    @Nonnull
-    private String hashCanonicalPayload(@Nonnull BackendMatchAdmissionStatePayload payload) {
-        JsonObject canonical = new JsonObject();
-        canonical.addProperty("schemaVersion", payload.schemaVersion());
-        canonical.addProperty("stateUpdateId", payload.stateUpdateId());
-        canonical.addProperty("admissionStateSequence", payload.admissionStateSequence());
-        canonical.addProperty("sentAtEpochMs", payload.sentAtEpochMs());
-        canonical.addProperty("stateExpiresAtEpochMs", payload.stateExpiresAtEpochMs());
-        canonical.addProperty("reportingServerId", payload.reportingServerId());
-        canonical.addProperty("matchId", payload.matchId());
-        canonical.addProperty("externalMatchId", payload.externalMatchId());
-        canonical.addProperty("queueId", payload.queueId());
-        canonical.addProperty("arenaId", payload.arenaId());
-        canonical.addProperty("backfillEnabled", payload.backfillEnabled());
-        canonical.addProperty("backfillMode", payload.backfillMode());
-        canonical.addProperty("backfillWindowSeconds", payload.backfillWindowSeconds());
-        canonical.addProperty("matchLifecycleStatus", payload.matchLifecycleStatus());
-        canonical.addProperty("admissionOpen", payload.admissionOpen());
-        canonical.addProperty("admissionOpenUntilEpochMs", payload.admissionOpenUntilEpochMs());
-        canonical.addProperty("admissionCapacity", payload.admissionCapacity());
-        canonical.addProperty("admittedSlotCount", payload.admittedSlotCount());
-        canonical.addProperty("availableAdmissionSlots", payload.availableAdmissionSlots());
-        canonical.addProperty("initialRosterSize", payload.initialRosterSize());
-        canonical.addProperty("arrivedInitialPlayerCount", payload.arrivedInitialPlayerCount());
-        canonical.addProperty("unfilledInitialRosterCount", payload.unfilledInitialRosterCount());
-        JsonArray consumedReservationIds = new JsonArray();
-        payload.consumedAdmissionReservationIds().stream()
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .forEach(consumedReservationIds::add);
-        canonical.add("consumedAdmissionReservationIds", consumedReservationIds);
-        canonical.addProperty("admissionReportingClosed", payload.admissionReportingClosed());
-        canonical.addProperty("admissionReportingCloseReason", payload.admissionReportingCloseReason());
-        canonical.addProperty("primaryChangeReason", payload.primaryChangeReason());
-        JsonArray reasons = new JsonArray();
-        payload.coalescedChangeReasons().stream()
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .forEach(reasons::add);
-        canonical.add("coalescedChangeReasons", reasons);
-        return sha256Hex(gson.toJson(canonical));
-    }
-
-    @Nonnull
-    private static String sha256Hex(@Nonnull String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder(bytes.length * 2);
-            for (byte current : bytes) {
-                builder.append(String.format("%02x", current));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable.", exception);
-        }
     }
 
     private void logConfigNormalizationWarning(
@@ -846,13 +725,6 @@ public final class BackendMatchAdmissionStateReportingService {
     ) {
     }
 
-    private record BuiltAdmissionSnapshot(
-        BackendMatchAdmissionStatePayload payload,
-        String body,
-        List<String> consumedAdmissionReservationIdsIncluded
-    ) {
-    }
-
     private static final class MatchPublicationState {
         private boolean dirty;
         private long firstDirtyAtEpochMs;
@@ -861,15 +733,15 @@ public final class BackendMatchAdmissionStateReportingService {
         private String primaryChangeReason = "";
         private final LinkedHashSet<String> coalescedReasons = new LinkedHashSet<>();
         private final LinkedHashSet<String> pendingConsumedAdmissionReservationIds = new LinkedHashSet<>();
-        private BuiltAdmissionSnapshot inFlightSnapshot;
-        private BuiltAdmissionSnapshot pendingRetrySnapshot;
+        private AdmissionStatePayloadBuildResult inFlightSnapshot;
+        private AdmissionStatePayloadBuildResult pendingRetrySnapshot;
         private long retryNotBeforeEpochMs;
         private long lastAllocatedSequence;
     }
 
     private record AdmissionHttpResult(
         String matchId,
-        BuiltAdmissionSnapshot snapshot,
+        AdmissionStatePayloadBuildResult snapshot,
         int statusCode,
         String errorClass,
         String detail,
@@ -877,7 +749,7 @@ public final class BackendMatchAdmissionStateReportingService {
     ) {
         private static AdmissionHttpResult failure(
             @Nonnull String matchId,
-            @Nonnull BuiltAdmissionSnapshot snapshot,
+            @Nonnull AdmissionStatePayloadBuildResult snapshot,
             int statusCode,
             @Nonnull String errorClass,
             @Nonnull String detail
