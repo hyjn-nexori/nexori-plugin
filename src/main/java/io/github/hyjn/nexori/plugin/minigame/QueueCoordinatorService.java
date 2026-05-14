@@ -7,6 +7,8 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextBuildResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextFactory;
 import io.github.hyjn.nexori.plugin.minigame.logic.QueueCountdownPlanner;
+import io.github.hyjn.nexori.plugin.minigame.logic.QueueMembershipPlan;
+import io.github.hyjn.nexori.plugin.minigame.logic.QueueMembershipPlanner;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -43,6 +45,7 @@ public final class QueueCoordinatorService {
     private final HytaleLogger logger;
     private final MinigameLaunchContextFactory launchContextFactory = new MinigameLaunchContextFactory();
     private final QueueCountdownPlanner countdownPlanner = new QueueCountdownPlanner();
+    private final QueueMembershipPlanner membershipPlanner = new QueueMembershipPlanner();
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
     private long lastWorldTickAdvanceAtEpochMs;
@@ -93,23 +96,17 @@ public final class QueueCoordinatorService {
 
         long now = System.currentTimeMillis();
         QueueRuntimeState currentState = state(normalizedQueueId, now);
-        QueueMemberState member = new QueueMemberState(playerUuid, playerName, sourceLobbyId, sourcePortalId, now).normalized();
-        List<QueueMemberState> waitingMembers = new ArrayList<>(currentState.waitingMembers());
-        waitingMembers.add(member);
+        QueueMembershipPlan plan = membershipPlanner.join(
+            currentState,
+            queue.get(),
+            playerUuid,
+            playerName,
+            sourceLobbyId,
+            sourcePortalId,
+            now
+        );
         queueIdByPlayerUuid.put(playerUuid, normalizedQueueId);
-
-        QueueRuntimeState updated = new QueueRuntimeState(
-            currentState.queueId(),
-            currentState.phase(),
-            List.copyOf(waitingMembers),
-            currentState.readyMembers(),
-            currentState.countdownEndsAtEpochMs(),
-            currentState.readyAtEpochMs(),
-            now,
-            currentState.lastLaunchAttemptAtEpochMs(),
-            currentState.lastLaunchError()
-        ).normalized();
-        updated = maybeStartCountdown(updated, queue.get(), now);
+        QueueRuntimeState updated = plan.state();
         stateByQueueId.put(normalizedQueueId, updated);
         return JoinResult.joined(updated);
     }
@@ -1212,64 +1209,9 @@ public final class QueueCoordinatorService {
             .orElseThrow(() -> new IllegalStateException("Queue runtime references missing queue '" + queueId + "'."));
 
         QueueRuntimeState currentState = state(queueId, now);
-        List<QueueMemberState> waitingMembers = removePlayer(currentState.waitingMembers(), playerUuid);
-        List<QueueMemberState> readyMembers = removePlayer(currentState.readyMembers(), playerUuid);
-        QueueRuntimeState updated = new QueueRuntimeState(
-            currentState.queueId(),
-            currentState.phase(),
-            waitingMembers,
-            readyMembers,
-            currentState.countdownEndsAtEpochMs(),
-            currentState.readyAtEpochMs(),
-            now,
-            currentState.lastLaunchAttemptAtEpochMs(),
-            currentState.lastLaunchError()
-        ).normalized();
-
-        if (updated.hasReadyBatch() && updated.readyMembers().size() < queue.minPlayers()) {
-            List<QueueMemberState> mergedWaiting = new ArrayList<>(updated.readyMembers());
-            mergedWaiting.addAll(updated.waitingMembers());
-            updated = new QueueRuntimeState(
-                updated.queueId(),
-                QueuePhase.WAITING,
-                List.copyOf(mergedWaiting),
-                List.of(),
-                0L,
-                0L,
-                now,
-                0L,
-                ""
-            ).normalized();
-        }
-
-        if (updated.phase() == QueuePhase.COUNTDOWN && updated.waitingMembers().size() < queue.minPlayers()) {
-            updated = new QueueRuntimeState(
-                updated.queueId(),
-                QueuePhase.WAITING,
-                updated.waitingMembers(),
-                updated.readyMembers(),
-                0L,
-                updated.readyAtEpochMs(),
-                now,
-                updated.lastLaunchAttemptAtEpochMs(),
-                updated.lastLaunchError()
-            ).normalized();
-        }
-
-        updated = maybeStartCountdown(updated, queue, now);
+        QueueRuntimeState updated = membershipPlanner.remove(currentState, queue, playerUuid, now).state();
         stateByQueueId.put(queueId, updated);
         return RemovedPlayerResult.removed(queueId, updated);
-    }
-
-    @Nonnull
-    private static List<QueueMemberState> removePlayer(@Nonnull List<QueueMemberState> members, @Nonnull UUID playerUuid) {
-        List<QueueMemberState> filtered = new ArrayList<>();
-        for (QueueMemberState member : members) {
-            if (!member.playerUuid().equals(playerUuid)) {
-                filtered.add(member);
-            }
-        }
-        return List.copyOf(filtered);
     }
 
     @Nonnull
