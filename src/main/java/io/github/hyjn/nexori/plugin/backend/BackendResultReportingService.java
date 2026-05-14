@@ -1,12 +1,12 @@
 package io.github.hyjn.nexori.plugin.backend;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import com.hypixel.hytale.logger.HytaleLogger;
-import io.github.hyjn.nexori.plugin.backend.payload.BackendResultPayload;
-import io.github.hyjn.nexori.plugin.backend.payload.BackendResultPlayerPayload;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuildResult;
+import io.github.hyjn.nexori.plugin.backend.logic.BackendResultPayloadBuilder;
 import io.github.hyjn.nexori.plugin.backend.payload.BackendResultResponsePayload;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
@@ -47,6 +47,7 @@ public final class BackendResultReportingService {
     private final BackendResultStore resultStore;
     private final ServerIdentity localIdentity;
     private HttpClient httpClient;
+    private final BackendResultPayloadBuilder resultPayloadBuilder = new BackendResultPayloadBuilder();
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendResultHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Set<String> staleRequestIds = new HashSet<>();
@@ -182,8 +183,13 @@ public final class BackendResultReportingService {
         }
 
         String requestId = UUID.randomUUID().toString().toLowerCase();
-        BackendResultPayload payload = buildPayload(result, nowEpochMs);
-        String body = gson.toJson(payload);
+        BackendResultPayloadBuildResult payloadResult = resultPayloadBuilder.build(
+            SCHEMA_VERSION,
+            nowEpochMs,
+            localIdentity.serverId().toString(),
+            result
+        );
+        String body = payloadResult.body();
         HttpRequest request;
         try {
             request = HttpRequest.newBuilder(URI.create(config.resultsUrl()))
@@ -423,32 +429,6 @@ public final class BackendResultReportingService {
             return config.resultRetryIntervalMs();
         }
         return ERROR_BACKOFF_MS;
-    }
-
-    @Nonnull
-    private BackendResultPayload buildPayload(@Nonnull BackendResultStore.BackendResultRecord result, long sentAtEpochMs) {
-        List<BackendResultPlayerPayload> players = new ArrayList<>();
-        for (BackendResultStore.BackendResultPlayerRecord player : result.players()) {
-            players.add(new BackendResultPlayerPayload(player.playerUuid(), player.outcome(), player.reason()));
-        }
-        return new BackendResultPayload(
-            SCHEMA_VERSION,
-            result.resultId(),
-            sentAtEpochMs,
-            localIdentity.serverId().toString(),
-            result.localMatchId(),
-            result.externalMatchId(),
-            result.assignmentId(),
-            result.assignmentIdsByPlayerUuid(),
-            result.queueId(),
-            result.arenaId(),
-            result.rulesEngineId(),
-            List.copyOf(players),
-            result.reason(),
-            result.metadata(),
-            result.customData() == null ? new JsonObject() : result.customData().deepCopy(),
-            result.endedAtEpochMs()
-        );
     }
 
     @Nonnull
