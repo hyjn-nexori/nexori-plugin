@@ -1,8 +1,6 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
@@ -30,6 +28,8 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecider;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecision;
+import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextData;
+import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextParser;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidationResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidator;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -90,6 +90,7 @@ public final class ArenaMatchService {
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
+    private final LaunchContextParser launchContextParser = new LaunchContextParser();
     private final MatchResultValidator matchResultValidator = new MatchResultValidator();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
@@ -208,7 +209,7 @@ public final class ArenaMatchService {
 
         try {
             if ("minigame.launch".equalsIgnoreCase(flowType)) {
-                LaunchContext launch = LaunchContext.from(context);
+                LaunchContextData launch = launchContextParser.parse(context);
                 if (ASSIGNMENT_TYPE_BACKFILL.equalsIgnoreCase(launch.assignmentType())) {
                     logger.atInfo().log(
                         "Nexori BACKFILL setup disconnect did not consume admission reservation "
@@ -1029,9 +1030,9 @@ public final class ArenaMatchService {
     }
 
     private void handleLaunchArrival(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
-        LaunchContext launch;
+        LaunchContextData launch;
         try {
-            launch = LaunchContext.from(context);
+            launch = launchContextParser.parse(context);
         } catch (IllegalArgumentException exception) {
             logger.atWarning().withCause(exception).log(
                 "Rejected Nexori minigame launch arrival for player "
@@ -1178,7 +1179,7 @@ public final class ArenaMatchService {
     @Nonnull
     private Optional<String> findLaunchContextInconsistency(
         @Nonnull ArenaActiveMatch existing,
-        @Nonnull LaunchContext launch
+        @Nonnull LaunchContextData launch
     ) {
         if (!existing.queueId().equals(launch.queueId())) {
             return Optional.of("queueId mismatch");
@@ -1236,7 +1237,7 @@ public final class ArenaMatchService {
     private void rememberPendingInstanceSpawnTeleport(
         @Nonnull Ref<EntityStore> playerEntityRef,
         @Nonnull UUID playerUuid,
-        @Nonnull LaunchContext launch,
+        @Nonnull LaunchContextData launch,
         @Nonnull ArenaActiveMatch match
     ) {
         pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerUuid);
@@ -1546,7 +1547,7 @@ public final class ArenaMatchService {
 
     @Nonnull
     private Optional<Transform> resolveLaunchSpawnSlotTransform(
-        @Nonnull LaunchContext launch,
+        @Nonnull LaunchContextData launch,
         @Nonnull JsonObject context
     ) {
         if (!launch.usesInstanceTemplate()) {
@@ -1905,44 +1906,6 @@ public final class ArenaMatchService {
         return normalizeRequired(root.get(key).getAsString(), "Minigame context field '" + key + "' cannot be blank.");
     }
 
-    @Nonnull
-    private static List<UUID> readExpectedPlayerUuids(@Nonnull JsonObject root) {
-        if (!root.has("expectedPlayerUuids")) {
-            return List.of();
-        }
-        if (!root.get("expectedPlayerUuids").isJsonArray()) {
-            throw new IllegalArgumentException("Minigame context field 'expectedPlayerUuids' must be an array.");
-        }
-        JsonArray array = root.getAsJsonArray("expectedPlayerUuids");
-        List<UUID> playerUuids = new ArrayList<>();
-        for (JsonElement element : array) {
-            if (element == null || element.isJsonNull()) {
-                continue;
-            }
-            String rawUuid = normalizeOptional(element.getAsString(), "");
-            if (rawUuid.isBlank()) {
-                continue;
-            }
-            try {
-                playerUuids.add(UUID.fromString(rawUuid));
-            } catch (IllegalArgumentException exception) {
-                throw new IllegalArgumentException("Minigame context field 'expectedPlayerUuids' contains invalid UUID '" + rawUuid + "'.", exception);
-            }
-        }
-        return PlayerUuidLists.canonicalize(playerUuids);
-    }
-
-    private static UUID readOptionalUuid(@Nonnull JsonObject root, @Nonnull String key) {
-        if (!root.has(key) || root.get(key).isJsonNull()) {
-            return null;
-        }
-        try {
-            return UUID.fromString(root.get(key).getAsString());
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("Minigame context field '" + key + "' contains invalid UUID.", exception);
-        }
-    }
-
     private static boolean optionalIdentityMismatch(String left, String right) {
         String normalizedLeft = normalizeOptional(left, "");
         String normalizedRight = normalizeOptional(right, "");
@@ -2109,98 +2072,6 @@ public final class ArenaMatchService {
                 + " stableTicks=" + pending.stableTicks()
                 + " distanceSquared=" + distanceSquared
         );
-    }
-
-    private record LaunchContext(
-        String matchId,
-        String queueId,
-        String arenaId,
-        String originLobbyId,
-        String returnConnectionAddress,
-        String returnFallbackTargetId,
-        String launchTravelProfileId,
-        String instanceTemplateId,
-        String matchResolutionTriggerId,
-        String rulesEngineId,
-        String assignmentId,
-        String assignmentType,
-        String externalMatchId,
-        String matchSource,
-        int admissionPolicySchemaVersion,
-        int admissionCapacity,
-        boolean backfillEnabled,
-        String backfillMode,
-        int backfillWindowSeconds,
-        List<UUID> expectedPlayerUuids,
-        int expectedPlayerCount,
-        UUID playerUuid,
-        String admissionReservationId,
-        long admissionExpiresAtEpochMs,
-        String reportingServerId,
-        ArenaPlayerReturnTarget playerReturnTarget
-    ) {
-
-        private boolean usesInstanceTemplate() {
-            return !instanceTemplateId.isBlank()
-                && !ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(instanceTemplateId);
-        }
-
-        @Nonnull
-        private static LaunchContext from(@Nonnull JsonObject root) {
-            return new LaunchContext(
-                NexoriMatchIds.normalizeRequiredMatchId(readRequired(root, "matchId"), "Minigame context field 'matchId' cannot be blank."),
-                QueueDefinition.normalizeId(readRequired(root, "queueId")),
-                ArenaDefinition.normalizeId(readRequired(root, "arenaId")),
-                SourceContextId.normalizeId(readRequired(root, "originLobbyId")),
-                readRequired(root, "returnConnectionAddress"),
-                readRequired(root, "returnFallbackTargetId"),
-                readRequired(root, "launchTravelProfileId").toLowerCase(),
-                root.has("instanceTemplateId")
-                    ? normalizeOptional(root.get("instanceTemplateId").getAsString(), ArenaDefinition.NO_INSTANCE_TEMPLATE_ID)
-                    : ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-                root.has("matchResolutionTriggerId")
-                    ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
-                    : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
-                root.has("rulesEngineId")
-                    ? ArenaDefinition.normalizeRulesEngineId(root.get("rulesEngineId").getAsString())
-                    : "",
-                root.has("assignmentId")
-                    ? normalizeOptional(root.get("assignmentId").getAsString(), "")
-                    : "",
-                root.has("assignmentType")
-                    ? normalizeOptional(root.get("assignmentType").getAsString(), ASSIGNMENT_TYPE_INITIAL_MATCH)
-                    : ASSIGNMENT_TYPE_INITIAL_MATCH,
-                root.has("externalMatchId")
-                    ? normalizeOptional(root.get("externalMatchId").getAsString(), "")
-                    : "",
-                root.has("matchSource")
-                    ? normalizeOptional(root.get("matchSource").getAsString(), ArenaMatchSource.defaultSource().id())
-                    : ArenaMatchSource.defaultSource().id(),
-                root.has("admissionPolicySchemaVersion") ? Math.max(root.get("admissionPolicySchemaVersion").getAsInt(), 0) : 0,
-                root.has("admissionCapacity") ? Math.max(root.get("admissionCapacity").getAsInt(), 0) : 0,
-                root.has("backfillEnabled") && root.get("backfillEnabled").getAsBoolean(),
-                root.has("backfillMode")
-                    ? normalizeOptional(root.get("backfillMode").getAsString(), QueueBackfillMode.defaultMode().id())
-                    : QueueBackfillMode.defaultMode().id(),
-                root.has("backfillWindowSeconds") ? Math.max(root.get("backfillWindowSeconds").getAsInt(), 0) : 0,
-                readExpectedPlayerUuids(root),
-                root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0,
-                readOptionalUuid(root, "playerUuid"),
-                root.has("admissionReservationId")
-                    ? normalizeOptional(root.get("admissionReservationId").getAsString(), "")
-                    : "",
-                root.has("admissionExpiresAtEpochMs") ? Math.max(root.get("admissionExpiresAtEpochMs").getAsLong(), 0L) : 0L,
-                root.has("reportingServerId")
-                    ? normalizeOptional(root.get("reportingServerId").getAsString(), "")
-                    : "",
-                new ArenaPlayerReturnTarget(
-                    SourceContextId.normalizeId(readRequired(root, "originLobbyId")),
-                    readRequired(root, "returnConnectionAddress"),
-                    readRequired(root, "returnFallbackTargetId"),
-                    readRequired(root, "launchTravelProfileId").toLowerCase()
-                ).normalized()
-            );
-        }
     }
 
     public enum EndMatchOutcome {
