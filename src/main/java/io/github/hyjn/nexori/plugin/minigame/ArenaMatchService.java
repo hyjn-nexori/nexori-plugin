@@ -30,6 +30,8 @@ import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecider;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecision;
 import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextData;
 import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextParser;
+import io.github.hyjn.nexori.plugin.minigame.logic.MatchPlacementEvaluation;
+import io.github.hyjn.nexori.plugin.minigame.logic.MatchPlacementEvaluator;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidationResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidator;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
@@ -91,6 +93,7 @@ public final class ArenaMatchService {
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
     private final LaunchContextParser launchContextParser = new LaunchContextParser();
+    private final MatchPlacementEvaluator matchPlacementEvaluator = new MatchPlacementEvaluator();
     private final MatchResultValidator matchResultValidator = new MatchResultValidator();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
@@ -426,24 +429,21 @@ public final class ArenaMatchService {
             return Optional.empty();
         }
 
-        int expectedPlayers = match.expectedPlayerCount();
-        int arrivedPlayers = countArrivedInitialPlayers(match);
-        int placedPlayers = countPlacedInitialPlayers(match);
-        boolean placementComplete = isPlacementComplete(match);
+        MatchPlacementEvaluation evaluation = evaluatePlacement(match);
 
         maybeLogPlacementState(
             match,
-            expectedPlayers,
-            arrivedPlayers,
-            placedPlayers,
-            placementComplete
+            evaluation.expectedPlayers(),
+            evaluation.arrivedInitialPlayers(),
+            evaluation.placedInitialPlayers(),
+            evaluation.placementComplete()
         );
 
         return Optional.of(new MatchPlacementState(
-            expectedPlayers,
-            arrivedPlayers,
-            placedPlayers,
-            placementComplete
+            evaluation.expectedPlayers(),
+            evaluation.arrivedInitialPlayers(),
+            evaluation.placedInitialPlayers(),
+            evaluation.placementComplete()
         ));
     }
 
@@ -1815,53 +1815,6 @@ public final class ArenaMatchService {
         }
     }
 
-    private int countPlacedPlayers(@Nonnull ArenaActiveMatch match) {
-        int placedPlayers = 0;
-        for (UUID playerUuid : match.arrivedPlayerUuids()) {
-            PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerUuid);
-            if (pending == null
-                || pending.phase() == PlacementPhase.CONFIRMED
-                || pending.phase() == PlacementPhase.FALLBACK) {
-                placedPlayers++;
-            }
-        }
-        return placedPlayers;
-    }
-
-    private int countArrivedInitialPlayers(@Nonnull ArenaActiveMatch match) {
-        if (match.expectedPlayerUuids().isEmpty()) {
-            return 0;
-        }
-        int arrivedInitialPlayers = 0;
-        LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
-        for (UUID playerUuid : match.arrivedPlayerUuids()) {
-            if (expected.contains(playerUuid)) {
-                arrivedInitialPlayers++;
-            }
-        }
-        return arrivedInitialPlayers;
-    }
-
-    private int countPlacedInitialPlayers(@Nonnull ArenaActiveMatch match) {
-        if (match.expectedPlayerUuids().isEmpty()) {
-            return 0;
-        }
-        int placedInitialPlayers = 0;
-        LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
-        for (UUID playerUuid : match.arrivedPlayerUuids()) {
-            if (!expected.contains(playerUuid)) {
-                continue;
-            }
-            PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerUuid);
-            if (pending == null
-                || pending.phase() == PlacementPhase.CONFIRMED
-                || pending.phase() == PlacementPhase.FALLBACK) {
-                placedInitialPlayers++;
-            }
-        }
-        return placedInitialPlayers;
-    }
-
     @Nonnull
     private String buildReturnContextJson(
         @Nonnull ArenaActiveMatch match,
@@ -1963,26 +1916,41 @@ public final class ArenaMatchService {
     @Nonnull
     private ArenaActiveMatch reconcileAdmissionLifecycle(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
         ArenaActiveMatch updated = match;
-        if (updated.placementCompletedAtEpochMs() <= 0L && isPlacementComplete(updated)) {
+        MatchPlacementEvaluation evaluation = evaluatePlacement(updated);
+        if (evaluation.shouldMarkPlacementCompleted()) {
             updated = updated.withPlacementCompleted(nowEpochMs, nowEpochMs);
         }
-        if (updated.completedAtEpochMs() <= 0L && shouldMarkMatchCompleted(updated)) {
+        evaluation = evaluatePlacement(updated);
+        if (updated.completedAtEpochMs() <= 0L && evaluation.shouldMarkMatchCompleted()) {
             updated = updated.withCompleted(nowEpochMs, nowEpochMs);
         }
         return updated;
     }
 
-    private boolean isPlacementComplete(@Nonnull ArenaActiveMatch match) {
-        int expectedPlayers = match.expectedPlayerCount();
-        int arrivedPlayers = countArrivedInitialPlayers(match);
-        int placedPlayers = countPlacedInitialPlayers(match);
-        return expectedPlayers > 0
-            && arrivedPlayers >= expectedPlayers
-            && placedPlayers >= expectedPlayers;
+    @Nonnull
+    private MatchPlacementEvaluation evaluatePlacement(@Nonnull ArenaActiveMatch match) {
+        return matchPlacementEvaluator.evaluate(match, pendingUnconfirmedPlacementPlayerUuids(match));
     }
 
-    private boolean shouldMarkMatchCompleted(@Nonnull ArenaActiveMatch match) {
-        return match.hasWinner() || match.hasSubmittedResult();
+    @Nonnull
+    private Set<UUID> pendingUnconfirmedPlacementPlayerUuids(@Nonnull ArenaActiveMatch match) {
+        if (match.expectedPlayerUuids().isEmpty() || match.arrivedPlayerUuids().isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<UUID> pendingUnconfirmed = new LinkedHashSet<>();
+        LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
+        for (UUID playerUuid : match.arrivedPlayerUuids()) {
+            if (!expected.contains(playerUuid)) {
+                continue;
+            }
+            PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerUuid);
+            if (pending != null
+                && pending.phase() != PlacementPhase.CONFIRMED
+                && pending.phase() != PlacementPhase.FALLBACK) {
+                pendingUnconfirmed.add(playerUuid);
+            }
+        }
+        return Set.copyOf(pendingUnconfirmed);
     }
 
     private void storeUpdatedMatchOrCloseEmptyRuntime(
