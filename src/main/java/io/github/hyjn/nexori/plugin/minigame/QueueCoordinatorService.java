@@ -7,6 +7,7 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextBuildResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MinigameLaunchContextFactory;
 import io.github.hyjn.nexori.plugin.minigame.logic.QueueCountdownPlanner;
+import io.github.hyjn.nexori.plugin.minigame.logic.QueueLaunchOutcomePlanner;
 import io.github.hyjn.nexori.plugin.minigame.logic.QueueMembershipPlan;
 import io.github.hyjn.nexori.plugin.minigame.logic.QueueMembershipPlanner;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
@@ -46,6 +47,7 @@ public final class QueueCoordinatorService {
     private final MinigameLaunchContextFactory launchContextFactory = new MinigameLaunchContextFactory();
     private final QueueCountdownPlanner countdownPlanner = new QueueCountdownPlanner();
     private final QueueMembershipPlanner membershipPlanner = new QueueMembershipPlanner();
+    private final QueueLaunchOutcomePlanner launchOutcomePlanner = new QueueLaunchOutcomePlanner();
     private final Map<String, QueueRuntimeState> stateByQueueId = new LinkedHashMap<>();
     private final Map<UUID, String> queueIdByPlayerUuid = new LinkedHashMap<>();
     private long lastWorldTickAdvanceAtEpochMs;
@@ -263,11 +265,11 @@ public final class QueueCoordinatorService {
 
             Optional<ArenaDefinition> arena = selectLaunchArena(queue);
             if (arena.isEmpty()) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(
+                stateByQueueId.put(queue.queueId(), launchOutcomePlanner.rememberLaunchFailure(
                     currentState,
                     nowEpochMs,
                     "No enabled arena is currently available for this queue."
-                ));
+                ).state());
                 continue;
             }
 
@@ -284,35 +286,20 @@ public final class QueueCoordinatorService {
             }
 
             if (liveReadyMembers.size() < queue.minPlayers()) {
-                List<QueueMemberState> mergedWaiting = new ArrayList<>(currentState.waitingMembers());
-                mergedWaiting.addAll(liveReadyMembers);
-                QueueRuntimeState updated = new QueueRuntimeState(
-                    currentState.queueId(),
-                    QueuePhase.WAITING,
-                    List.copyOf(mergedWaiting),
-                    List.of(),
-                    0L,
-                    0L,
-                    nowEpochMs,
-                    0L,
-                    ""
-                ).normalized();
-                updated = maybeStartCountdown(updated, queue, nowEpochMs);
-                stateByQueueId.put(queue.queueId(), updated);
+                stateByQueueId.put(queue.queueId(), launchOutcomePlanner.collapseInsufficientLiveReadyMembers(
+                    currentState,
+                    queue,
+                    liveReadyMembers,
+                    nowEpochMs
+                ).state());
                 continue;
             }
 
-            QueueRuntimeState readyState = new QueueRuntimeState(
-                currentState.queueId(),
-                QueuePhase.READY,
-                currentState.waitingMembers(),
-                List.copyOf(liveReadyMembers),
-                0L,
-                currentState.readyAtEpochMs(),
-                nowEpochMs,
-                nowEpochMs,
-                ""
-            ).normalized();
+            QueueRuntimeState readyState = launchOutcomePlanner.prepareReadyBatchLaunchAttempt(
+                currentState,
+                liveReadyMembers,
+                nowEpochMs
+            ).state();
             stateByQueueId.put(queue.queueId(), readyState);
 
             DispatchLaunchResult dispatch = dispatchLaunch(
@@ -329,48 +316,24 @@ public final class QueueCoordinatorService {
                 ""
             );
             if (dispatch.failedBeforeLaunch()) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(readyState, nowEpochMs, dispatch.errorMessage()));
+                stateByQueueId.put(queue.queueId(), launchOutcomePlanner.rememberLaunchFailure(
+                    readyState,
+                    nowEpochMs,
+                    dispatch.errorMessage()
+                ).state());
                 continue;
             }
             for (LaunchCandidate candidate : dispatch.launched()) {
                 queueIdByPlayerUuid.remove(candidate.member().playerUuid());
             }
-            if (dispatch.succeeded()) {
-                QueueRuntimeState updated = new QueueRuntimeState(
-                    readyState.queueId(),
-                    QueuePhase.WAITING,
-                    readyState.waitingMembers(),
-                    List.of(),
-                    0L,
-                    0L,
-                    nowEpochMs,
-                    0L,
-                    ""
-                ).normalized();
-                updated = maybeStartCountdown(updated, queue, nowEpochMs);
-                stateByQueueId.put(queue.queueId(), updated);
-                continue;
-            }
-
-            List<QueueMemberState> unlaunchedReady = new ArrayList<>();
-            for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
-                unlaunchedReady.add(launchCandidates.get(index).member());
-            }
-
-            List<QueueMemberState> mergedWaiting = new ArrayList<>(readyState.waitingMembers());
-            mergedWaiting.addAll(unlaunchedReady);
-            QueueRuntimeState updated = new QueueRuntimeState(
-                readyState.queueId(),
-                QueuePhase.WAITING,
-                List.copyOf(mergedWaiting),
-                List.of(),
-                0L,
-                0L,
-                nowEpochMs,
-                0L,
-                ""
-            ).normalized();
-            updated = maybeStartCountdown(updated, queue, nowEpochMs);
+            QueueRuntimeState updated = launchOutcomePlanner.completeReadyBatchLaunch(
+                readyState,
+                queue,
+                liveReadyMembers,
+                dispatch.launched().size(),
+                dispatch.succeeded(),
+                nowEpochMs
+            ).state();
             stateByQueueId.put(queue.queueId(), updated);
         }
     }
@@ -534,24 +497,22 @@ public final class QueueCoordinatorService {
             assignmentMembers.add(member);
         }
 
-        QueueRuntimeState launchingState = new QueueRuntimeState(
-            currentState.queueId(),
-            QueuePhase.READY,
-            removePlayers(currentState.waitingMembers(), playerUuids),
-            List.copyOf(assignmentMembers),
-            0L,
-            nowEpochMs,
-            nowEpochMs,
-            nowEpochMs,
-            ""
-        ).normalized();
+        QueueRuntimeState launchingState = launchOutcomePlanner.prepareAssignmentLaunchAttempt(
+            currentState,
+            assignmentMembers,
+            nowEpochMs
+        ).state();
         stateByQueueId.put(queue.queueId(), launchingState);
 
         List<LaunchCandidate> launchCandidates = new ArrayList<>();
         for (QueueMemberState member : assignmentMembers) {
             PlayerRef playerRef = Universe.get().getPlayer(member.playerUuid());
             if (playerRef == null || !playerRef.isValid()) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(launchingState, nowEpochMs, "Assigned player went offline before launch."));
+                stateByQueueId.put(queue.queueId(), launchOutcomePlanner.rememberLaunchFailure(
+                    launchingState,
+                    nowEpochMs,
+                    "Assigned player went offline before launch."
+                ).state());
                 return AssignmentLaunchResult.rejected("", "Assigned player went offline before launch.");
             }
             launchCandidates.add(new LaunchCandidate(member, playerRef));
@@ -574,23 +535,14 @@ public final class QueueCoordinatorService {
             queueIdByPlayerUuid.remove(candidate.member().playerUuid());
         }
 
-        List<QueueMemberState> unlaunchedReady = new ArrayList<>();
-        for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
-            unlaunchedReady.add(launchCandidates.get(index).member());
-        }
-        List<QueueMemberState> mergedWaiting = new ArrayList<>(launchingState.waitingMembers());
-        mergedWaiting.addAll(unlaunchedReady);
-        QueueRuntimeState updated = new QueueRuntimeState(
-            queue.queueId(),
-            QueuePhase.WAITING,
-            List.copyOf(mergedWaiting),
-            List.of(),
-            0L,
-            0L,
-            nowEpochMs,
-            0L,
-            dispatch.succeeded() ? "" : dispatch.errorMessage()
-        ).normalized();
+        QueueRuntimeState updated = launchOutcomePlanner.completeAssignmentLaunch(
+            launchingState,
+            assignmentMembers,
+            dispatch.launched().size(),
+            dispatch.succeeded(),
+            dispatch.errorMessage(),
+            nowEpochMs
+        ).state();
         stateByQueueId.put(queue.queueId(), updated);
 
         if (dispatch.succeeded()) {
@@ -717,24 +669,22 @@ public final class QueueCoordinatorService {
             return AssignmentLaunchResult.rejected(normalizedMatchId, exception.getMessage());
         }
 
-        QueueRuntimeState launchingState = new QueueRuntimeState(
-            currentState.queueId(),
-            QueuePhase.READY,
-            removePlayers(currentState.waitingMembers(), playerUuids),
-            List.copyOf(assignmentMembers),
-            0L,
-            nowEpochMs,
-            nowEpochMs,
-            nowEpochMs,
-            ""
-        ).normalized();
+        QueueRuntimeState launchingState = launchOutcomePlanner.prepareAssignmentLaunchAttempt(
+            currentState,
+            assignmentMembers,
+            nowEpochMs
+        ).state();
         stateByQueueId.put(queue.queueId(), launchingState);
 
         List<LaunchCandidate> launchCandidates = new ArrayList<>();
         for (QueueMemberState member : assignmentMembers) {
             PlayerRef playerRef = Universe.get().getPlayer(member.playerUuid());
             if (playerRef == null || !playerRef.isValid()) {
-                stateByQueueId.put(queue.queueId(), rememberLaunchFailure(launchingState, nowEpochMs, "Assigned player went offline before launch."));
+                stateByQueueId.put(queue.queueId(), launchOutcomePlanner.rememberLaunchFailure(
+                    launchingState,
+                    nowEpochMs,
+                    "Assigned player went offline before launch."
+                ).state());
                 return AssignmentLaunchResult.rejected(normalizedMatchId, "Assigned player went offline before launch.");
             }
             launchCandidates.add(new LaunchCandidate(member, playerRef));
@@ -751,23 +701,14 @@ public final class QueueCoordinatorService {
             queueIdByPlayerUuid.remove(candidate.member().playerUuid());
         }
 
-        List<QueueMemberState> unlaunchedReady = new ArrayList<>();
-        for (int index = dispatch.launched().size(); index < launchCandidates.size(); index++) {
-            unlaunchedReady.add(launchCandidates.get(index).member());
-        }
-        List<QueueMemberState> mergedWaiting = new ArrayList<>(launchingState.waitingMembers());
-        mergedWaiting.addAll(unlaunchedReady);
-        QueueRuntimeState updated = new QueueRuntimeState(
-            queue.queueId(),
-            QueuePhase.WAITING,
-            List.copyOf(mergedWaiting),
-            List.of(),
-            0L,
-            0L,
-            nowEpochMs,
-            0L,
-            dispatch.succeeded() ? "" : dispatch.errorMessage()
-        ).normalized();
+        QueueRuntimeState updated = launchOutcomePlanner.completeAssignmentLaunch(
+            launchingState,
+            assignmentMembers,
+            dispatch.launched().size(),
+            dispatch.succeeded(),
+            dispatch.errorMessage(),
+            nowEpochMs
+        ).state();
         stateByQueueId.put(queue.queueId(), updated);
 
         if (!dispatch.launched().isEmpty()) {
@@ -779,26 +720,6 @@ public final class QueueCoordinatorService {
     @Nonnull
     private QueueRuntimeState maybeStartCountdown(@Nonnull QueueRuntimeState state, @Nonnull QueueDefinition queue, long nowEpochMs) {
         return countdownPlanner.maybeStartCountdown(state, queue, nowEpochMs);
-    }
-
-    @Nonnull
-    private QueueRuntimeState rememberLaunchFailure(
-        @Nonnull QueueRuntimeState state,
-        long nowEpochMs,
-        @Nonnull String rawError
-    ) {
-        String launchError = rawError == null || rawError.isBlank() ? "Unknown queue launch failure." : rawError.trim();
-        return new QueueRuntimeState(
-            state.queueId(),
-            QueuePhase.READY,
-            state.waitingMembers(),
-            state.readyMembers(),
-            0L,
-            state.readyAtEpochMs() <= 0L ? nowEpochMs : state.readyAtEpochMs(),
-            nowEpochMs,
-            nowEpochMs,
-            launchError
-        ).normalized();
     }
 
     @Nonnull
@@ -1212,17 +1133,6 @@ public final class QueueCoordinatorService {
         QueueRuntimeState updated = membershipPlanner.remove(currentState, queue, playerUuid, now).state();
         stateByQueueId.put(queueId, updated);
         return RemovedPlayerResult.removed(queueId, updated);
-    }
-
-    @Nonnull
-    private static List<QueueMemberState> removePlayers(@Nonnull List<QueueMemberState> members, @Nonnull List<UUID> playerUuids) {
-        List<QueueMemberState> filtered = new ArrayList<>();
-        for (QueueMemberState member : members) {
-            if (!playerUuids.contains(member.playerUuid())) {
-                filtered.add(member);
-            }
-        }
-        return List.copyOf(filtered);
     }
 
     private record LaunchCandidate(
