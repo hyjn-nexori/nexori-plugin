@@ -28,6 +28,8 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
+import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecider;
+import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecision;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -66,7 +68,7 @@ public final class ArenaMatchService {
     private static final long INITIAL_PLACEMENT_POST_READY_GRACE_MS = 750L;
     private static final String RESPAWN_PAGE_CLASS_NAME = "com.hypixel.hytale.server.core.entity.entities.player.pages.RespawnPage";
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
-    private static final String ASSIGNMENT_TYPE_BACKFILL = "BACKFILL";
+    private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
     private static final String CLOSE_REASON_MATCH_RUNTIME_ENDED = "MATCH_RUNTIME_ENDED";
     public static final int MAX_RESULT_REASON_LENGTH = 512;
     public static final int MAX_RESULT_METADATA_ENTRIES = 32;
@@ -85,6 +87,7 @@ public final class ArenaMatchService {
     private final MatchSessionService matchSessionService;
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
+    private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
@@ -1262,19 +1265,17 @@ public final class ArenaMatchService {
             }
         }
         if (backfillArrival) {
-            Optional<String> invalidBackfillArrival = validateBackfillArrival(existing, launch, playerRef.getUuid(), now);
-            if (invalidBackfillArrival.isPresent()) {
-                logRejectedLaunchArrival(playerRef.getUuid(), launch.matchId(), invalidBackfillArrival.get());
-                return;
-            }
-            if (existing != null && existing.hasAcceptedBackfillReservation(launch.admissionReservationId())) {
-                logger.atInfo().log(
-                    "Ignoring duplicate Nexori backfill arrival replay for reservation "
-                        + launch.admissionReservationId()
-                        + " on match "
-                        + launch.matchId()
-                        + "."
-                );
+            BackfillAdmissionDecision decision = backfillAdmissionDecider.decide(
+                existing,
+                launch.assignmentType(),
+                launch.playerUuid(),
+                playerRef.getUuid(),
+                launch.admissionReservationId(),
+                launch.admissionExpiresAtEpochMs(),
+                now
+            );
+            if (decision.rejected()) {
+                logRejectedLaunchArrival(playerRef.getUuid(), launch.matchId(), decision.reason());
                 return;
             }
         }
@@ -1362,66 +1363,6 @@ public final class ArenaMatchService {
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
         ));
-    }
-
-    @Nonnull
-    private Optional<String> validateBackfillArrival(
-        ArenaActiveMatch existing,
-        @Nonnull LaunchContext launch,
-        @Nonnull UUID playerUuid,
-        long nowEpochMs
-    ) {
-        if (existing == null) {
-            return Optional.of("backfill launch requires an existing match");
-        }
-        if (!ASSIGNMENT_TYPE_BACKFILL.equalsIgnoreCase(launch.assignmentType())) {
-            return Optional.of("assignmentType is not BACKFILL");
-        }
-        if (launch.playerUuid() == null || !launch.playerUuid().equals(playerUuid)) {
-            return Optional.of("playerUuid does not match the backfill ticket owner");
-        }
-        if (launch.admissionReservationId().isBlank()) {
-            return Optional.of("admissionReservationId is required");
-        }
-        if (launch.admissionExpiresAtEpochMs() <= 0L || nowEpochMs > launch.admissionExpiresAtEpochMs()) {
-            return Optional.of("admission reservation expired");
-        }
-        if (existing.effectiveMatchSource() != ArenaMatchSource.BACKEND_DRIVEN) {
-            return Optional.of("match is not BACKEND_DRIVEN");
-        }
-        if (existing.explicitAdmissionClosed()) {
-            return Optional.of("admission was explicitly closed");
-        }
-        if (!isBackfillAdmissionOpen(existing, nowEpochMs)) {
-            return Optional.of("match is no longer accepting backfill arrivals");
-        }
-        int initialRosterSize = Math.max(existing.expectedPlayerCount(), existing.expectedPlayerUuids().size());
-        int admittedSlotCount = Math.min(existing.admissionCapacity(), initialRosterSize + existing.consumedBackfillAdmissionCount());
-        if (admittedSlotCount >= existing.admissionCapacity()) {
-            return Optional.of("admission capacity has already been reached");
-        }
-        if (existing.hasAcceptedBackfillReservation(launch.admissionReservationId())) {
-            return Optional.of("admission reservation was already accepted");
-        }
-        return Optional.empty();
-    }
-
-    private boolean isBackfillAdmissionOpen(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
-        return switch (match.effectiveBackfillMode()) {
-            case NONE -> false;
-            case PLACEMENT_ONLY -> match.placementCompletedAtEpochMs() <= 0L;
-            case ACTIVE_WINDOW -> {
-                if (match.placementCompletedAtEpochMs() <= 0L) {
-                    yield true;
-                }
-                long startedAtEpochMs = match.matchStartedAtEpochMs();
-                if (startedAtEpochMs <= 0L) {
-                    yield false;
-                }
-                long closesAtEpochMs = startedAtEpochMs + Math.max(match.backfillWindowSeconds(), 0) * 1000L;
-                yield closesAtEpochMs > 0L && nowEpochMs <= closesAtEpochMs;
-            }
-        };
     }
 
     @Nonnull
