@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin.bootstrap;
 
 import com.hypixel.hytale.logger.HytaleLogger;
+import io.github.hyjn.nexori.plugin.bootstrap.logic.BootstrapTextMigrationPlanner;
 
 import javax.annotation.Nonnull;
 import java.io.IOException;
@@ -49,17 +50,8 @@ public final class BootstrapPersistenceMigrationService {
             return false;
         }
 
-        String updated = original;
-        for (BootstrapTextReplacement replacement : replacements) {
-            BootstrapTextReplacement normalized = replacement.normalized();
-            if (!normalized.isEffective()) {
-                continue;
-            }
-            if (!supportsScope(file, normalized.scope())) {
-                continue;
-            }
-            updated = updated.replace(normalized.oldValue(), normalized.newValue());
-        }
+        String updated = BootstrapTextMigrationPlanner.applyReplacements(
+            original, file.getFileName().toString(), replacements);
 
         if (updated.equals(original)) {
             return false;
@@ -88,15 +80,6 @@ public final class BootstrapPersistenceMigrationService {
         } catch (CharacterCodingException exception) {
             return null;
         }
-    }
-
-    private boolean supportsScope(@Nonnull Path file, @Nonnull BootstrapTextReplacementScope scope) {
-        if (scope == BootstrapTextReplacementScope.ALL_TEXT_FILES) {
-            return true;
-        }
-
-        String fileName = file.getFileName().toString().toLowerCase();
-        return fileName.endsWith(".json") || fileName.endsWith(".jsonl");
     }
 
     public record MigrationReport(int scannedFiles, int changedFiles) {
