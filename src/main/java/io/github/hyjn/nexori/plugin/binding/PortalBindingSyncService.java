@@ -14,12 +14,12 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.protocol.HostAddress;
+import io.github.hyjn.nexori.plugin.binding.logic.PortalBindingApplyPlanner;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
-import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
@@ -212,10 +212,7 @@ public final class PortalBindingSyncService {
         String message;
         try {
             String localConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
-            boolean localTarget = payload.destinationConnectionAddress() == null
-                || payload.destinationConnectionAddress().isBlank()
-                || (!localConnectionAddress.isBlank() && payload.destinationConnectionAddress().equalsIgnoreCase(localConnectionAddress));
-            if (localTarget) {
+            if (PortalBindingApplyPlanner.isLocalTarget(payload.destinationConnectionAddress(), localConnectionAddress)) {
                 triggerBindingService.bindPortalCollisionLocalTarget(
                     payload.sourcePortalId(),
                     payload.destinationTargetId()
@@ -225,14 +222,14 @@ public final class PortalBindingSyncService {
                     payload.sourcePortalId(),
                     payload.destinationConnectionAddress(),
                     payload.destinationTargetId(),
-                    payload.travelProfileId() == null || payload.travelProfileId().isBlank() ? TravelProfileType.KEEP_INVENTORY.id() : payload.travelProfileId(),
-                    payload.contextJson() == null || payload.contextJson().isBlank() ? "{}" : payload.contextJson()
+                    PortalBindingApplyPlanner.effectiveTravelProfileId(payload.travelProfileId()),
+                    PortalBindingApplyPlanner.effectiveContextJson(payload.contextJson())
                 );
             }
-            message = "Applied portal binding on " + (localConnectionAddress.isBlank() ? referral.issuer().connectionAddress() : localConnectionAddress) + ".";
+            message = PortalBindingApplyPlanner.successMessage(localConnectionAddress, referral.issuer().connectionAddress());
         } catch (IOException | IllegalArgumentException exception) {
             success = false;
-            message = "Could not apply portal binding on " + referral.issuer().connectionAddress() + ": " + exception.getMessage();
+            message = PortalBindingApplyPlanner.failureMessage(referral.issuer().connectionAddress(), exception.getMessage());
         }
 
         try {

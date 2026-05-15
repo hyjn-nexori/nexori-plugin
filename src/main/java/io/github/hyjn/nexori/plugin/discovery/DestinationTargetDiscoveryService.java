@@ -22,6 +22,7 @@ import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceService;
+import io.github.hyjn.nexori.plugin.discovery.logic.DestinationTargetSummaryBuilder;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralService;
 import io.github.hyjn.nexori.plugin.secure.VerifiedSecureReferral;
@@ -291,7 +292,7 @@ public final class DestinationTargetDiscoveryService {
 
         // Portal-owned targets keep their portal id in the discovered cache so the UI can preserve portal-specific actions.
         List<DiscoveredDestinationTargetSummary> targets = destinationTargetService.list().stream()
-            .map(target -> summarizeTarget(target, portalIdsByTargetId))
+            .map(target -> DestinationTargetSummaryBuilder.summarize(target, portalIdsByTargetId))
             .toList();
 
         try {
@@ -321,20 +322,6 @@ public final class DestinationTargetDiscoveryService {
         } catch (IOException | GeneralSecurityException exception) {
             logger.atWarning().withCause(exception).log("Failed to answer Nexori destination target discovery request.");
         }
-    }
-
-    @Nonnull
-    private static DiscoveredDestinationTargetSummary summarizeTarget(
-        @Nonnull DestinationTargetDefinition target,
-        @Nonnull Map<String, String> portalIdsByTargetId
-    ) {
-        if (target.kind() != DestinationTargetKind.PORTAL) {
-            return DiscoveredDestinationTargetSummary.from(target);
-        }
-        return DiscoveredDestinationTargetSummary.from(
-            target,
-            portalIdsByTargetId.getOrDefault(target.id(), "")
-        );
     }
 
     private void handleResponse(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {

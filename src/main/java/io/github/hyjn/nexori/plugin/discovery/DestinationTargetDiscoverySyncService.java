@@ -18,6 +18,8 @@ import io.github.hyjn.nexori.plugin.bootstrap.BundleMember;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundle;
 import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
+import io.github.hyjn.nexori.plugin.discovery.logic.DestinationTargetSummaryBuilder;
+import io.github.hyjn.nexori.plugin.discovery.logic.DestinationTargetSyncApplyPlanner;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import io.github.hyjn.nexori.plugin.portal.PortalInstanceDefinition;
@@ -239,22 +241,8 @@ public final class DestinationTargetDiscoverySyncService {
             }
         }
         return destinationTargetService.list().stream()
-            .map(target -> summarizeTarget(target, portalIdsByTargetId))
+            .map(target -> DestinationTargetSummaryBuilder.summarize(target, portalIdsByTargetId))
             .toList();
-    }
-
-    @Nonnull
-    private static DiscoveredDestinationTargetSummary summarizeTarget(
-        @Nonnull DestinationTargetDefinition target,
-        @Nonnull Map<String, String> portalIdsByTargetId
-    ) {
-        if (target.kind() != DestinationTargetKind.PORTAL) {
-            return DiscoveredDestinationTargetSummary.from(target);
-        }
-        return DiscoveredDestinationTargetSummary.from(
-            target,
-            portalIdsByTargetId.getOrDefault(target.id(), "")
-        );
     }
 
     private void handleApplyRequest(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {
@@ -272,17 +260,13 @@ public final class DestinationTargetDiscoverySyncService {
         try {
             String localConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
             String localServerId = localIdentity.serverId().toString();
-            List<DiscoveredDestinationTargetSet> filtered = (payload.discoveries() == null ? List.<DiscoveredDestinationTargetSet>of() : payload.discoveries()).stream()
-                .filter(discovery -> discovery != null && discovery.connectionAddress() != null && !discovery.connectionAddress().isBlank())
-                .map(DiscoveredDestinationTargetSet::normalized)
-                .filter(discovery -> (localConnectionAddress.isBlank() || !localConnectionAddress.equalsIgnoreCase(discovery.connectionAddress()))
-                    && (discovery.remoteServerId() == null || !localServerId.equals(discovery.remoteServerId().trim())))
-                .toList();
+            List<DiscoveredDestinationTargetSet> filtered = DestinationTargetSyncApplyPlanner.filterDiscoveries(
+                payload.discoveries(), localConnectionAddress, localServerId);
             cacheService.replaceAll(filtered);
-            message = "Synchronized portal and target info on " + (localConnectionAddress.isBlank() ? referral.issuer().connectionAddress() : localConnectionAddress) + ".";
+            message = DestinationTargetSyncApplyPlanner.successMessage(localConnectionAddress, referral.issuer().connectionAddress());
         } catch (IOException | IllegalArgumentException exception) {
             success = false;
-            message = "Could not synchronize portal info on " + referral.issuer().connectionAddress() + ": " + exception.getMessage();
+            message = DestinationTargetSyncApplyPlanner.failureMessage(referral.issuer().connectionAddress(), exception.getMessage());
         }
 
         try {

@@ -60,4 +60,32 @@ final class BindingLogicArchitectureTest {
     void validationPolicyDoesNotUseRandomUUID() throws IOException {
         assertFalse(source("TriggerBindingValidationPolicy.java").contains("randomUUID"));
     }
+
+    // ── PortalBindingApplyPlanner ─────────────────────────────────────────────
+
+    @Test
+    void applyPlannerDoesNotImportHytaleLogger() throws IOException {
+        assertFalse(source("PortalBindingApplyPlanner.java").contains("HytaleLogger"));
+    }
+
+    @Test
+    void applyPlannerDoesNotImportStore() throws IOException {
+        assertFalse(source("PortalBindingApplyPlanner.java").contains("Store"));
+    }
+
+    @Test
+    void applyPlannerDoesNotImportFilesystem() throws IOException {
+        String src = source("PortalBindingApplyPlanner.java");
+        assertFalse(src.contains("java.nio.file") || src.contains("java.io.File"));
+    }
+
+    @Test
+    void applyPlannerDoesNotImportSecureReferralService() throws IOException {
+        assertFalse(source("PortalBindingApplyPlanner.java").contains("SecureReferralService"));
+    }
+
+    @Test
+    void applyPlannerDoesNotImportDiagnosticsService() throws IOException {
+        assertFalse(source("PortalBindingApplyPlanner.java").contains("DiagnosticsService"));
+    }
 }
