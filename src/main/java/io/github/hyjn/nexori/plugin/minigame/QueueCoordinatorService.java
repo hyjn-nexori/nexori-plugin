@@ -30,7 +30,7 @@ import java.util.UUID;
 /**
  * Coordinates live queue membership, countdowns, batch readiness, and queue-driven match launch.
  */
-public final class QueueCoordinatorService {
+public class QueueCoordinatorService {
 
     private static final int ADMISSION_POLICY_SCHEMA_VERSION = 1;
     private static final long LAUNCH_RETRY_INTERVAL_MS = 3000L;

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public final class QueueService {
+public class QueueService {
 
     private final QueueStore store;
     private final ArenaService arenaService;

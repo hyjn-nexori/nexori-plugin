@@ -38,6 +38,20 @@ java {
     withJavadocJar()
 }
 
+configurations {
+    // Force ByteBuddy 1.15.11 on test configurations so SubclassByteBuddyMockMaker
+    // can parse Java 25 class files (class-format version 69). Mockito 5.14.2 pulls
+    // in ByteBuddy 1.15.4 transitively, which only knows up to Java 24 (version 68).
+    testImplementation.resolutionStrategy.force(
+        "net.bytebuddy:byte-buddy:1.15.11",
+        "net.bytebuddy:byte-buddy-agent:1.15.11"
+    )
+    testRuntimeClasspath.resolutionStrategy.force(
+        "net.bytebuddy:byte-buddy:1.15.11",
+        "net.bytebuddy:byte-buddy-agent:1.15.11"
+    )
+}
+
 repositories {
     mavenCentral()
     maven {
@@ -58,10 +72,17 @@ dependencies {
     compileOnly("curse.maven:hyui-1431415:7667069")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.mockito:mockito-core:5.14.2")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.14.2")
+    // ByteBuddy 1.15.11 adds Java 25 class-format support; SubclassByteBuddyMockMaker
+    // needs to parse Java 25 class files to create subclass-based mocks.
+    testImplementation("net.bytebuddy:byte-buddy:1.15.11")
 }
 
 test {
     useJUnitPlatform()
+    // Required for Mockito tests: HytaleLogger.<clinit> checks for this log manager.
+    jvmArgs '-Djava.util.logging.manager=com.hypixel.hytale.logger.backend.HytaleLogManager'
 
     testLogging {
         events "passed", "skipped", "failed"

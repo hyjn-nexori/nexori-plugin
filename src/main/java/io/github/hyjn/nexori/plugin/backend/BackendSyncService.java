@@ -25,13 +25,12 @@ import io.github.hyjn.nexori.plugin.peers.LocalConnectionAddressService;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -43,7 +42,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 
 public final class BackendSyncService {
 
@@ -66,7 +64,8 @@ public final class BackendSyncService {
     private final BackendAssignmentProcessingPlanner assignmentProcessingPlanner = new BackendAssignmentProcessingPlanner();
     private final BackendSyncRequestPayloadBuilder syncRequestPayloadBuilder = new BackendSyncRequestPayloadBuilder();
     private final BackendSyncResponsePolicy syncResponsePolicy = new BackendSyncResponsePolicy();
-    private HttpClient httpClient;
+    private BackendHttpTransport transport;
+    private final boolean useDefaultTransport;
     private final Gson gson = new GsonBuilder().create();
     private final Queue<BackendSyncHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Set<String> staleSyncIds = new HashSet<>();
@@ -100,9 +99,33 @@ public final class BackendSyncService {
         this.queueCoordinatorService = queueCoordinatorService;
         this.arenaService = arenaService;
         this.arenaMatchService = arenaMatchService;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        this.useDefaultTransport = true;
+    }
+
+    BackendSyncService(
+        @Nonnull HytaleLogger logger,
+        @Nonnull BackendMatchmakingConfig config,
+        @Nonnull BackendAssignmentStore assignmentStore,
+        @Nonnull ServerIdentity localIdentity,
+        @Nonnull LocalConnectionAddressService localConnectionAddressService,
+        @Nonnull QueueService queueService,
+        @Nonnull QueueCoordinatorService queueCoordinatorService,
+        @Nonnull ArenaService arenaService,
+        @Nonnull ArenaMatchService arenaMatchService,
+        @Nonnull BackendHttpTransport transport
+    ) {
+        this.logger = logger;
+        this.config = config.normalized();
+        this.assignmentStore = assignmentStore;
+        this.localIdentity = localIdentity;
+        this.localConnectionAddressService = localConnectionAddressService;
+        this.queueService = queueService;
+        this.queueCoordinatorService = queueCoordinatorService;
+        this.arenaService = arenaService;
+        this.arenaMatchService = arenaMatchService;
+        this.transport = transport;
+        this.useDefaultTransport = false;
     }
 
     public synchronized void handleTick(long nowEpochMs) {
@@ -113,9 +136,9 @@ public final class BackendSyncService {
 
     public synchronized void updateConfig(@Nonnull BackendMatchmakingConfig updatedConfig) {
         this.config = updatedConfig.normalized();
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        if (useDefaultTransport) {
+            this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        }
         if (!this.config.syncEnabled()) {
             this.healthState = BackendSyncHealthState.healthy(System.currentTimeMillis());
         }
@@ -210,8 +233,7 @@ public final class BackendSyncService {
         nextSyncAllowedAtEpochMs = nowEpochMs + config.syncIntervalMs();
 
         try {
-            httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .orTimeout(config.requestTimeoutMs(), TimeUnit.MILLISECONDS)
+            transport.sendAsync(request, config.requestTimeoutMs())
                 .whenComplete((response, throwable) -> {
                     BackendSyncHttpResult result;
                     try {

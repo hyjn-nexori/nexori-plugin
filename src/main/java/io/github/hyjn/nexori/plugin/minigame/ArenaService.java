@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public final class ArenaService {
+public class ArenaService {
 
     private final ArenaStore store;
     private final LocalConnectionAddressService localConnectionAddressService;

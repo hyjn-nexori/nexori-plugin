@@ -19,11 +19,10 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
@@ -34,7 +33,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 
 public final class BackendResultReportingService {
 
@@ -48,7 +46,6 @@ public final class BackendResultReportingService {
     private BackendMatchmakingConfig config;
     private final BackendResultStore resultStore;
     private final ServerIdentity localIdentity;
-    private HttpClient httpClient;
     private final BackendResultEnqueuePlanner resultEnqueuePlanner = new BackendResultEnqueuePlanner();
     private final BackendResultPayloadBuilder resultPayloadBuilder = new BackendResultPayloadBuilder();
     private final BackendResultResponsePolicy resultResponsePolicy = new BackendResultResponsePolicy();
@@ -56,6 +53,8 @@ public final class BackendResultReportingService {
     private final Queue<BackendResultHttpResult> queuedResults = new ConcurrentLinkedQueue<>();
     private final Set<String> staleRequestIds = new HashSet<>();
     private final Deque<BackendResultLogEntry> resultLogEntries = new ArrayDeque<>();
+    private BackendHttpTransport transport;
+    private final boolean useDefaultTransport;
 
     private BackendResultReportingHealthState healthState = BackendResultReportingHealthState.healthy(0L);
     private boolean requestInFlight;
@@ -73,9 +72,23 @@ public final class BackendResultReportingService {
         this.config = config.normalized();
         this.resultStore = resultStore;
         this.localIdentity = localIdentity;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        this.useDefaultTransport = true;
+    }
+
+    BackendResultReportingService(
+        @Nonnull HytaleLogger logger,
+        @Nonnull BackendMatchmakingConfig config,
+        @Nonnull BackendResultStore resultStore,
+        @Nonnull ServerIdentity localIdentity,
+        @Nonnull BackendHttpTransport transport
+    ) {
+        this.logger = logger;
+        this.config = config.normalized();
+        this.resultStore = resultStore;
+        this.localIdentity = localIdentity;
+        this.transport = transport;
+        this.useDefaultTransport = false;
     }
 
     public synchronized void handleTick(long nowEpochMs) {
@@ -86,9 +99,9 @@ public final class BackendResultReportingService {
 
     public synchronized void updateConfig(@Nonnull BackendMatchmakingConfig updatedConfig) {
         this.config = updatedConfig.normalized();
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        if (useDefaultTransport) {
+            this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        }
         if (!this.config.resultReportingEnabled()) {
             this.healthState = BackendResultReportingHealthState.healthy(System.currentTimeMillis());
         }
@@ -219,8 +232,7 @@ public final class BackendResultReportingService {
         inFlightResultId = result.resultId();
 
         try {
-            httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .orTimeout(config.requestTimeoutMs(), TimeUnit.MILLISECONDS)
+            transport.sendAsync(request, config.requestTimeoutMs())
                 .whenComplete((response, throwable) -> {
                     BackendResultHttpResult httpResult;
                     try {

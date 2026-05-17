@@ -60,7 +60,7 @@ import java.util.concurrent.CompletableFuture;
  * Tracks active arena matches, observes player arrivals and returns, and coordinates the
  * runtime lifecycle that sits between queue launch and secure return to the lobby.
  */
-public final class ArenaMatchService {
+public class ArenaMatchService {
 
     private static final Gson GSON = new Gson();
     private static final long ELIMINATED_RETURN_DELAY_MS = 5_000L;

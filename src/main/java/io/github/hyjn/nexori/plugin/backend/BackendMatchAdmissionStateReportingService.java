@@ -16,11 +16,10 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
 
 import javax.annotation.Nonnull;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,7 +33,6 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
 
 public final class BackendMatchAdmissionStateReportingService {
 
@@ -52,7 +50,8 @@ public final class BackendMatchAdmissionStateReportingService {
     private BackendMatchmakingConfig config;
     private final ServerIdentity localIdentity;
     private final ArenaMatchService arenaMatchService;
-    private HttpClient httpClient;
+    private BackendHttpTransport transport;
+    private final boolean useDefaultTransport;
     private final AdmissionStateEvaluator admissionStateEvaluator = new AdmissionStateEvaluator();
     private final AdmissionStatePayloadBuilder admissionStatePayloadBuilder = new AdmissionStatePayloadBuilder();
     private final AdmissionStateResponsePolicy admissionStateResponsePolicy = new AdmissionStateResponsePolicy();
@@ -76,18 +75,32 @@ public final class BackendMatchAdmissionStateReportingService {
         this.arenaMatchService = arenaMatchService;
         this.config = config.normalized();
         logConfigNormalizationWarning(config, this.config);
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        this.useDefaultTransport = true;
+    }
+
+    BackendMatchAdmissionStateReportingService(
+        @Nonnull HytaleLogger logger,
+        @Nonnull BackendMatchmakingConfig config,
+        @Nonnull ServerIdentity localIdentity,
+        @Nonnull ArenaMatchService arenaMatchService,
+        @Nonnull BackendHttpTransport transport
+    ) {
+        this.logger = logger;
+        this.localIdentity = localIdentity;
+        this.arenaMatchService = arenaMatchService;
+        this.config = config.normalized();
+        this.transport = transport;
+        this.useDefaultTransport = false;
     }
 
     public synchronized void updateConfig(@Nonnull BackendMatchmakingConfig updatedConfig) {
         BackendMatchmakingConfig normalized = updatedConfig.normalized();
         logConfigNormalizationWarning(updatedConfig, normalized);
         this.config = normalized;
-        this.httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(this.config.requestTimeoutMs()))
-            .build();
+        if (useDefaultTransport) {
+            this.transport = new JdkBackendHttpTransport(this.config.requestTimeoutMs());
+        }
         if (!this.config.matchStateReportingEnabled()) {
             this.nextGlobalAttemptAtEpochMs = 0L;
             this.lastHealthStatus = "HEALTHY";
@@ -340,8 +353,7 @@ public final class BackendMatchAdmissionStateReportingService {
         state.pendingRetrySnapshot = null;
 
         try {
-            httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .orTimeout(config.requestTimeoutMs(), TimeUnit.MILLISECONDS)
+            transport.sendAsync(request, config.requestTimeoutMs())
                 .whenComplete((response, throwable) -> queuedResults.add(toHttpResult(matchId, snapshot, response, throwable)));
         } catch (Throwable throwable) {
             queuedResults.add(AdmissionHttpResult.failure(matchId, snapshot, 0, throwable.getClass().getSimpleName(), "Admission state request could not be started."));
