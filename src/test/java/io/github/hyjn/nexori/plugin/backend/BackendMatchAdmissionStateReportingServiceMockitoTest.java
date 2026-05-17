@@ -19,6 +19,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -40,6 +43,7 @@ import static org.mockito.Mockito.when;
  * </p>
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 final class BackendMatchAdmissionStateReportingServiceMockitoTest {
 
     private static final long T1 = 3_000_000L;
@@ -168,5 +172,106 @@ final class BackendMatchAdmissionStateReportingServiceMockitoTest {
         service.handleTick(T_RETRY); // retries with the pending snapshot → sends request #2
 
         assertEquals(2, transport.capturedRequestCount());
+    }
+
+    // ── Test 4: disabled config does not send admission state ─────────────────
+
+    @Test
+    void disabledConfigDoesNotSendAdmissionState() {
+        // Build a config with matchStateReportingEnabled=false
+        BackendMatchmakingConfig disabledConfig = new BackendMatchmakingConfig(
+            BackendMatchmakingConfig.CURRENT_SCHEMA_VERSION,
+            false,
+            "http://backend.test",
+            "test-server-token",
+            1_000L,
+            "us-east",
+            3_000L,
+            false,
+            5_000L,
+            false,  // matchStateReportingEnabled = false
+            0L,
+            5_000L,
+            3_000L,
+            30_000L
+        );
+
+        service.updateConfig(disabledConfig);
+
+        service.markMatchDirtyImmediate(MATCH_ID, "MATCH_CREATED", T1);
+        service.handleTick(T1);
+
+        assertEquals(0, transport.capturedRequestCount());
+        assertEquals(false, service.isMatchStateReportingEnabled());
+    }
+
+    // ── Test 5: flushMatchImmediately sends before normal debounce ────────────
+
+    @Test
+    void flushMatchImmediatelySendsBeforeNormalDelay() {
+        transport.enqueuePendingFuture(new CompletableFuture<>());
+
+        service.flushMatchImmediately(MATCH_ID, "MATCH_CREATED", T1);
+        service.handleTick(T1);
+
+        assertEquals(1, transport.capturedRequestCount());
+
+        // Second tick without changes should not send another request
+        service.handleTick(T1 + 1_000L);
+
+        assertEquals(1, transport.capturedRequestCount());
+    }
+
+    // ── Test 6: markAdmissionReservationConsumed triggers state send ──────────
+
+    @Test
+    void markAdmissionReservationConsumedSendsConsumedState() {
+        transport.enqueuePendingFuture(new CompletableFuture<>());
+
+        service.markAdmissionReservationConsumed(MATCH_ID, "reservation-abc-123", T1);
+        service.handleTick(T1);
+
+        // At least 1 request should have been sent because markAdmissionReservationConsumed
+        // calls markDirty internally with PLAYER_ARRIVED reason (debounce=0 → schedules immediately)
+        assertEquals(1, transport.capturedRequestCount());
+    }
+
+    // ── Test 7: markDirty normal waits until due according to debounce ────────
+
+    @Test
+    void markDirtyNormalWaitsUntilDueAccordingToCurrentDelay() {
+        // enabledMatchStateConfig uses debounce=0ms so we need a config with non-zero debounce
+        // to test the "waits" behavior. Use debounceMs=1000ms.
+        long debounceMs = 1_000L;
+        BackendMatchmakingConfig debouncedConfig = new BackendMatchmakingConfig(
+            BackendMatchmakingConfig.CURRENT_SCHEMA_VERSION,
+            false,
+            "http://backend.test",
+            "test-server-token",
+            1_000L,
+            "us-east",
+            3_000L,
+            false,
+            5_000L,
+            true,        // matchStateReportingEnabled = true
+            debounceMs,  // matchStateDebounceMs = 1000
+            5_000L,
+            3_000L,
+            30_000L
+        );
+        service.updateConfig(debouncedConfig);
+
+        transport.enqueuePendingFuture(new CompletableFuture<>());
+
+        // Mark dirty at T1 — using regular markMatchDirty (not Immediate)
+        service.markMatchDirty(MATCH_ID, "MATCH_CREATED", T1);
+
+        // handleTick at T1: should NOT send yet (scheduledFlushAt = T1 + 1000)
+        service.handleTick(T1);
+        assertEquals(0, transport.capturedRequestCount());
+
+        // handleTick at T1 + debounceMs: now it is due → should send
+        service.handleTick(T1 + debounceMs);
+        assertEquals(1, transport.capturedRequestCount());
     }
 }
