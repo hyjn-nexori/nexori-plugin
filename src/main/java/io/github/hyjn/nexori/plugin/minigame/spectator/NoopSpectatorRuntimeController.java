@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame.spectator;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.UUID;
 
@@ -17,7 +18,8 @@ public final class NoopSpectatorRuntimeController implements SpectatorRuntimeCon
     public SpectatorRuntimeResult enterSpectator(
         @Nonnull PlayerRef playerRef,
         @Nonnull Collection<UUID> viewerUuidsToHideFrom,
-        @Nonnull SpectatorRuntimeReason reason
+        @Nonnull SpectatorRuntimeReason reason,
+        @Nullable String spectatorModelId
     ) {
         return SpectatorRuntimeResult.success(playerRef.getUuid());
     }

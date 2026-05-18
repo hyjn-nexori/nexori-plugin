@@ -7,6 +7,9 @@ import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.protocol.MovementSettings;
 import com.hypixel.hytale.protocol.SavedMovementStates;
 import com.hypixel.hytale.protocol.packets.player.SetMovementStates;
+import com.hypixel.hytale.server.core.asset.type.model.config.Model;
+import com.hypixel.hytale.server.core.asset.type.model.config.ModelAsset;
+import com.hypixel.hytale.server.core.cosmetics.CosmeticsModule;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.HiddenPlayersManager;
 import com.hypixel.hytale.server.core.entity.entities.player.movement.MovementManager;
@@ -14,11 +17,14 @@ import com.hypixel.hytale.server.core.modules.collision.CollisionResult;
 import com.hypixel.hytale.server.core.modules.entity.component.CollisionResultComponent;
 import com.hypixel.hytale.server.core.modules.entity.component.Intangible;
 import com.hypixel.hytale.server.core.modules.entity.component.Invulnerable;
+import com.hypixel.hytale.server.core.modules.entity.component.ModelComponent;
+import com.hypixel.hytale.server.core.modules.entity.player.PlayerSkinComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -41,13 +47,14 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
     public synchronized SpectatorRuntimeResult enterSpectator(
         @Nonnull PlayerRef playerRef,
         @Nonnull Collection<UUID> viewerUuidsToHideFrom,
-        @Nonnull SpectatorRuntimeReason reason
+        @Nonnull SpectatorRuntimeReason reason,
+        @Nullable String spectatorModelId
     ) {
         UUID playerUuid = playerRef.getUuid();
         SpectatorRuntimeState existing = statesByPlayerUuid.get(playerUuid);
         if (existing != null) {
             SpectatorRuntimeResult refreshResult = refreshHiddenViewers(playerUuid, viewerUuidsToHideFrom);
-            SpectatorRuntimeResult reapplyResult = applyRuntimeEffects(playerRef);
+            SpectatorRuntimeResult reapplyResult = applyRuntimeEffects(playerRef, spectatorModelId);
             return combine(playerUuid, refreshResult, reapplyResult);
         }
 
@@ -65,6 +72,7 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         tryApply("add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
         tryApply("add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
         tryApply("disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
+        applySpectatorModel(playerRef, spectatorModelId, applied, skipped, warnings);
 
         SpectatorRuntimeResult result = new SpectatorRuntimeResult(playerUuid, List.copyOf(applied), List.copyOf(skipped), List.copyOf(warnings), List.copyOf(errors));
         if (!result.succeeded()) {
@@ -171,6 +179,7 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         Player player = null;
         MovementManager movementManager = null;
         CollisionResult collisionResult = null;
+        Model previousModel = null;
 
         if (store == null || ref == null) {
             skipped.add("Could not read entity store/reference for full restore snapshot.");
@@ -182,6 +191,8 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
                 if (collisionComponent != null) {
                     collisionResult = collisionComponent.getCollisionResult();
                 }
+                ModelComponent modelComponent = store.getComponent(ref, ModelComponent.getComponentType());
+                previousModel = modelComponent == null ? null : modelComponent.getModel();
             } catch (RuntimeException exception) {
                 errors.add("Could not read one or more snapshot components: " + exception.getMessage());
             }
@@ -215,6 +226,7 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
             collisionResult == null ? null : collisionResult.isDamageBlocking(),
             player == null ? null : player.executeTriggers,
             player == null ? null : player.executeBlockDamage,
+            previousModel,
             Set.copyOf(hiddenViewerUuids)
         );
     }
@@ -251,9 +263,11 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         movementManager.update(playerRef.getPacketHandler());
     }
 
-    private SpectatorRuntimeResult applyRuntimeEffects(PlayerRef playerRef) {
+    private SpectatorRuntimeResult applyRuntimeEffects(PlayerRef playerRef, @Nullable String spectatorModelId) {
         UUID playerUuid = playerRef.getUuid();
         List<String> applied = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         tryApply("switch to Adventure game mode", applied, errors, () -> switchGameMode(playerRef, GameMode.Adventure));
         tryApply("enable flight", applied, errors, () -> enableFlight(playerRef));
@@ -261,7 +275,36 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         tryApply("add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
         tryApply("add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
         tryApply("disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
-        return new SpectatorRuntimeResult(playerUuid, List.copyOf(applied), List.of(), List.of(), List.copyOf(errors));
+        applySpectatorModel(playerRef, spectatorModelId, applied, skipped, warnings);
+        return new SpectatorRuntimeResult(playerUuid, List.copyOf(applied), List.copyOf(skipped), List.copyOf(warnings), List.copyOf(errors));
+    }
+
+    private void applySpectatorModel(
+        PlayerRef playerRef,
+        @Nullable String spectatorModelId,
+        List<String> applied,
+        List<String> skipped,
+        List<String> warnings
+    ) {
+        String modelId = normalizeModelId(spectatorModelId);
+        if (modelId.isBlank()) {
+            skipped.add("spectator model skipped because no model id was provided");
+            return;
+        }
+
+        try {
+            ModelAsset modelAsset = ModelAsset.getAssetMap().getAsset(modelId);
+            if (modelAsset == null) {
+                warnings.add("spectator model '" + modelId + "' was not found");
+                return;
+            }
+            Model model = Model.createScaledModel(modelAsset, modelAsset.generateRandomScale());
+            Ref<EntityStore> ref = requireRef(playerRef);
+            ref.getStore().putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(model));
+            applied.add("apply spectator model " + modelAsset.getId());
+        } catch (RuntimeException exception) {
+            warnings.add("spectator model '" + modelId + "' failed: " + exception.getMessage());
+        }
     }
 
     private void forceFlying(PlayerRef playerRef, boolean flying) {
@@ -370,6 +413,24 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         tryApply("restore collision checks", applied, errors, () -> restoreCollisionChecks(playerRef, state));
         tryApply("restore Intangible component", applied, errors, () -> restoreComponent(playerRef, Intangible.getComponentType(), state.previousIntangible()));
         tryApply("restore Invulnerable component", applied, errors, () -> restoreComponent(playerRef, Invulnerable.getComponentType(), state.previousInvulnerable()));
+        tryApply("restore player model", applied, errors, () -> restorePlayerModel(playerRef, state));
+    }
+
+    private void restorePlayerModel(PlayerRef playerRef, SpectatorRuntimeState state) {
+        Ref<EntityStore> ref = requireRef(playerRef);
+        Store<EntityStore> store = ref.getStore();
+        if (state.previousModel() != null) {
+            store.putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(state.previousModel()));
+            return;
+        }
+
+        PlayerSkinComponent playerSkinComponent = store.getComponent(ref, PlayerSkinComponent.getComponentType());
+        if (playerSkinComponent == null) {
+            return;
+        }
+        Model model = CosmeticsModule.get().createModel(playerSkinComponent.getPlayerSkin());
+        store.putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(model));
+        playerSkinComponent.setNetworkOutdated();
     }
 
     private void switchGameMode(PlayerRef playerRef, GameMode gameMode) {
@@ -401,6 +462,11 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         } catch (RuntimeException exception) {
             errors.add(operation + " failed: " + exception.getMessage());
         }
+    }
+
+    @Nonnull
+    private String normalizeModelId(@Nullable String modelId) {
+        return modelId == null ? "" : modelId.trim();
     }
 
     private SpectatorRuntimeResult combine(UUID playerUuid, SpectatorRuntimeResult first, SpectatorRuntimeResult second) {

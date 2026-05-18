@@ -179,7 +179,25 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         boolean spectator,
         @Nonnull String reason
     ) {
-        ArenaMatchService.SetPlayerSpectatorResult result = arenaMatchService.setPlayerSpectator(matchId, playerUuid, spectator, reason);
+        return setPlayerSpectator(matchId, playerUuid, spectator, reason, null);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetPlayerSpectatorResult setPlayerSpectator(
+        @Nonnull String matchId,
+        @Nonnull UUID playerUuid,
+        boolean spectator,
+        @Nonnull String reason,
+        String spectatorModelId
+    ) {
+        ArenaMatchService.SetPlayerSpectatorResult result = arenaMatchService.setPlayerSpectator(
+            matchId,
+            playerUuid,
+            spectator,
+            reason,
+            spectatorModelId
+        );
         return new NexoriSetPlayerSpectatorResult(
             switch (result.outcome()) {
                 case UPDATED -> NexoriSetPlayerSpectatorStatus.UPDATED;

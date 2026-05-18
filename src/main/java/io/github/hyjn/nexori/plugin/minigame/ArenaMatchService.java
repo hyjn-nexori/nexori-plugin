@@ -43,6 +43,7 @@ import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -606,6 +607,20 @@ public class ArenaMatchService {
         boolean spectator,
         @Nonnull String rawReason
     ) {
+        return setPlayerSpectator(rawMatchId, playerUuid, spectator, rawReason, null);
+    }
+
+    /**
+     * Stores logical spectator state and optionally applies a temporary online spectator model.
+     */
+    @Nonnull
+    public synchronized SetPlayerSpectatorResult setPlayerSpectator(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid,
+        boolean spectator,
+        @Nonnull String rawReason,
+        @Nullable String spectatorModelId
+    ) {
         String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
         ArenaActiveMatch match = matchesById.get(matchId);
         if (match == null) {
@@ -632,7 +647,7 @@ public class ArenaMatchService {
             updated = updated.withLastError(reason, now);
         }
         matchesById.put(updated.matchId(), updated);
-        applyRuntimeSpectatorChange(updated, playerUuid, spectator);
+        applyRuntimeSpectatorChange(updated, playerUuid, spectator, spectatorModelId);
         refreshRuntimeSpectatorVisibility(updated);
         return SetPlayerSpectatorResult.updated(updated, playerUuid, spectator);
     }
@@ -1189,7 +1204,7 @@ public class ArenaMatchService {
         matchesById.put(updated.matchId(), updated);
         refreshRuntimeSpectatorVisibility(updated);
         if (updated.spectatorPlayerUuids().contains(playerRef.getUuid())) {
-            enterRuntimeSpectator(updated, playerRef);
+            enterRuntimeSpectator(updated, playerRef, null);
         }
         maybeScheduleAdmissionReporting(existing, updated, now, backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED");
         rememberPendingInstanceSpawnTeleport(event.getPlayerRef(), playerRef.getUuid(), launch, updated);
@@ -1852,13 +1867,18 @@ public class ArenaMatchService {
         }
     }
 
-    private void applyRuntimeSpectatorChange(@Nonnull ArenaActiveMatch match, @Nonnull UUID playerUuid, boolean spectator) {
+    private void applyRuntimeSpectatorChange(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull UUID playerUuid,
+        boolean spectator,
+        @Nullable String spectatorModelId
+    ) {
         PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
         if (spectator) {
             if (playerRef == null) {
                 return;
             }
-            enterRuntimeSpectator(match, playerRef);
+            enterRuntimeSpectator(match, playerRef, spectatorModelId);
         } else {
             restoreRuntimeSpectator(playerUuid, SpectatorRuntimeReason.MATCH_CLEANUP);
         }
@@ -1874,16 +1894,21 @@ public class ArenaMatchService {
             return;
         }
         if (match.spectatorPlayerUuids().contains(playerRef.getUuid())) {
-            enterRuntimeSpectator(match, playerRef);
+            enterRuntimeSpectator(match, playerRef, null);
         }
         refreshRuntimeSpectatorVisibility(match);
     }
 
-    private void enterRuntimeSpectator(@Nonnull ArenaActiveMatch match, @Nonnull PlayerRef playerRef) {
+    private void enterRuntimeSpectator(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull PlayerRef playerRef,
+        @Nullable String spectatorModelId
+    ) {
         SpectatorRuntimeResult result = spectatorRuntimeController.enterSpectator(
             playerRef,
             runtimeSpectatorViewerUuids(match, playerRef.getUuid()),
-            SpectatorRuntimeReason.MINIGAME_SPECTATOR
+            SpectatorRuntimeReason.MINIGAME_SPECTATOR,
+            spectatorModelId
         );
         logRuntimeSpectatorWarning(playerRef.getUuid(), result);
     }

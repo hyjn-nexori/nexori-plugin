@@ -70,6 +70,21 @@ public interface NexoriMinigameApi {
     );
 
     /**
+     * Stores logical spectator state and optionally applies a temporary spectator model while the player is online.
+     * Blank or unknown model ids do not change the logical spectator outcome.
+     */
+    @Nonnull
+    default NexoriSetPlayerSpectatorResult setPlayerSpectator(
+        @Nonnull String matchId,
+        @Nonnull UUID playerUuid,
+        boolean spectator,
+        @Nonnull String reason,
+        String spectatorModelId
+    ) {
+        return setPlayerSpectator(matchId, playerUuid, spectator, reason);
+    }
+
+    /**
      * Schedules one player for Nexori's return-to-lobby flow without changing their outcome.
      */
     @Nonnull

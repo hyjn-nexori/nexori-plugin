@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame.spectator;
 
 import com.hypixel.hytale.protocol.GameMode;
+import com.hypixel.hytale.server.core.asset.type.model.config.Model;
 
 import javax.annotation.Nonnull;
 import java.util.LinkedHashSet;
@@ -23,6 +24,7 @@ public record SpectatorRuntimeState(
     Boolean previousDamageBlocking,
     Boolean previousExecuteTriggers,
     Boolean previousExecuteBlockDamage,
+    Model previousModel,
     @Nonnull Set<UUID> hiddenViewerUuids
 ) {
     @Nonnull
@@ -43,6 +45,7 @@ public record SpectatorRuntimeState(
             previousDamageBlocking,
             previousExecuteTriggers,
             previousExecuteBlockDamage,
+            previousModel,
             Set.copyOf(new LinkedHashSet<>(rawHiddenViewerUuids))
         );
     }
