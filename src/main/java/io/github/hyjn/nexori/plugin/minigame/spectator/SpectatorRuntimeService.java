@@ -21,6 +21,7 @@ import com.hypixel.hytale.server.core.modules.entity.component.ModelComponent;
 import com.hypixel.hytale.server.core.modules.entity.player.PlayerSkinComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
@@ -65,13 +66,13 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         SpectatorRuntimeState state = snapshot(playerRef, reason, viewerUuidsToHideFrom, skipped, errors);
         statesByPlayerUuid.put(playerUuid, state);
 
-        tryApply("switch to Adventure game mode", applied, errors, () -> switchGameMode(playerRef, GameMode.Adventure));
-        tryApply("enable flight", applied, errors, () -> enableFlight(playerRef));
-        tryApply("force flying state", applied, errors, () -> forceFlying(playerRef, true));
+        tryApplyRuntimeMutation(playerRef, "switch to Adventure game mode", applied, errors, () -> switchGameMode(playerRef, GameMode.Adventure));
+        tryApplyRuntimeMutation(playerRef, "enable flight", applied, errors, () -> enableFlight(playerRef));
+        tryApplyRuntimeMutation(playerRef, "force flying state", applied, errors, () -> forceFlying(playerRef, true));
         tryApply("hide spectator from active viewers", applied, errors, () -> hideFromViewers(playerUuid, state.hiddenViewerUuids()));
-        tryApply("add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
-        tryApply("add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
-        tryApply("disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
+        tryApplyRuntimeMutation(playerRef, "add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
+        tryApplyRuntimeMutation(playerRef, "add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
+        tryApplyRuntimeMutation(playerRef, "disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
         applySpectatorModel(playerRef, spectatorModelId, applied, skipped, warnings);
 
         SpectatorRuntimeResult result = new SpectatorRuntimeResult(playerUuid, List.copyOf(applied), List.copyOf(skipped), List.copyOf(warnings), List.copyOf(errors));
@@ -269,12 +270,12 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         List<String> skipped = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         List<String> errors = new ArrayList<>();
-        tryApply("switch to Adventure game mode", applied, errors, () -> switchGameMode(playerRef, GameMode.Adventure));
-        tryApply("enable flight", applied, errors, () -> enableFlight(playerRef));
-        tryApply("force flying state", applied, errors, () -> forceFlying(playerRef, true));
-        tryApply("add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
-        tryApply("add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
-        tryApply("disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
+        tryApplyRuntimeMutation(playerRef, "switch to Adventure game mode", applied, errors, () -> switchGameMode(playerRef, GameMode.Adventure));
+        tryApplyRuntimeMutation(playerRef, "enable flight", applied, errors, () -> enableFlight(playerRef));
+        tryApplyRuntimeMutation(playerRef, "force flying state", applied, errors, () -> forceFlying(playerRef, true));
+        tryApplyRuntimeMutation(playerRef, "add Intangible component", applied, errors, () -> addComponent(playerRef, Intangible.getComponentType()));
+        tryApplyRuntimeMutation(playerRef, "add Invulnerable component", applied, errors, () -> addComponent(playerRef, Invulnerable.getComponentType()));
+        tryApplyRuntimeMutation(playerRef, "disable spectator collision and trigger checks", applied, errors, () -> disableSpectatorCollisionChecks(playerRef));
         applySpectatorModel(playerRef, spectatorModelId, applied, skipped, warnings);
         return new SpectatorRuntimeResult(playerUuid, List.copyOf(applied), List.copyOf(skipped), List.copyOf(warnings), List.copyOf(errors));
     }
@@ -299,9 +300,16 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
                 return;
             }
             Model model = Model.createScaledModel(modelAsset, modelAsset.generateRandomScale());
-            Ref<EntityStore> ref = requireRef(playerRef);
-            ref.getStore().putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(model));
-            applied.add("apply spectator model " + modelAsset.getId());
+            tryApplyRuntimeMutation(
+                playerRef,
+                "apply spectator model " + modelAsset.getId(),
+                applied,
+                warnings,
+                () -> {
+                    Ref<EntityStore> ref = requireRef(playerRef);
+                    ref.getStore().putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(model));
+                }
+            );
         } catch (RuntimeException exception) {
             warnings.add("spectator model '" + modelId + "' failed: " + exception.getMessage());
         }
@@ -404,16 +412,16 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
 
     private void restore(PlayerRef playerRef, SpectatorRuntimeState state, List<String> applied, List<String> skipped, List<String> errors) {
         tryApply("restore player visibility", applied, errors, () -> hideOrShowViewers(playerRef.getUuid(), state.hiddenViewerUuids(), false));
-        tryApply("restore flight", applied, errors, () -> restoreFlight(playerRef, state));
+        tryApplyRuntimeMutation(playerRef, "restore flight", applied, errors, () -> restoreFlight(playerRef, state));
         if (state.previousGameMode() != null) {
-            tryApply("restore game mode", applied, errors, () -> Player.setGameMode(requireRef(playerRef), state.previousGameMode(), requireRef(playerRef).getStore()));
+            tryApplyRuntimeMutation(playerRef, "restore game mode", applied, errors, () -> Player.setGameMode(requireRef(playerRef), state.previousGameMode(), requireRef(playerRef).getStore()));
         } else {
             skipped.add("Game mode restore skipped because no previous game mode was captured.");
         }
-        tryApply("restore collision checks", applied, errors, () -> restoreCollisionChecks(playerRef, state));
-        tryApply("restore Intangible component", applied, errors, () -> restoreComponent(playerRef, Intangible.getComponentType(), state.previousIntangible()));
-        tryApply("restore Invulnerable component", applied, errors, () -> restoreComponent(playerRef, Invulnerable.getComponentType(), state.previousInvulnerable()));
-        tryApply("restore player model", applied, errors, () -> restorePlayerModel(playerRef, state));
+        tryApplyRuntimeMutation(playerRef, "restore collision checks", applied, errors, () -> restoreCollisionChecks(playerRef, state));
+        tryApplyRuntimeMutation(playerRef, "restore Intangible component", applied, errors, () -> restoreComponent(playerRef, Intangible.getComponentType(), state.previousIntangible()));
+        tryApplyRuntimeMutation(playerRef, "restore Invulnerable component", applied, errors, () -> restoreComponent(playerRef, Invulnerable.getComponentType(), state.previousInvulnerable()));
+        tryApplyRuntimeMutation(playerRef, "restore player model", applied, errors, () -> restorePlayerModel(playerRef, state));
     }
 
     private void restorePlayerModel(PlayerRef playerRef, SpectatorRuntimeState state) {
@@ -462,6 +470,26 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         } catch (RuntimeException exception) {
             errors.add(operation + " failed: " + exception.getMessage());
         }
+    }
+
+    private void tryApplyRuntimeMutation(PlayerRef playerRef, String operation, List<String> applied, List<String> errors, Runnable runnable) {
+        Ref<EntityStore> ref = playerRef.getReference();
+        Store<EntityStore> store = ref == null ? null : ref.getStore();
+        if (store != null && (!store.isInThread() || store.isProcessing())) {
+            World world = store.getExternalData() == null ? null : store.getExternalData().getWorld();
+            if (world != null) {
+                world.execute(() -> {
+                    try {
+                        runnable.run();
+                    } catch (RuntimeException exception) {
+                        logger.atWarning().log("Scheduled Nexori spectator runtime operation '" + operation + "' failed: " + exception.getMessage());
+                    }
+                });
+                applied.add("schedule " + operation);
+                return;
+            }
+        }
+        tryApply(operation, applied, errors, runnable);
     }
 
     @Nonnull
