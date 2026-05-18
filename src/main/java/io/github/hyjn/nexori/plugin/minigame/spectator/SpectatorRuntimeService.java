@@ -23,6 +23,10 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.minigame.logic.SpectatorHiddenViewerPlan;
+import io.github.hyjn.nexori.plugin.minigame.logic.SpectatorHiddenViewerPlanner;
+import io.github.hyjn.nexori.plugin.minigame.logic.SpectatorRuntimeExecutionDecision;
+import io.github.hyjn.nexori.plugin.minigame.logic.SpectatorRuntimeExecutionPlanner;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -39,6 +43,8 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
 
     private final HytaleLogger logger;
     private final Map<UUID, SpectatorRuntimeState> statesByPlayerUuid = new HashMap<>();
+    private final SpectatorHiddenViewerPlanner hiddenViewerPlanner = new SpectatorHiddenViewerPlanner();
+    private final SpectatorRuntimeExecutionPlanner executionPlanner = new SpectatorRuntimeExecutionPlanner();
 
     public SpectatorRuntimeService(@Nonnull HytaleLogger logger) {
         this.logger = logger;
@@ -144,21 +150,11 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
             return SpectatorRuntimeResult.success(spectatorUuid);
         }
 
-        Set<UUID> desiredHiddenViewers = new LinkedHashSet<>();
-        for (UUID viewerUuid : viewerUuidsToHideFrom) {
-            if (viewerUuid != null && !viewerUuid.equals(spectatorUuid)) {
-                desiredHiddenViewers.add(viewerUuid);
-            }
-        }
+        SpectatorHiddenViewerPlan plan = hiddenViewerPlanner.plan(spectatorUuid, state.hiddenViewerUuids(), viewerUuidsToHideFrom);
 
-        Set<UUID> viewersToHide = new LinkedHashSet<>(desiredHiddenViewers);
-        viewersToHide.removeAll(state.hiddenViewerUuids());
-        Set<UUID> viewersToShow = new LinkedHashSet<>(state.hiddenViewerUuids());
-        viewersToShow.removeAll(desiredHiddenViewers);
-
-        hideFromViewers(spectatorUuid, viewersToHide);
-        hideOrShowViewers(spectatorUuid, viewersToShow, false);
-        statesByPlayerUuid.put(spectatorUuid, state.withHiddenViewerUuids(desiredHiddenViewers));
+        hideFromViewers(spectatorUuid, plan.viewersToHide());
+        hideOrShowViewers(spectatorUuid, plan.viewersToShow(), false);
+        statesByPlayerUuid.put(spectatorUuid, state.withHiddenViewerUuids(plan.desiredHiddenViewers()));
         return new SpectatorRuntimeResult(
             spectatorUuid,
             List.of("refresh spectator hidden viewers"),
@@ -204,12 +200,7 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
         boolean previousIntangible = store != null && ref != null && store.getComponent(ref, Intangible.getComponentType()) != null;
         boolean previousInvulnerable = store != null && ref != null && store.getComponent(ref, Invulnerable.getComponentType()) != null;
 
-        Set<UUID> hiddenViewerUuids = new LinkedHashSet<>();
-        for (UUID viewerUuid : viewerUuidsToHideFrom) {
-            if (viewerUuid != null && !viewerUuid.equals(playerRef.getUuid())) {
-                hiddenViewerUuids.add(viewerUuid);
-            }
-        }
+        Set<UUID> hiddenViewerUuids = hiddenViewerPlanner.normalizeDesiredViewers(playerRef.getUuid(), viewerUuidsToHideFrom);
 
         return new SpectatorRuntimeState(
             playerRef.getUuid(),
@@ -475,19 +466,23 @@ public final class SpectatorRuntimeService implements SpectatorRuntimeController
     private void tryApplyRuntimeMutation(PlayerRef playerRef, String operation, List<String> applied, List<String> errors, Runnable runnable) {
         Ref<EntityStore> ref = playerRef.getReference();
         Store<EntityStore> store = ref == null ? null : ref.getStore();
-        if (store != null && (!store.isInThread() || store.isProcessing())) {
-            World world = store.getExternalData() == null ? null : store.getExternalData().getWorld();
-            if (world != null) {
-                world.execute(() -> {
-                    try {
-                        runnable.run();
-                    } catch (RuntimeException exception) {
-                        logger.atWarning().log("Scheduled Nexori spectator runtime operation '" + operation + "' failed: " + exception.getMessage());
-                    }
-                });
-                applied.add("schedule " + operation);
-                return;
-            }
+        World world = store == null || store.getExternalData() == null ? null : store.getExternalData().getWorld();
+        SpectatorRuntimeExecutionDecision decision = executionPlanner.plan(
+            store != null,
+            store != null && store.isInThread(),
+            store != null && store.isProcessing(),
+            world != null
+        );
+        if (decision == SpectatorRuntimeExecutionDecision.SCHEDULE_ON_WORLD) {
+            world.execute(() -> {
+                try {
+                    runnable.run();
+                } catch (RuntimeException exception) {
+                    logger.atWarning().log("Scheduled Nexori spectator runtime operation '" + operation + "' failed: " + exception.getMessage());
+                }
+            });
+            applied.add("schedule " + operation);
+            return;
         }
         tryApply(operation, applied, errors, runnable);
     }
