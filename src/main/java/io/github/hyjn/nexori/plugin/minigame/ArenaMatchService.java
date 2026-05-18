@@ -34,6 +34,10 @@ import io.github.hyjn.nexori.plugin.minigame.logic.MatchPlacementEvaluation;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchPlacementEvaluator;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidationResult;
 import io.github.hyjn.nexori.plugin.minigame.logic.MatchResultValidator;
+import io.github.hyjn.nexori.plugin.minigame.spectator.NoopSpectatorRuntimeController;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeController;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeReason;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeResult;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
@@ -91,6 +95,7 @@ public class ArenaMatchService {
     private final MatchSessionService matchSessionService;
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
+    private final SpectatorRuntimeController spectatorRuntimeController;
     private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
     private final LaunchContextParser launchContextParser = new LaunchContextParser();
     private final MatchPlacementEvaluator matchPlacementEvaluator = new MatchPlacementEvaluator();
@@ -112,11 +117,30 @@ public class ArenaMatchService {
         @Nonnull ArenaService arenaService,
         @Nonnull InstanceSpawnSlotService instanceSpawnSlotService
     ) {
+        this(
+            logger,
+            secureTravelService,
+            matchSessionService,
+            arenaService,
+            instanceSpawnSlotService,
+            NoopSpectatorRuntimeController.INSTANCE
+        );
+    }
+
+    public ArenaMatchService(
+        @Nonnull HytaleLogger logger,
+        @Nonnull SecureTravelService secureTravelService,
+        @Nonnull MatchSessionService matchSessionService,
+        @Nonnull ArenaService arenaService,
+        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService,
+        @Nonnull SpectatorRuntimeController spectatorRuntimeController
+    ) {
         this.logger = logger;
         this.secureTravelService = secureTravelService;
         this.matchSessionService = matchSessionService;
         this.arenaService = arenaService;
         this.instanceSpawnSlotService = instanceSpawnSlotService;
+        this.spectatorRuntimeController = spectatorRuntimeController;
     }
 
     public synchronized void setBackendMatchAdmissionStateReportingService(
@@ -136,6 +160,8 @@ public class ArenaMatchService {
         if (playerRef == null) {
             return;
         }
+
+        refreshRuntimeSpectatorForReadyPlayer(playerRef);
 
         PendingArrival arrival = secureTravelService.consumeRecentArrival(playerRef.getUuid()).orElse(null);
         if (arrival == null) {
@@ -168,6 +194,7 @@ public class ArenaMatchService {
 
         patchedRespawnPagePlayers.remove(playerRef.getUuid());
         pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerRef.getUuid());
+        restoreRuntimeSpectator(playerRef.getUuid(), SpectatorRuntimeReason.PLAYER_DISCONNECT);
         String matchId = matchIdByPlayerUuid.remove(playerRef.getUuid());
         if (matchId == null) {
             return;
@@ -207,6 +234,7 @@ public class ArenaMatchService {
 
         secureTravelService.removePendingArrival(event.getUuid());
         patchedRespawnPagePlayers.remove(event.getUuid());
+        restoreRuntimeSpectator(event.getUuid(), SpectatorRuntimeReason.PLAYER_DISCONNECT);
         long now = System.currentTimeMillis();
         String reason = "Player setup disconnect before ready: " + event.getDisconnectReason();
 
@@ -604,6 +632,8 @@ public class ArenaMatchService {
             updated = updated.withLastError(reason, now);
         }
         matchesById.put(updated.matchId(), updated);
+        applyRuntimeSpectatorChange(updated, playerUuid, spectator);
+        refreshRuntimeSpectatorVisibility(updated);
         return SetPlayerSpectatorResult.updated(updated, playerUuid, spectator);
     }
 
@@ -840,6 +870,7 @@ public class ArenaMatchService {
         updated = updated.withLastError("Manual match end requested: " + returnReason, now)
             .withCompleted(now, now);
         matchesById.put(updated.matchId(), updated);
+        restoreRuntimeSpectators(updated, SpectatorRuntimeReason.MATCH_CLEANUP);
         maybeScheduleAdmissionReporting(match, updated, now, "");
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
     }
@@ -1156,6 +1187,10 @@ public class ArenaMatchService {
 
         updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
         matchesById.put(updated.matchId(), updated);
+        refreshRuntimeSpectatorVisibility(updated);
+        if (updated.spectatorPlayerUuids().contains(playerRef.getUuid())) {
+            enterRuntimeSpectator(updated, playerRef);
+        }
         maybeScheduleAdmissionReporting(existing, updated, now, backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED");
         rememberPendingInstanceSpawnTeleport(event.getPlayerRef(), playerRef.getUuid(), launch, updated);
         if (backfillArrival) {
@@ -1734,6 +1769,7 @@ public class ArenaMatchService {
                 launchTravelProfileId,
                 buildReturnContextJson(match, originLobbyId, returnReason, nowEpochMs)
             );
+            restoreRuntimeSpectator(playerRef.getUuid(), SpectatorRuntimeReason.RETURN_TO_LOBBY);
             removeMatchPlayers(match.matchId(), List.of(playerRef.getUuid()));
             return match.withoutReturnedPlayer(playerRef.getUuid(), nowEpochMs);
         } catch (IOException | GeneralSecurityException | IllegalArgumentException | IllegalStateException exception) {
@@ -1808,11 +1844,93 @@ public class ArenaMatchService {
     private void removeMatchPlayers(@Nonnull String matchId, @Nonnull List<UUID> playerUuids) {
         for (UUID playerUuid : playerUuids) {
             patchedRespawnPagePlayers.remove(playerUuid);
+            restoreRuntimeSpectator(playerUuid, SpectatorRuntimeReason.MATCH_CLEANUP);
             String currentMatchId = matchIdByPlayerUuid.get(playerUuid);
             if (matchId.equals(currentMatchId)) {
                 matchIdByPlayerUuid.remove(playerUuid);
             }
         }
+    }
+
+    private void applyRuntimeSpectatorChange(@Nonnull ArenaActiveMatch match, @Nonnull UUID playerUuid, boolean spectator) {
+        PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+        if (spectator) {
+            if (playerRef == null) {
+                return;
+            }
+            enterRuntimeSpectator(match, playerRef);
+        } else {
+            restoreRuntimeSpectator(playerUuid, SpectatorRuntimeReason.MATCH_CLEANUP);
+        }
+    }
+
+    private void refreshRuntimeSpectatorForReadyPlayer(@Nonnull PlayerRef playerRef) {
+        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
+        if (matchId == null) {
+            return;
+        }
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPlayer(playerRef.getUuid())) {
+            return;
+        }
+        if (match.spectatorPlayerUuids().contains(playerRef.getUuid())) {
+            enterRuntimeSpectator(match, playerRef);
+        }
+        refreshRuntimeSpectatorVisibility(match);
+    }
+
+    private void enterRuntimeSpectator(@Nonnull ArenaActiveMatch match, @Nonnull PlayerRef playerRef) {
+        SpectatorRuntimeResult result = spectatorRuntimeController.enterSpectator(
+            playerRef,
+            runtimeSpectatorViewerUuids(match, playerRef.getUuid()),
+            SpectatorRuntimeReason.MINIGAME_SPECTATOR
+        );
+        logRuntimeSpectatorWarning(playerRef.getUuid(), result);
+    }
+
+    private void restoreRuntimeSpectators(@Nonnull ArenaActiveMatch match, @Nonnull SpectatorRuntimeReason reason) {
+        LinkedHashSet<UUID> playerUuids = new LinkedHashSet<>();
+        playerUuids.addAll(match.spectatorPlayerUuids());
+        playerUuids.addAll(match.activePlayerUuids());
+        playerUuids.addAll(match.eliminatedPlayerUuids());
+        for (UUID playerUuid : playerUuids) {
+            restoreRuntimeSpectator(playerUuid, reason);
+        }
+    }
+
+    private void restoreRuntimeSpectator(@Nonnull UUID playerUuid, @Nonnull SpectatorRuntimeReason reason) {
+        SpectatorRuntimeResult result = spectatorRuntimeController.restoreIfTracked(playerUuid, reason);
+        logRuntimeSpectatorWarning(playerUuid, result);
+    }
+
+    private void refreshRuntimeSpectatorVisibility(@Nonnull ArenaActiveMatch match) {
+        for (UUID spectatorUuid : match.spectatorPlayerUuids()) {
+            SpectatorRuntimeResult result = spectatorRuntimeController.refreshHiddenViewers(
+                spectatorUuid,
+                runtimeSpectatorViewerUuids(match, spectatorUuid)
+            );
+            logRuntimeSpectatorWarning(spectatorUuid, result);
+        }
+    }
+
+    @Nonnull
+    private List<UUID> runtimeSpectatorViewerUuids(@Nonnull ArenaActiveMatch match, @Nonnull UUID spectatorUuid) {
+        LinkedHashSet<UUID> viewerUuids = new LinkedHashSet<>(match.activePlayerUuids());
+        viewerUuids.remove(spectatorUuid);
+        viewerUuids.removeAll(match.spectatorPlayerUuids());
+        return List.copyOf(viewerUuids);
+    }
+
+    private void logRuntimeSpectatorWarning(@Nonnull UUID playerUuid, @Nonnull SpectatorRuntimeResult result) {
+        if (result.succeeded()) {
+            return;
+        }
+        logger.atWarning().log(
+            "Nexori spectator runtime operation failed for player "
+                + playerUuid
+                + ". "
+                + result.summary()
+        );
     }
 
     @Nonnull
@@ -1959,6 +2077,7 @@ public class ArenaMatchService {
         long nowEpochMs,
         @Nonnull String primaryReason
     ) {
+        restoreRuntimeForPlayersRemovedFromMatch(previous, updated);
         ArenaActiveMatch stored = updated;
         String reason = primaryReason;
         if (updated.isEmpty()) {
@@ -1987,6 +2106,22 @@ public class ArenaMatchService {
             backendMatchAdmissionStateReportingService.flushMatchImmediately(stored.matchId(), CLOSE_REASON_MATCH_RUNTIME_ENDED, nowEpochMs);
         } else {
             maybeScheduleAdmissionReporting(previous, stored, nowEpochMs, reason);
+        }
+    }
+
+    private void restoreRuntimeForPlayersRemovedFromMatch(
+        @Nonnull ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated
+    ) {
+        LinkedHashSet<UUID> previousPlayers = new LinkedHashSet<>();
+        previousPlayers.addAll(previous.activePlayerUuids());
+        previousPlayers.addAll(previous.eliminatedPlayerUuids());
+        previousPlayers.addAll(previous.spectatorPlayerUuids());
+        previousPlayers.removeAll(updated.activePlayerUuids());
+        previousPlayers.removeAll(updated.eliminatedPlayerUuids());
+        previousPlayers.removeAll(updated.spectatorPlayerUuids());
+        for (UUID playerUuid : previousPlayers) {
+            restoreRuntimeSpectator(playerUuid, SpectatorRuntimeReason.MATCH_CLEANUP);
         }
     }
 

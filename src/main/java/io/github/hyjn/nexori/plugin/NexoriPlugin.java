@@ -89,12 +89,11 @@ import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.QueueService;
 import io.github.hyjn.nexori.plugin.minigame.QueueStore;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorPacketProbe;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorPickupSpatialFilterSystem;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorPickupSpatialProbe;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorPickupSpatialRestoreSystem;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorProbeCommand;
-import io.github.hyjn.nexori.plugin.minigame.spectator.NexoriSpectatorRuntimeProbeService;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorPacketGuard;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorPickupSpatialFilterSystem;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorPickupSpatialGuard;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorPickupSpatialRestoreSystem;
+import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerMigrationService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeerMigrationStore;
@@ -184,7 +183,7 @@ public class NexoriPlugin extends JavaPlugin {
     private QueueCoordinatorService queueCoordinatorService;
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
-    private NexoriSpectatorRuntimeProbeService spectatorRuntimeProbeService;
+    private SpectatorRuntimeService spectatorRuntimeService;
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
     private WorldLabelService worldLabelService;
@@ -386,15 +385,16 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaService,
                 this.queueService
             );
+            this.spectatorRuntimeService = new SpectatorRuntimeService(this.getLogger());
+            SpectatorPacketGuard.register(this.spectatorRuntimeService, this.getLogger());
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
                 this.matchSessionService,
                 this.arenaService,
-                this.instanceSpawnSlotService
+                this.instanceSpawnSlotService,
+                this.spectatorRuntimeService
             );
-            this.spectatorRuntimeProbeService = new NexoriSpectatorRuntimeProbeService();
-            NexoriSpectatorPacketProbe.register(this.spectatorRuntimeProbeService, this.getLogger());
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
             );
@@ -509,7 +509,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.registerAdminCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
             this.registerAdminCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
             this.registerAdminCommand(new NexoriMatchResolvePlayerCommand(this, this.arenaMatchService));
-            this.registerAdminCommand(new NexoriSpectatorProbeCommand(this.spectatorRuntimeProbeService));
             this.registerAdminCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriTargetHelpCommand());
@@ -585,16 +584,13 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new BackendResultReportingTickSystem(this.backendResultReportingService));
             this.getEntityStoreRegistry().registerSystem(new NexoriStatusHudTickSystem(this.nexoriStatusHudService));
             this.getEntityStoreRegistry().registerSystem(new WorldLabelTickSystem(this.worldLabelService));
-            NexoriSpectatorPickupSpatialProbe spectatorPickupSpatialProbe = new NexoriSpectatorPickupSpatialProbe(
-                this.spectatorRuntimeProbeService,
-                this.getLogger()
-            );
-            this.getEntityStoreRegistry().registerSystem(new NexoriSpectatorPickupSpatialFilterSystem(
-                spectatorPickupSpatialProbe,
+            SpectatorPickupSpatialGuard spectatorPickupSpatialGuard = new SpectatorPickupSpatialGuard(this.spectatorRuntimeService);
+            this.getEntityStoreRegistry().registerSystem(new SpectatorPickupSpatialFilterSystem(
+                spectatorPickupSpatialGuard,
                 EntityModule.get().getPlayerSpatialResourceType()
             ));
-            this.getEntityStoreRegistry().registerSystem(new NexoriSpectatorPickupSpatialRestoreSystem(
-                spectatorPickupSpatialProbe,
+            this.getEntityStoreRegistry().registerSystem(new SpectatorPickupSpatialRestoreSystem(
+                spectatorPickupSpatialGuard,
                 EntityModule.get().getPlayerSpatialResourceType()
             ));
 
