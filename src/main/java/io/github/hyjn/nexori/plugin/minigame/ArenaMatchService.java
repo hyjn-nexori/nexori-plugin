@@ -26,6 +26,11 @@ import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchLifecycleEvent;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerMatchLifecycleEvent;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerPlacementLifecycleEvent;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerPlacementOutcome;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecider;
 import io.github.hyjn.nexori.plugin.minigame.logic.BackfillAdmissionDecision;
 import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextData;
@@ -97,6 +102,7 @@ public class ArenaMatchService {
     private final ArenaService arenaService;
     private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final SpectatorRuntimeController spectatorRuntimeController;
+    private final NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private final BackfillAdmissionDecider backfillAdmissionDecider = new BackfillAdmissionDecider();
     private final LaunchContextParser launchContextParser = new LaunchContextParser();
     private final MatchPlacementEvaluator matchPlacementEvaluator = new MatchPlacementEvaluator();
@@ -124,7 +130,8 @@ public class ArenaMatchService {
             matchSessionService,
             arenaService,
             instanceSpawnSlotService,
-            NoopSpectatorRuntimeController.INSTANCE
+            NoopSpectatorRuntimeController.INSTANCE,
+            new NexoriMatchLifecycleDispatcher(logger)
         );
     }
 
@@ -136,12 +143,33 @@ public class ArenaMatchService {
         @Nonnull InstanceSpawnSlotService instanceSpawnSlotService,
         @Nonnull SpectatorRuntimeController spectatorRuntimeController
     ) {
+        this(
+            logger,
+            secureTravelService,
+            matchSessionService,
+            arenaService,
+            instanceSpawnSlotService,
+            spectatorRuntimeController,
+            new NexoriMatchLifecycleDispatcher(logger)
+        );
+    }
+
+    public ArenaMatchService(
+        @Nonnull HytaleLogger logger,
+        @Nonnull SecureTravelService secureTravelService,
+        @Nonnull MatchSessionService matchSessionService,
+        @Nonnull ArenaService arenaService,
+        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService,
+        @Nonnull SpectatorRuntimeController spectatorRuntimeController,
+        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher
+    ) {
         this.logger = logger;
         this.secureTravelService = secureTravelService;
         this.matchSessionService = matchSessionService;
         this.arenaService = arenaService;
         this.instanceSpawnSlotService = instanceSpawnSlotService;
         this.spectatorRuntimeController = spectatorRuntimeController;
+        this.matchLifecycleDispatcher = matchLifecycleDispatcher;
     }
 
     public synchronized void setBackendMatchAdmissionStateReportingService(
@@ -153,44 +181,65 @@ public class ArenaMatchService {
     /**
      * Observes player-ready events and consumes Nexori launch or return arrivals for that player.
      */
-    public synchronized void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
+    public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            lifecycleDispatches = handlePlayerReadyLocked(event);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    @Nonnull
+    private List<Runnable> handlePlayerReadyLocked(@Nonnull PlayerReadyEvent event) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
         PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
             event.getPlayerRef(),
             Universe.get().getPlayerRefComponentType()
         );
         if (playerRef == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         refreshRuntimeSpectatorForReadyPlayer(playerRef);
 
         PendingArrival arrival = secureTravelService.consumeRecentArrival(playerRef.getUuid()).orElse(null);
         if (arrival == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         JsonObject context = parseContext(arrival.contextJson());
         if (context == null || !context.has("flowType")) {
-            return;
+            return lifecycleDispatches;
         }
 
         String flowType = context.get("flowType").getAsString();
         if ("minigame.launch".equalsIgnoreCase(flowType)) {
-            handleLaunchArrival(event, playerRef, context);
-            return;
+            handleLaunchArrival(event, playerRef, context, lifecycleDispatches);
+            return lifecycleDispatches;
         }
         if ("minigame.return".equalsIgnoreCase(flowType)) {
             handleReturnArrival(playerRef, context);
         }
+        return lifecycleDispatches;
     }
 
     /**
      * Removes disconnecting players from the active match runtime and reevaluates automatic resolution.
      */
-    public synchronized void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
+    public void handlePlayerDisconnect(@Nonnull PlayerDisconnectEvent event) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            lifecycleDispatches = handlePlayerDisconnectLocked(event);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    @Nonnull
+    private List<Runnable> handlePlayerDisconnectLocked(@Nonnull PlayerDisconnectEvent event) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
         PlayerRef playerRef = event.getPlayerRef();
         if (playerRef == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         patchedRespawnPagePlayers.remove(playerRef.getUuid());
@@ -198,12 +247,12 @@ public class ArenaMatchService {
         restoreRuntimeSpectator(playerRef.getUuid(), SpectatorRuntimeReason.PLAYER_DISCONNECT);
         String matchId = matchIdByPlayerUuid.remove(playerRef.getUuid());
         if (matchId == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         ArenaActiveMatch match = matchesById.get(matchId);
         if (match == null || !match.hasPlayer(playerRef.getUuid())) {
-            return;
+            return lifecycleDispatches;
         }
 
         long now = System.currentTimeMillis();
@@ -211,26 +260,37 @@ public class ArenaMatchService {
             .withLastError("Player disconnected: " + event.getDisconnectReason(), now);
         updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
 
-        storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "");
+        storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
+        return lifecycleDispatches;
     }
 
     /**
      * Handles setup disconnects that happen before a launch or return arrival can finish.
      */
-    public synchronized void handlePlayerSetupDisconnect(@Nonnull PlayerSetupDisconnectEvent event) {
+    public void handlePlayerSetupDisconnect(@Nonnull PlayerSetupDisconnectEvent event) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            lifecycleDispatches = handlePlayerSetupDisconnectLocked(event);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    @Nonnull
+    private List<Runnable> handlePlayerSetupDisconnectLocked(@Nonnull PlayerSetupDisconnectEvent event) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
         PendingArrival arrival = secureTravelService.peekPendingArrival(event.getUuid()).orElse(null);
         if (arrival == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         JsonObject context = parseContext(arrival.contextJson());
         if (context == null || !context.has("flowType")) {
-            return;
+            return lifecycleDispatches;
         }
 
         String flowType = context.get("flowType").getAsString();
         if (!"minigame.launch".equalsIgnoreCase(flowType) && !"minigame.return".equalsIgnoreCase(flowType)) {
-            return;
+            return lifecycleDispatches;
         }
 
         secureTravelService.removePendingArrival(event.getUuid());
@@ -250,52 +310,67 @@ public class ArenaMatchService {
                             + launch.matchId()
                             + "; backend reservation will expire by TTL."
                     );
-                    return;
+                    return lifecycleDispatches;
                 }
                 ArenaActiveMatch match = matchesById.get(launch.matchId());
                 if (match != null) {
                     ArenaActiveMatch updated = match.withExpectedPlayerCount(match.expectedPlayerCount() - 1, now)
                         .withLastError(reason, now);
                     updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
-                    storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "");
+                    storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
                 }
-                return;
+                return lifecycleDispatches;
             }
         } catch (IllegalArgumentException exception) {
             logger.atWarning().withCause(exception).log("Failed to process Nexori player setup disconnect context.");
         }
+        return lifecycleDispatches;
     }
 
     /**
      * Advances per-player match runtime such as elimination handling and pending lobby returns.
      */
-    public synchronized void handlePlayerTick(
+    public void handlePlayerTick(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
         long nowEpochMs
     ) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            lifecycleDispatches = handlePlayerTickLocked(ref, store, nowEpochMs);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    @Nonnull
+    private List<Runnable> handlePlayerTickLocked(
+        @Nonnull Ref<EntityStore> ref,
+        @Nonnull Store<EntityStore> store,
+        long nowEpochMs
+    ) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         PlayerRef playerRef = store.getComponent(ref, Universe.get().getPlayerRefComponentType());
         if (playerRef == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
         if (matchId == null) {
-            return;
+            return lifecycleDispatches;
         }
 
         ArenaActiveMatch match = matchesById.get(matchId);
         if (match == null || !match.hasPlayer(playerRef.getUuid())) {
-            return;
+            return lifecycleDispatches;
         }
 
         observePendingPlacementReady(ref, store, playerRef);
-        applyPendingInstanceSpawnTeleport(ref, store, playerRef);
+        applyPendingInstanceSpawnTeleport(ref, store, playerRef, lifecycleDispatches);
 
         ArenaActiveMatch updated = match;
         boolean useBuiltInDeathElimination =
@@ -317,7 +392,22 @@ public class ArenaMatchService {
             playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 5 seconds."));
         }
 
-        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, nowEpochMs), nowEpochMs);
+        ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+        collectMatchPlacementCompletedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            "MATCH_PLACEMENT_COMPLETED",
+            nowEpochMs,
+            lifecycleDispatches
+        );
+        collectMatchCompletedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            "MATCH_COMPLETED",
+            nowEpochMs,
+            lifecycleDispatches
+        );
 
         if (updated.hasPendingReturn(playerRef.getUuid())) {
             Long dueAt = updated.pendingReturnAtEpochMsByPlayerUuid().get(playerRef.getUuid());
@@ -326,7 +416,8 @@ public class ArenaMatchService {
             }
         }
 
-        storeUpdatedMatchOrCloseEmptyRuntime(match, updated, nowEpochMs, "");
+        storeUpdatedMatchOrCloseEmptyRuntime(match, updated, nowEpochMs, "", lifecycleDispatches);
+        return lifecycleDispatches;
     }
 
     /**
@@ -538,7 +629,7 @@ public class ArenaMatchService {
     }
 
     /**
-     * Returns the exact player set a rules mod must include in submitMatchResult.
+     * Returns the exact player set a rules mod must resolve before submitting a final match result.
      */
     @Nonnull
     public synchronized Optional<MatchResultRequirements> findMatchResultRequirements(@Nonnull String rawMatchId) {
@@ -695,97 +786,27 @@ public class ArenaMatchService {
      * Completes a match using accumulated outcomes, without moving players.
      */
     @Nonnull
-    public synchronized SubmitMatchResult submitFinalMatchResult(
+    public SubmitMatchResult submitFinalMatchResult(
         @Nonnull String rawMatchId,
         @Nonnull String rawReason,
         JsonObject rawCustomData
     ) {
-        return submitFinalMatchResult(rawMatchId, rawReason, Map.of(), rawCustomData);
-    }
-
-    /**
-     * Completes a whole match from an external rules mod while keeping local completion independent from backend reporting.
-     */
-    @Nonnull
-    public synchronized SubmitMatchResult submitMatchResult(
-        @Nonnull String rawMatchId,
-        @Nonnull List<SubmitMatchPlayerResult> rawPlayerResults,
-        @Nonnull Map<String, String> rawMetadata,
-        int returnDelaySeconds,
-        @Nonnull String rawReason
-    ) {
-        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
-        ArenaActiveMatch match = matchesById.get(matchId);
-        if (match == null) {
-            return SubmitMatchResult.matchMissing(matchId);
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
+        SubmitMatchResult result;
+        synchronized (this) {
+            result = submitFinalMatchResultLocked(rawMatchId, rawReason, Map.of(), rawCustomData, lifecycleDispatches);
         }
-
-        MatchResultValidationResult validation = matchResultValidator.validateSubmittedResult(
-            match,
-            toValidationPlayerResults(rawPlayerResults),
-            rawMetadata,
-            rawReason,
-            returnDelaySeconds
-        );
-        if (!validation.valid()) {
-            return SubmitMatchResult.invalid(match, validation.message());
-        }
-
-        if (match.hasSubmittedResult()) {
-            String payloadHash = hashFinalSubmittedResult(
-                match,
-                toSubmitMatchPlayerResults(validation.players()),
-                validation.metadata(),
-                validation.reason(),
-                metadataToJson(validation.metadata())
-            );
-            boolean samePayload = match.resultPayloadHash().equals(payloadHash);
-            return SubmitMatchResult.alreadySubmitted(match, payloadHash, !samePayload);
-        }
-        if (match.hasCompleted()) {
-            return SubmitMatchResult.invalid(match, "Match result was already submitted.");
-        }
-
-        long now = System.currentTimeMillis();
-        ArenaActiveMatch updated = match;
-        for (MatchResultValidationResult.PlayerResult playerResult : validation.players()) {
-            updated = updated.withPlayerOutcome(
-                playerResult.playerUuid(),
-                playerResult.runtimeOutcome(),
-                playerResult.backendOutcome(),
-                playerResult.reason(),
-                now
-            );
-        }
-        matchesById.put(updated.matchId(), updated);
-        SubmitMatchResult result = submitFinalMatchResult(updated.matchId(), validation.reason(), validation.metadata(), metadataToJson(validation.metadata()));
-        if (result.outcome() != SubmitMatchOutcome.ACCEPTED) {
-            return result;
-        }
-
-        long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
-        ArenaActiveMatch returned = result.activeMatch();
-        for (MatchResultValidationResult.PlayerResult playerResult : validation.players()) {
-            returned = returned.withPendingReturn(playerResult.playerUuid(), now + delayMillis, now);
-        }
-        matchesById.put(returned.matchId(), returned);
-        return SubmitMatchResult.accepted(
-            returned,
-            result.players(),
-            result.metadata(),
-            result.customData(),
-            result.reason(),
-            result.resultPayloadHash(),
-            result.endedAtEpochMs()
-        );
+        dispatchLifecycleEvents(lifecycleDispatches);
+        return result;
     }
 
     @Nonnull
-    private SubmitMatchResult submitFinalMatchResult(
+    private SubmitMatchResult submitFinalMatchResultLocked(
         @Nonnull String rawMatchId,
         @Nonnull String rawReason,
         @Nonnull Map<String, String> metadata,
-        JsonObject rawCustomData
+        JsonObject rawCustomData,
+        @Nonnull List<Runnable> lifecycleDispatches
     ) {
         String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
         ArenaActiveMatch match = matchesById.get(matchId);
@@ -820,6 +841,7 @@ public class ArenaMatchService {
         }
         matchesById.put(updated.matchId(), updated);
         maybeScheduleAdmissionReporting(match, updated, now, "");
+        collectMatchCompletedTransition(match, updated, "MATCH_COMPLETED", now, lifecycleDispatches);
         return SubmitMatchResult.accepted(
             updated,
             toSubmitMatchPlayerResults(validation.players()),
@@ -832,44 +854,25 @@ public class ArenaMatchService {
     }
 
     /**
-     * Records the resolved outcome for one player in an active match and schedules the return countdown.
-     */
-    @Nonnull
-    public synchronized ResolvePlayerResult resolvePlayerOutcome(
-        @Nonnull String rawMatchId,
-        @Nonnull UUID playerUuid,
-        @Nonnull ArenaPlayerResolutionOutcome outcome,
-        int returnDelaySeconds,
-        @Nonnull String rawReason
-    ) {
-        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
-        ArenaActiveMatch match = matchesById.get(matchId);
-        if (match == null) {
-            return ResolvePlayerResult.matchMissing(matchId);
-        }
-        if (!match.hasPlayer(playerUuid)) {
-            return ResolvePlayerResult.playerMissing(match, playerUuid);
-        }
-
-        long now = System.currentTimeMillis();
-        long delayMillis = Math.max(returnDelaySeconds, 0) * 1000L;
-        String reason = normalizeOptional(rawReason, outcome.name().toLowerCase());
-        ArenaActiveMatch updated = match.withPlayerOutcome(playerUuid, outcome, outcome.name(), reason, now)
-            .withPendingReturn(playerUuid, now + delayMillis, now);
-        if (!reason.isBlank()) {
-            updated = updated.withLastError(reason, now);
-        }
-        updated = reconcileAdmissionLifecycle(updated, now);
-        matchesById.put(updated.matchId(), updated);
-        maybeScheduleAdmissionReporting(match, updated, now, "");
-        return ResolvePlayerResult.updated(updated, playerUuid, outcome);
-    }
-
-    /**
      * Forces an active match to end and schedules every remaining player to return immediately.
      */
     @Nonnull
-    public synchronized EndMatchResult endMatch(@Nonnull String rawMatchId, @Nonnull String rawReason) {
+    public EndMatchResult endMatch(@Nonnull String rawMatchId, @Nonnull String rawReason) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
+        EndMatchResult result;
+        synchronized (this) {
+            result = endMatchLocked(rawMatchId, rawReason, lifecycleDispatches);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+        return result;
+    }
+
+    @Nonnull
+    private EndMatchResult endMatchLocked(
+        @Nonnull String rawMatchId,
+        @Nonnull String rawReason,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
         String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
         ArenaActiveMatch match = matchesById.get(matchId);
         if (match == null) {
@@ -887,6 +890,7 @@ public class ArenaMatchService {
         matchesById.put(updated.matchId(), updated);
         restoreRuntimeSpectators(updated, SpectatorRuntimeReason.MATCH_CLEANUP);
         maybeScheduleAdmissionReporting(match, updated, now, "");
+        collectMatchCompletedTransition(match, updated, "MATCH_COMPLETED", now, lifecycleDispatches);
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
     }
 
@@ -900,52 +904,6 @@ public class ArenaMatchService {
         required.addAll(match.activePlayerUuids());
         required.addAll(match.eliminatedPlayerUuids());
         return List.copyOf(required);
-    }
-
-    @Nonnull
-    private String hashSubmittedResult(
-        @Nonnull ArenaActiveMatch match,
-        @Nonnull List<SubmitMatchPlayerResult> playerResults,
-        @Nonnull Map<String, String> metadata,
-        @Nonnull String reason,
-        int returnDelaySeconds
-    ) {
-        StringBuilder canonical = new StringBuilder();
-        canonical.append("matchId=").append(match.matchId()).append('\n');
-        canonical.append("queueId=").append(match.queueId()).append('\n');
-        canonical.append("arenaId=").append(match.arenaId()).append('\n');
-        canonical.append("externalMatchId=").append(match.externalMatchId()).append('\n');
-        canonical.append("reason=").append(reason).append('\n');
-        canonical.append("returnDelaySeconds=").append(Math.max(returnDelaySeconds, 0)).append('\n');
-        playerResults.stream()
-            .sorted(Comparator.comparing(result -> result.playerUuid().toString()))
-            .forEach(result -> canonical
-                .append("player=")
-                .append(result.playerUuid())
-                .append('|')
-                .append(result.backendOutcome())
-                .append('|')
-                .append(result.reason())
-                .append('\n'));
-        metadata.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> canonical
-                .append("metadata=")
-                .append(entry.getKey())
-                .append('|')
-                .append(entry.getValue())
-                .append('\n'));
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(hash.length * 2);
-            for (byte value : hash) {
-                hex.append(String.format("%02x", value));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable.", exception);
-        }
     }
 
     @Nonnull
@@ -1029,36 +987,6 @@ public class ArenaMatchService {
     }
 
     @Nonnull
-    private JsonObject metadataToJson(@Nonnull Map<String, String> metadata) {
-        JsonObject root = new JsonObject();
-        metadata.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> root.addProperty(entry.getKey(), entry.getValue()));
-        return root;
-    }
-
-    @Nonnull
-    private List<MatchResultValidationResult.PlayerResult> toValidationPlayerResults(List<SubmitMatchPlayerResult> rawPlayerResults) {
-        if (rawPlayerResults == null || rawPlayerResults.isEmpty()) {
-            return List.of();
-        }
-        List<MatchResultValidationResult.PlayerResult> results = new ArrayList<>();
-        for (SubmitMatchPlayerResult playerResult : rawPlayerResults) {
-            if (playerResult == null) {
-                results.add(null);
-                continue;
-            }
-            results.add(new MatchResultValidationResult.PlayerResult(
-                playerResult.playerUuid(),
-                playerResult.runtimeOutcome(),
-                playerResult.backendOutcome(),
-                playerResult.reason()
-            ));
-        }
-        return List.copyOf(results);
-    }
-
-    @Nonnull
     private List<SubmitMatchPlayerResult> toSubmitMatchPlayerResults(@Nonnull List<MatchResultValidationResult.PlayerResult> rawPlayerResults) {
         if (rawPlayerResults.isEmpty()) {
             return List.of();
@@ -1075,7 +1003,12 @@ public class ArenaMatchService {
         return List.copyOf(results);
     }
 
-    private void handleLaunchArrival(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
+    private void handleLaunchArrival(
+        @Nonnull PlayerReadyEvent event,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull JsonObject context,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
         LaunchContextData launch;
         try {
             launch = launchContextParser.parse(context);
@@ -1089,6 +1022,10 @@ public class ArenaMatchService {
         }
         long now = System.currentTimeMillis();
         ArenaActiveMatch existing = matchesById.get(launch.matchId());
+        boolean matchCreated = existing == null;
+        boolean playerAlreadyAssociated = existing != null
+            && (existing.arrivedPlayerUuids().contains(playerRef.getUuid())
+                || existing.activePlayerUuids().contains(playerRef.getUuid()));
         boolean backfillArrival = ASSIGNMENT_TYPE_BACKFILL.equalsIgnoreCase(launch.assignmentType());
         if (!backfillArrival
             && !launch.expectedPlayerUuids().isEmpty()
@@ -1196,11 +1133,12 @@ public class ArenaMatchService {
             ArenaActiveMatch previous = matchesById.get(previousMatchId);
             if (previous != null) {
                 ArenaActiveMatch previousUpdated = previous.withoutReturnedPlayer(playerRef.getUuid(), now);
-                storeUpdatedMatchOrCloseEmptyRuntime(previous, previousUpdated, now, "");
+                storeUpdatedMatchOrCloseEmptyRuntime(previous, previousUpdated, now, "", lifecycleDispatches);
             }
         }
 
-        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
+        ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, now);
+        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, now);
         matchesById.put(updated.matchId(), updated);
         refreshRuntimeSpectatorVisibility(updated);
         if (updated.spectatorPlayerUuids().contains(playerRef.getUuid())) {
@@ -1208,12 +1146,208 @@ public class ArenaMatchService {
         }
         maybeScheduleAdmissionReporting(existing, updated, now, backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED");
         rememberPendingInstanceSpawnTeleport(event.getPlayerRef(), playerRef.getUuid(), launch, updated);
+        collectLaunchArrivalLifecycleEvents(
+            matchCreated,
+            playerAlreadyAssociated,
+            updated,
+            playerRef,
+            backfillArrival,
+            now,
+            lifecycleDispatches
+        );
+        collectMatchPlacementCompletedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            "MATCH_PLACEMENT_COMPLETED",
+            now,
+            lifecycleDispatches
+        );
+        collectMatchCompletedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            "MATCH_COMPLETED",
+            now,
+            lifecycleDispatches
+        );
         if (backfillArrival) {
             issueBackfillInstancePlacement(event.getPlayerRef(), playerRef);
         }
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
         ));
+    }
+
+    private void collectLaunchArrivalLifecycleEvents(
+        boolean matchCreated,
+        boolean playerAlreadyAssociated,
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull PlayerRef playerRef,
+        boolean backfillArrival,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(
+            match,
+            matchCreated ? "MATCH_CREATED" : (backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED"),
+            eventAtEpochMs
+        );
+        if (matchCreated) {
+            lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchCreated(matchEvent));
+        }
+        if (!playerAlreadyAssociated
+            && (match.arrivedPlayerUuids().contains(playerRef.getUuid())
+                || match.activePlayerUuids().contains(playerRef.getUuid()))) {
+            NexoriPlayerMatchLifecycleEvent playerEvent = buildPlayerMatchLifecycleEvent(
+                matchEvent,
+                match,
+                playerRef,
+                backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED",
+                eventAtEpochMs
+            );
+            lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerArrived(playerEvent));
+        }
+    }
+
+    @Nonnull
+    private NexoriPlayerMatchLifecycleEvent buildPlayerMatchLifecycleEvent(
+        @Nonnull NexoriMatchLifecycleEvent matchEvent,
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull PlayerRef playerRef,
+        @Nonnull String reason,
+        long eventAtEpochMs
+    ) {
+        return new NexoriPlayerMatchLifecycleEvent(
+            matchEvent,
+            playerRef.getUuid(),
+            playerRef.getUsername(),
+            match.assignmentIdsByPlayerUuid().get(playerRef.getUuid()),
+            reason,
+            eventAtEpochMs
+        );
+    }
+
+    @Nonnull
+    private NexoriMatchLifecycleEvent buildMatchLifecycleEvent(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull String reason,
+        long eventAtEpochMs
+    ) {
+        MatchPlacementEvaluation evaluation = evaluatePlacement(match);
+        return new NexoriMatchLifecycleEvent(
+            match.matchId(),
+            match.queueId(),
+            match.arenaId(),
+            match.assignmentId(),
+            match.externalMatchId(),
+            match.rulesEngineId(),
+            match.matchResolutionTriggerId(),
+            match.expectedPlayerUuids(),
+            match.arrivedPlayerUuids(),
+            match.activePlayerUuids(),
+            match.spectatorPlayerUuids(),
+            buildRequiredResultPlayerUuids(match),
+            new NexoriMatchPlacementState(
+                evaluation.expectedPlayers(),
+                evaluation.arrivedInitialPlayers(),
+                evaluation.placedInitialPlayers(),
+                evaluation.placementComplete()
+            ),
+            reason,
+            match.createdAtEpochMs(),
+            eventAtEpochMs
+        );
+    }
+
+    private void dispatchLifecycleEvents(@Nonnull List<Runnable> lifecycleDispatches) {
+        for (Runnable lifecycleDispatch : lifecycleDispatches) {
+            lifecycleDispatch.run();
+        }
+    }
+
+    private void collectPlayerPlacementTerminalTransition(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull PendingInstanceSpawnTeleport previous,
+        @Nonnull PendingInstanceSpawnTeleport updated,
+        @Nonnull NexoriPlayerPlacementOutcome outcome,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (isTerminalPlacementPhase(previous.phase()) || !isTerminalPlacementPhase(updated.phase())) {
+            return;
+        }
+        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
+        if (matchId == null) {
+            return;
+        }
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPlayer(playerRef.getUuid())) {
+            return;
+        }
+
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(match, reason, eventAtEpochMs);
+        NexoriPlayerMatchLifecycleEvent playerEvent = buildPlayerMatchLifecycleEvent(
+            matchEvent,
+            match,
+            playerRef,
+            reason,
+            eventAtEpochMs
+        );
+        NexoriPlayerPlacementLifecycleEvent placementEvent = new NexoriPlayerPlacementLifecycleEvent(
+            playerEvent,
+            outcome,
+            matchEvent.placementState(),
+            updated.expectedWorldName(),
+            updated.instanceTemplateId(),
+            eventAtEpochMs
+        );
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerPlacementConfirmed(placementEvent));
+    }
+
+    private boolean isTerminalPlacementPhase(@Nonnull PlacementPhase phase) {
+        return phase == PlacementPhase.CONFIRMED || phase == PlacementPhase.FALLBACK;
+    }
+
+    private void collectMatchPlacementCompletedTransition(
+        @Nonnull ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (previous.placementCompletedAtEpochMs() > 0L || updated.placementCompletedAtEpochMs() <= 0L) {
+            return;
+        }
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchPlacementCompleted(matchEvent));
+    }
+
+    private void collectMatchCompletedTransition(
+        @Nonnull ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (previous.completedAtEpochMs() > 0L || updated.completedAtEpochMs() <= 0L) {
+            return;
+        }
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchCompleted(matchEvent));
+    }
+
+    private void collectMatchRuntimeClosedTransition(
+        @Nonnull ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (previous.isEmpty() || !updated.isEmpty()) {
+            return;
+        }
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchRuntimeClosed(matchEvent));
     }
 
     @Nonnull
@@ -1398,7 +1532,8 @@ public class ArenaMatchService {
     private void applyPendingInstanceSpawnTeleport(
         @Nonnull Ref<EntityStore> ref,
         @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef
+        @Nonnull PlayerRef playerRef,
+        @Nonnull List<Runnable> lifecycleDispatches
     ) {
         PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerRef.getUuid());
         if (pending == null) {
@@ -1436,6 +1571,15 @@ public class ArenaMatchService {
             if (targetWorld == null) {
                 PendingInstanceSpawnTeleport fallback = pending.withPhase(PlacementPhase.FALLBACK);
                 pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), fallback);
+                collectPlayerPlacementTerminalTransition(
+                    playerRef,
+                    pending,
+                    fallback,
+                    NexoriPlayerPlacementOutcome.FALLBACK,
+                    "PLACEMENT_FALLBACK_MISSING_WORLD",
+                    nowEpochMs,
+                    lifecycleDispatches
+                );
                 logger.atWarning().log(
                     "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
                         + " matchId=" + normalizeOptional(matchId, "<unknown>")
@@ -1490,6 +1634,15 @@ public class ArenaMatchService {
             if (stabilized.stableTicks() >= INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS) {
                 PendingInstanceSpawnTeleport confirmed = stabilized.withPhase(PlacementPhase.CONFIRMED);
                 pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), confirmed);
+                collectPlayerPlacementTerminalTransition(
+                    playerRef,
+                    pending,
+                    confirmed,
+                    NexoriPlayerPlacementOutcome.CONFIRMED,
+                    "PLACEMENT_CONFIRMED",
+                    nowEpochMs,
+                    lifecycleDispatches
+                );
                 logPlacementConfirmed(playerRef, matchId, currentWorld, transformComponent, confirmed, distanceSquared);
                 return;
             }
@@ -1505,6 +1658,15 @@ public class ArenaMatchService {
         if (pending.issuedAtEpochMs() > 0L && nowEpochMs - pending.issuedAtEpochMs() >= INITIAL_PLACEMENT_TIMEOUT_MS) {
             PendingInstanceSpawnTeleport fallback = pending.withPhase(PlacementPhase.FALLBACK);
             pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), fallback);
+            collectPlayerPlacementTerminalTransition(
+                playerRef,
+                pending,
+                fallback,
+                NexoriPlayerPlacementOutcome.FALLBACK,
+                "PLACEMENT_FALLBACK_TIMEOUT",
+                nowEpochMs,
+                lifecycleDispatches
+            );
             logger.atWarning().log(
                 "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
                     + " matchId=" + normalizeOptional(matchId, "<unknown>")
@@ -2100,9 +2262,17 @@ public class ArenaMatchService {
         @Nonnull ArenaActiveMatch previous,
         @Nonnull ArenaActiveMatch updated,
         long nowEpochMs,
-        @Nonnull String primaryReason
+        @Nonnull String primaryReason,
+        @Nonnull List<Runnable> lifecycleDispatches
     ) {
         restoreRuntimeForPlayersRemovedFromMatch(previous, updated);
+        collectMatchRuntimeClosedTransition(
+            previous,
+            updated,
+            "MATCH_RUNTIME_CLOSED",
+            nowEpochMs,
+            lifecycleDispatches
+        );
         ArenaActiveMatch stored = updated;
         String reason = primaryReason;
         if (updated.isEmpty()) {
@@ -2286,12 +2456,6 @@ public class ArenaMatchService {
         }
     }
 
-    public enum ResolvePlayerOutcome {
-        UPDATED,
-        MATCH_MISSING,
-        PLAYER_MISSING
-    }
-
     public enum SetPlayerOutcomeOutcome {
         UPDATED,
         MATCH_MISSING,
@@ -2428,34 +2592,6 @@ public class ArenaMatchService {
         @Nonnull
         public static ReturnPlayerResult invalidReason(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid, @Nonnull String message) {
             return new ReturnPlayerResult(ReturnPlayerOutcome.INVALID_REASON, activeMatch.matchId(), playerUuid, 0L, message, activeMatch);
-        }
-    }
-
-    public record ResolvePlayerResult(
-        ResolvePlayerOutcome outcome,
-        String matchId,
-        UUID playerUuid,
-        ArenaPlayerResolutionOutcome playerOutcome,
-        ArenaActiveMatch activeMatch
-    ) {
-
-        @Nonnull
-        public static ResolvePlayerResult updated(
-            @Nonnull ArenaActiveMatch activeMatch,
-            @Nonnull UUID playerUuid,
-            @Nonnull ArenaPlayerResolutionOutcome playerOutcome
-        ) {
-            return new ResolvePlayerResult(ResolvePlayerOutcome.UPDATED, activeMatch.matchId(), playerUuid, playerOutcome, activeMatch);
-        }
-
-        @Nonnull
-        public static ResolvePlayerResult matchMissing(@Nonnull String matchId) {
-            return new ResolvePlayerResult(ResolvePlayerOutcome.MATCH_MISSING, normalizeRequired(matchId, "Match id cannot be blank."), null, null, null);
-        }
-
-        @Nonnull
-        public static ResolvePlayerResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, @Nonnull UUID playerUuid) {
-            return new ResolvePlayerResult(ResolvePlayerOutcome.PLAYER_MISSING, activeMatch.matchId(), playerUuid, null, activeMatch);
         }
     }
 

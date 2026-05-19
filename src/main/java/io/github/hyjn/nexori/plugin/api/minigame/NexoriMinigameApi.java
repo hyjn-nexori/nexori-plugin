@@ -11,6 +11,15 @@ import java.util.UUID;
 public interface NexoriMinigameApi {
 
     /**
+     * Registers a listener for Nexori match lifecycle callbacks for one rules engine id.
+     */
+    @Nonnull
+    NexoriListenerRegistration registerMatchLifecycleListener(
+        @Nonnull String rulesEngineId,
+        @Nonnull NexoriMatchLifecycleListener listener
+    );
+
+    /**
      * Finds the currently active Nexori match id for one player UUID.
      */
     @Nonnull
@@ -33,19 +42,6 @@ public interface NexoriMinigameApi {
      */
     @Nonnull
     Optional<String> findRulesEngineId(@Nonnull String matchId);
-
-    /**
-     * Resolves one player result manually and lets Nexori handle the delayed return flow.
-     */
-    @Deprecated
-    @Nonnull
-    NexoriResolvePlayerResult resolvePlayerOutcome(
-        @Nonnull String matchId,
-        @Nonnull UUID playerUuid,
-        @Nonnull NexoriPlayerResolutionOutcome outcome,
-        int returnDelaySeconds,
-        @Nonnull String reason
-    );
 
     /**
      * Stores or replaces one player's accumulated outcome inside the active match runtime.
@@ -100,13 +96,6 @@ public interface NexoriMinigameApi {
      */
     @Nonnull
     Optional<NexoriMatchResultRequirements> findMatchResultRequirements(@Nonnull String matchId);
-
-    /**
-     * Completes one match locally and optionally queues a backend result report when configured.
-     */
-    @Deprecated
-    @Nonnull
-    NexoriSubmitMatchResultResult submitMatchResult(@Nonnull NexoriSubmitMatchResultRequest request);
 
     /**
      * Completes one match using accumulated player outcomes and optionally queues a backend result report when configured.

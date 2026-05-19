@@ -33,7 +33,6 @@ import io.github.hyjn.nexori.plugin.command.NexoriDiscoverCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriDiscoveredTargetsCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriInstanceListCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchEndCommand;
-import io.github.hyjn.nexori.plugin.command.NexoriMatchResolvePlayerCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchSessionStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriMatchStatusCommand;
 import io.github.hyjn.nexori.plugin.command.NexoriPortalBindCommand;
@@ -84,6 +83,7 @@ import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriAssignedSpawnProvider;
+import io.github.hyjn.nexori.plugin.minigame.NexoriMatchLifecycleDispatcher;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorTickSystem;
@@ -184,6 +184,7 @@ public class NexoriPlugin extends JavaPlugin {
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
     private SpectatorRuntimeService spectatorRuntimeService;
+    private NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
     private WorldLabelService worldLabelService;
@@ -387,13 +388,15 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.spectatorRuntimeService = new SpectatorRuntimeService(this.getLogger());
             SpectatorPacketGuard.register(this.spectatorRuntimeService, this.getLogger());
+            this.matchLifecycleDispatcher = new NexoriMatchLifecycleDispatcher(this.getLogger());
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
                 this.matchSessionService,
                 this.arenaService,
                 this.instanceSpawnSlotService,
-                this.spectatorRuntimeService
+                this.spectatorRuntimeService,
+                this.matchLifecycleDispatcher
             );
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
@@ -438,7 +441,11 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 new PortalWorldLabelSource(this.portalInstanceService)
             );
-            this.minigameApi = new NexoriMinigameApiBridge(this.arenaMatchService, this.backendResultReportingService);
+            this.minigameApi = new NexoriMinigameApiBridge(
+                this.arenaMatchService,
+                this.backendResultReportingService,
+                this.matchLifecycleDispatcher
+            );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();
             this.portalInteractionService = new NexoriPortalInteractionService(
@@ -508,7 +515,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.registerAdminCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
             this.registerAdminCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
             this.registerAdminCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
-            this.registerAdminCommand(new NexoriMatchResolvePlayerCommand(this, this.arenaMatchService));
             this.registerAdminCommand(new NexoriRecoverCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriTargetHelpCommand());

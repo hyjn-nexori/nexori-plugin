@@ -179,14 +179,16 @@ In manual mode:
 
 - Nexori does not decide who won or lost
 - your mod becomes the authority for gameplay resolution
-- your mod decides when to call `resolvePlayerOutcome(...)`
+- your mod stores player outcomes with `setPlayerOutcome(...)`
+- your mod closes the result with `submitFinalMatchResult(...)`
+- your mod schedules returns explicitly with `returnPlayerToLobby(...)` when needed
 - Nexori takes over again once the outcome has been reported
 
 If the match is not in manual mode:
 
 - your mod should stay passive for match resolution
 - your mod should not try to decide the winner
-- your mod should not call `resolvePlayerOutcome(...)` as the owner of the rule engine
+- your mod should not call result commands as the owner of the rule engine
 - Nexori's built-in trigger is the system that owns match resolution
 
 If your plugin contains multiple minigames, Nexori still only tells you whether the match is in manual mode. Your own plugin must decide which internal minigame controller, rule set, or game manager should handle that match.
@@ -202,7 +204,7 @@ If your plugin contains multiple minigames, Nexori still only tells you whether 
 | Manual trigger meaning | The demo treats blank or `"none"` as manual resolution. |
 | Your responsibility in manual mode | Decide which gameplay logic is active and when players should be resolved as `WIN` or `LOSS`. |
 | Your behavior in built-in mode | Do not run your own match-resolution authority. Stay passive and let Nexori's built-in trigger own the outcome. |
-| Nexori's responsibility after that | Schedule and handle the delayed return-to-lobby flow. |
+| Nexori's responsibility after that | Store the result, queue backend reporting when configured, and run explicit return-to-lobby requests. |
 
 </details>
 
@@ -216,8 +218,9 @@ If your plugin contains multiple minigames, Nexori still only tells you whether 
 | 3 | Call `findMatchResolutionTriggerId(matchId)` to determine whether the match is using manual resolution or a Nexori built-in trigger. |
 | 4 | Before starting gameplay logic that depends on players being in the correct world or position, call `findMatchPlacementState(matchId)` and wait until `placementComplete` is `true`. |
 | 5 | Only if the trigger is manual, hand control to your own game rule engine or minigame controller. |
-| 6 | When your mod decides that a player has won or lost, call `resolvePlayerOutcome(...)`. |
-| 7 | Let Nexori handle the delayed return flow. |
+| 6 | When your mod decides the winner/losers, call `setPlayerOutcome(...)` for each required player. |
+| 7 | Call `submitFinalMatchResult(...)` to close and optionally report the final match result. |
+| 8 | Call `returnPlayerToLobby(...)` for players that should leave the arena runtime. |
 
 </details>
 
@@ -334,36 +337,6 @@ UUID playerUuid = resolvedPlayerUuid.get();
 </details>
 
 <details>
-<summary><code>NexoriResolvePlayerResult resolvePlayerOutcome(...)</code></summary>
-
-| Section | Details |
-|---|---|
-| Signature | <code>NexoriResolvePlayerResult resolvePlayerOutcome(@Nonnull String matchId, @Nonnull UUID playerUuid, @Nonnull NexoriPlayerResolutionOutcome outcome, int returnDelaySeconds, @Nonnull String reason)</code> |
-| What it does | Records a manual result for one player and schedules that player's Nexori return flow. |
-| Arguments | `matchId` - the active match id.<br>`playerUuid` - the player being resolved.<br>`outcome` - `WIN` or `LOSS`.<br>`returnDelaySeconds` - delay before Nexori returns that player.<br>`reason` - free-form reason text stored with the resolution request. |
-| Returns | `NexoriResolvePlayerResult`. |
-| Use this when | Your mod has decided that a player won or lost and the active match is configured for manual third-party resolution. |
-| Notes | The Mid Capture demo uses `mid_capture_win` and `mid_capture_loss` as reason strings. |
-
-**Example**
-
-```java
-NexoriResolvePlayerResult result = minigameApi.resolvePlayerOutcome(
-    matchId,
-    playerUuid,
-    NexoriPlayerResolutionOutcome.WIN,
-    5,
-    "mid_capture_win"
-);
-
-if (result.outcome() != NexoriResolvePlayerOutcome.UPDATED) {
-    logger.atWarning().log("Resolution failed: " + result.outcome());
-}
-```
-
-</details>
-
-<details>
 <summary><code>Optional&lt;NexoriMatchPlacementState&gt; findMatchPlacementState(@Nonnull String matchId)</code></summary>
 
 | Section | Details |
@@ -422,71 +395,6 @@ if (!manualResolution) {
 </details>
 
 ## 7. Public enums and records
-
-<details>
-<summary><code>NexoriPlayerResolutionOutcome</code></summary>
-
-| Section | Details |
-|---|---|
-| Source | [`NexoriPlayerResolutionOutcome.java`](../src/main/java/io/github/hyjn/nexori/plugin/api/minigame/NexoriPlayerResolutionOutcome.java) |
-| What it represents | The player result your mod reports back into Nexori. |
-| Values | `WIN`, `LOSS` |
-| Extra method | `parse(String rawValue)` |
-| Use this when | You want to resolve a player through `resolvePlayerOutcome(...)`. |
-| Notes | `parse(...)` normalizes the input and throws `IllegalArgumentException` for invalid values. |
-
-**Example**
-
-```java
-NexoriPlayerResolutionOutcome outcome = NexoriPlayerResolutionOutcome.WIN;
-```
-
-</details>
-
-<details>
-<summary><code>NexoriResolvePlayerOutcome</code></summary>
-
-| Section | Details |
-|---|---|
-| Source | [`NexoriResolvePlayerOutcome.java`](../src/main/java/io/github/hyjn/nexori/plugin/api/minigame/NexoriResolvePlayerOutcome.java) |
-| What it represents | The high-level result of calling `resolvePlayerOutcome(...)`. |
-| Values | `UPDATED`, `MATCH_MISSING`, `PLAYER_MISSING` |
-| Use this when | You want to check whether Nexori accepted the player resolution request. |
-| Notes | `UPDATED` means Nexori accepted the resolution and scheduled the return flow. |
-
-**Example**
-
-```java
-if (result.outcome() == NexoriResolvePlayerOutcome.UPDATED) {
-    // Nexori accepted the result and will handle the return flow.
-}
-```
-
-</details>
-
-<details>
-<summary><code>NexoriResolvePlayerResult</code></summary>
-
-| Section | Details |
-|---|---|
-| Source | [`NexoriResolvePlayerResult.java`](../src/main/java/io/github/hyjn/nexori/plugin/api/minigame/NexoriResolvePlayerResult.java) |
-| What it represents | The public result record returned by `resolvePlayerOutcome(...)`. |
-| Fields | `outcome`, `matchId`, `playerUuid`, `playerOutcome` |
-| Use this when | You want to inspect whether Nexori accepted the update and which player result was recorded. |
-| Notes | For missing-match or missing-player cases, some fields may be `null`. |
-
-**Example**
-
-```java
-logger.atInfo().log(
-    "resolve result matchId=" + result.matchId()
-        + " playerUuid=" + result.playerUuid()
-        + " playerOutcome=" + result.playerOutcome()
-        + " outcome=" + result.outcome()
-);
-```
-
-</details>
 
 <details>
 <summary><code>NexoriMatchPlacementState</code></summary>
@@ -586,39 +494,42 @@ if (placementState == null || !placementState.placementComplete()) {
 </details>
 
 <details>
-<summary><code>Resolve player outcomes and let Nexori take over return flow</code></summary>
+<summary><code>Store player outcomes, submit the final result, then return players</code></summary>
 
 | Section | Details |
 |---|---|
-| Pattern | Your mod decides the winner, then reports `WIN` or `LOSS` for each player. |
-| Why it helps | Nexori stays responsible for the delayed return flow after the outcome is accepted. |
+| Pattern | Your mod decides the winner, stores one outcome per required player, submits the final result, then schedules returns explicitly. |
+| Why it helps | Nexori keeps orchestration, result reporting, and return travel separate from gameplay rules. |
 | Source in demo | `MidCaptureService#resolveWinner(...)` |
 
 **Example**
 
 ```java
 for (UUID playerUuid : playerUuidsInThisMatch) {
-    NexoriPlayerResolutionOutcome outcome =
-        playerUuid.equals(winnerUuid)
-            ? NexoriPlayerResolutionOutcome.WIN
-            : NexoriPlayerResolutionOutcome.LOSS;
-
-    NexoriResolvePlayerResult result = minigameApi.resolvePlayerOutcome(
+    boolean winner = playerUuid.equals(winnerUuid);
+    NexoriSetPlayerOutcomeResult outcomeResult = minigameApi.setPlayerOutcome(
         matchId,
         playerUuid,
-        outcome,
-        5,
-        outcome == NexoriPlayerResolutionOutcome.WIN
-            ? "mid_capture_win"
-            : "mid_capture_loss"
+        winner ? NexoriMatchResultPlayerOutcome.WIN : NexoriMatchResultPlayerOutcome.LOSS,
+        winner ? "mid_capture_win" : "mid_capture_loss"
     );
 
-    if (result.outcome() != NexoriResolvePlayerOutcome.UPDATED) {
+    if (outcomeResult.status() != NexoriSetPlayerOutcomeStatus.UPDATED) {
         logger.atWarning().log(
-            "Failed to resolve player outcome matchId=" + matchId
+            "Failed to store player outcome matchId=" + matchId
                 + " playerUuid=" + playerUuid
-                + " result=" + result.outcome()
+                + " status=" + outcomeResult.status()
         );
+    }
+}
+
+NexoriSubmitFinalMatchResultResult finalResult = minigameApi.submitFinalMatchResult(
+    new NexoriSubmitFinalMatchResultRequest(matchId, "mid_capture_finished", customData)
+);
+
+if (finalResult.matchStatus() == NexoriMatchCompletionStatus.ACCEPTED) {
+    for (UUID playerUuid : playerUuidsInThisMatch) {
+        minigameApi.returnPlayerToLobby(matchId, playerUuid, 5, "mid_capture_finished");
     }
 }
 ```

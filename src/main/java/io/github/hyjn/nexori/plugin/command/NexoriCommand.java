@@ -101,7 +101,6 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexorimatchstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchsessionstatus"));
         ctx.sendMessage(Message.raw("- /nexorimatchend <matchId> [--reason=<MATCH_ENDED|MATCH_ABORTED|RECOVERY_RETURN>]"));
-        ctx.sendMessage(Message.raw("- /nexorimatchresolveplayer <matchId> <player> <WIN|LOSS> [--delaySeconds=<0+>] [--reason=<id>]"));
         ctx.sendMessage(Message.raw("- /nexoriworldlabelcleanup"));
         ctx.sendMessage(Message.raw("  Removes all barrier-based Nexori world-label carriers from your current world, including orphaned portal labels left behind after deleting persistence."));
         ctx.sendMessage(Message.raw("- /nexoribackuplimit <1-50>"));

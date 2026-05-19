@@ -6,16 +6,14 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionStatus;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriListenerRegistration;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchLifecycleListener;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchCompletionStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultPlayer;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultPlayerOutcome;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultRequirements;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerOutcomeState;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerResolutionOutcome;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriResolvePlayerOutcome;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriResolvePlayerResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriReturnPlayerResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriReturnPlayerStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeResult;
@@ -24,14 +22,9 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultResult;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitMatchResultRequest;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitMatchResultResult;
 import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
 
 import javax.annotation.Nonnull;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -43,16 +36,28 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
     private final ArenaMatchService arenaMatchService;
     private final BackendResultReportingService backendResultReportingService;
+    private final NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
 
     /**
      * Creates one bridge backed by the live arena-match service.
      */
     public NexoriMinigameApiBridge(
         @Nonnull ArenaMatchService arenaMatchService,
-        @Nonnull BackendResultReportingService backendResultReportingService
+        @Nonnull BackendResultReportingService backendResultReportingService,
+        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher
     ) {
         this.arenaMatchService = arenaMatchService;
         this.backendResultReportingService = backendResultReportingService;
+        this.matchLifecycleDispatcher = matchLifecycleDispatcher;
+    }
+
+    @Nonnull
+    @Override
+    public NexoriListenerRegistration registerMatchLifecycleListener(
+        @Nonnull String rulesEngineId,
+        @Nonnull NexoriMatchLifecycleListener listener
+    ) {
+        return matchLifecycleDispatcher.register(rulesEngineId, listener);
     }
 
     @Nonnull
@@ -103,41 +108,6 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
     @Override
     public Optional<String> findRulesEngineId(@Nonnull String matchId) {
         return arenaMatchService.findRulesEngineId(matchId);
-    }
-
-    @Deprecated
-    @Nonnull
-    @Override
-    public NexoriResolvePlayerResult resolvePlayerOutcome(
-        @Nonnull String matchId,
-        @Nonnull UUID playerUuid,
-        @Nonnull NexoriPlayerResolutionOutcome outcome,
-        int returnDelaySeconds,
-        @Nonnull String reason
-    ) {
-        ArenaMatchService.ResolvePlayerResult result = arenaMatchService.resolvePlayerOutcome(
-            matchId,
-            playerUuid,
-            switch (outcome) {
-                case WIN -> ArenaPlayerResolutionOutcome.WIN;
-                case LOSS -> ArenaPlayerResolutionOutcome.LOSS;
-            },
-            returnDelaySeconds,
-            reason
-        );
-        return new NexoriResolvePlayerResult(
-            switch (result.outcome()) {
-                case UPDATED -> NexoriResolvePlayerOutcome.UPDATED;
-                case MATCH_MISSING -> NexoriResolvePlayerOutcome.MATCH_MISSING;
-                case PLAYER_MISSING -> NexoriResolvePlayerOutcome.PLAYER_MISSING;
-            },
-            result.matchId(),
-            result.playerUuid(),
-            result.playerOutcome() == null ? null : switch (result.playerOutcome()) {
-                case WIN -> NexoriPlayerResolutionOutcome.WIN;
-                case LOSS, DISCONNECTED -> NexoriPlayerResolutionOutcome.LOSS;
-            }
-        );
     }
 
     @Nonnull
@@ -253,49 +223,6 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             ));
     }
 
-    @Deprecated
-    @Nonnull
-    @Override
-    public NexoriSubmitMatchResultResult submitMatchResult(@Nonnull NexoriSubmitMatchResultRequest request) {
-        if (request == null) {
-            return new NexoriSubmitMatchResultResult(
-                NexoriMatchCompletionStatus.INVALID_RESULT,
-                NexoriBackendReportStatus.NOT_ATTEMPTED,
-                "",
-                "Request cannot be null."
-            );
-        }
-
-        List<ArenaMatchService.SubmitMatchPlayerResult> players = new ArrayList<>();
-        if (request.players() != null) {
-            for (NexoriMatchResultPlayer player : request.players()) {
-                if (player == null || player.playerUuid() == null || player.outcome() == null) {
-                    return new NexoriSubmitMatchResultResult(
-                        NexoriMatchCompletionStatus.INVALID_RESULT,
-                        NexoriBackendReportStatus.NOT_ATTEMPTED,
-                        "",
-                        "Request contains an invalid player result."
-                    );
-                }
-                players.add(new ArenaMatchService.SubmitMatchPlayerResult(
-                    player.playerUuid(),
-                    runtimeOutcome(player.outcome()),
-                    player.outcome().name(),
-                    player.reason()
-                ));
-            }
-        }
-
-        ArenaMatchService.SubmitMatchResult localResult = arenaMatchService.submitMatchResult(
-            request.matchId(),
-            players,
-            request.metadata() == null ? Map.of() : request.metadata(),
-            request.returnDelaySeconds(),
-            request.reason() == null ? "" : request.reason()
-        );
-        return enqueueBackendResult(localResult);
-    }
-
     @Nonnull
     @Override
     public NexoriSubmitFinalMatchResultResult submitFinalMatchResult(@Nonnull NexoriSubmitFinalMatchResultRequest request) {
@@ -312,7 +239,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             request.reason() == null ? "" : request.reason(),
             request.customData()
         );
-        NexoriSubmitMatchResultResult result = enqueueBackendResult(localResult);
+        BackendResultEnqueueOutcome result = enqueueBackendResult(localResult);
         return new NexoriSubmitFinalMatchResultResult(
             result.matchStatus(),
             result.backendReportStatus(),
@@ -360,7 +287,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
     }
 
     @Nonnull
-    private NexoriSubmitMatchResultResult enqueueBackendResult(@Nonnull ArenaMatchService.SubmitMatchResult localResult) {
+    private BackendResultEnqueueOutcome enqueueBackendResult(@Nonnull ArenaMatchService.SubmitMatchResult localResult) {
         NexoriMatchCompletionStatus matchStatus = switch (localResult.outcome()) {
             case ACCEPTED -> NexoriMatchCompletionStatus.ACCEPTED;
             case ALREADY_SUBMITTED -> NexoriMatchCompletionStatus.ALREADY_SUBMITTED;
@@ -368,7 +295,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             case INVALID_RESULT -> NexoriMatchCompletionStatus.INVALID_RESULT;
         };
         if (localResult.outcome() == ArenaMatchService.SubmitMatchOutcome.ALREADY_SUBMITTED) {
-            return new NexoriSubmitMatchResultResult(
+            return new BackendResultEnqueueOutcome(
                 matchStatus,
                 localResult.duplicateConflict()
                     ? NexoriBackendReportStatus.DUPLICATE_CONFLICT
@@ -378,7 +305,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             );
         }
         if (localResult.outcome() != ArenaMatchService.SubmitMatchOutcome.ACCEPTED) {
-            return new NexoriSubmitMatchResultResult(
+            return new BackendResultEnqueueOutcome(
                 matchStatus,
                 NexoriBackendReportStatus.NOT_ATTEMPTED,
                 "",
@@ -395,7 +322,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             localResult.resultPayloadHash(),
             localResult.endedAtEpochMs()
         );
-        return new NexoriSubmitMatchResultResult(
+        return new BackendResultEnqueueOutcome(
             matchStatus,
             switch (enqueueResult.outcome()) {
                 case QUEUED -> NexoriBackendReportStatus.QUEUED;
@@ -408,6 +335,14 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             enqueueResult.resultId(),
             enqueueResult.message()
         );
+    }
+
+    private record BackendResultEnqueueOutcome(
+        NexoriMatchCompletionStatus matchStatus,
+        NexoriBackendReportStatus backendReportStatus,
+        String resultId,
+        String message
+    ) {
     }
 
     @Nonnull

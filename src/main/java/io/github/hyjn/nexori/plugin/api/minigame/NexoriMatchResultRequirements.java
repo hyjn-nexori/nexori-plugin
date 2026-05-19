@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Player sets a rules mod can use to build a complete submitMatchResult request.
+ * Player sets a rules mod can use to store outcomes before submitting a final match result.
  */
 public record NexoriMatchResultRequirements(
     String matchId,
