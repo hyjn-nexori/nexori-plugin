@@ -20,7 +20,7 @@ In practice, that means:
 
 This guide was written using the official companion demo as the practical integration reference:
 
-- [nexori-public-api-demo](https://github.com/hyjn-nexori/nexori-public-api-demo)
+- [nexori-capture-the-zone-minigame](https://github.com/hyjn-nexori/nexori-capture-the-zone-minigame)
 
 That demo implements a simple "Mid Capture" minigame and shows how a separate mod can:
 
@@ -37,7 +37,7 @@ That demo implements a simple "Mid Capture" minigame and shows how a separate mo
 | Section | Details |
 |---|---|
 | Nexori version | `2.0.0` |
-| Companion demo | `nexori-public-api-demo` |
+| Companion demo | `nexori-capture-the-zone-minigame` |
 | Demo minigame | Mid Capture |
 | What the demo proves | A separate mod can own gameplay logic while Nexori owns match-aware coordination and return flow. |
 | Why this matters | The examples below are grounded in a real integration, not a hypothetical API shape. |

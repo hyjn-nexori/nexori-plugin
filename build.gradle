@@ -38,6 +38,8 @@ java {
     withJavadocJar()
 }
 
+def nexoriApiJar = file("$rootDir/../nexori-api/build/libs/nexori-api-2.4.0.jar")
+
 configurations {
     // Force ByteBuddy 1.15.11 on test configurations so SubclassByteBuddyMockMaker
     // can parse Java 25 class files (class-format version 69). Mockito 5.14.2 pulls
@@ -68,6 +70,7 @@ javadoc {
 // compile against their code. This requires you to have Hytale installed using
 // the official launcher for now.
 dependencies {
+    implementation(files(nexoriApiJar))
     implementation(files("$hytaleHome/install/$patchline/package/game/latest/Server/HytaleServer.jar"))
     compileOnly("curse.maven:hyui-1431415:7667069")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
@@ -77,6 +80,12 @@ dependencies {
     // ByteBuddy 1.15.11 adds Java 25 class-format support; SubclassByteBuddyMockMaker
     // needs to parse Java 25 class files to create subclass-based mocks.
     testImplementation("net.bytebuddy:byte-buddy:1.15.11")
+}
+
+tasks.named('jar') {
+    from(zipTree(nexoriApiJar)) {
+        include 'io/github/hyjn/nexori/plugin/api/**'
+    }
 }
 
 test {
