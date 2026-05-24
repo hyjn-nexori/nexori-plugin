@@ -76,6 +76,9 @@ import io.github.hyjn.nexori.plugin.hud.NexoriStatusHudService;
 import io.github.hyjn.nexori.plugin.hud.NexoriStatusHudTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.ArenaService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaStore;
+import io.github.hyjn.nexori.plugin.minigame.AfkActivityService;
+import io.github.hyjn.nexori.plugin.minigame.AfkInventoryPacketActivityAdapter;
+import io.github.hyjn.nexori.plugin.minigame.AfkPlayerInputActivitySystem;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
@@ -183,6 +186,7 @@ public class NexoriPlugin extends JavaPlugin {
     private QueueCoordinatorService queueCoordinatorService;
     private MatchSessionService matchSessionService;
     private ArenaMatchService arenaMatchService;
+    private AfkActivityService afkActivityService;
     private SpectatorRuntimeService spectatorRuntimeService;
     private NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private NexoriMinigameApi minigameApi;
@@ -398,6 +402,10 @@ public class NexoriPlugin extends JavaPlugin {
                 this.spectatorRuntimeService,
                 this.matchLifecycleDispatcher
             );
+            this.afkActivityService = new AfkActivityService(
+                this.getLogger(),
+                this.arenaMatchService::findActiveMatchId
+            );
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
             );
@@ -532,12 +540,18 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.secureReferralService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupConnectEvent.class, this.accessGateService::handlePlayerSetupConnect);
             this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.arenaMatchService::handlePlayerSetupDisconnect);
+            this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, event -> this.afkActivityService.removePlayer(event.getUuid()));
             this.getEventRegistry().register(PlayerSetupDisconnectEvent.class, this.accessGateService::handlePlayerSetupDisconnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.bootstrapCoordinator::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.accessGateService::handlePlayerConnect);
             this.getEventRegistry().register(PlayerConnectEvent.class, this.secureTravelService::handlePlayerConnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.queueCoordinatorService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.arenaMatchService::handlePlayerDisconnect);
+            this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
+                if (event.getPlayerRef() != null) {
+                    this.afkActivityService.removePlayer(event.getPlayerRef().getUuid());
+                }
+            });
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this.accessGateService::handlePlayerDisconnect);
             this.getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
                 if (event.getPlayerRef() != null) {
@@ -580,7 +594,9 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.portalBindingSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.networkCatalogSyncService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.diagnosticsCollectService::handlePlayerReady);
+            AfkInventoryPacketActivityAdapter.register(this.afkActivityService, this.getLogger());
             // Entity systems keep portals, queues, match state, HUDs, and labels updated during world ticks.
+            this.getEntityStoreRegistry().registerSystem(new AfkPlayerInputActivitySystem(this.afkActivityService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalPlaceSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
