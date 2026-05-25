@@ -13,32 +13,20 @@ import java.util.function.Function;
 
 public final class AfkActivityService {
 
-    public static final long DEFAULT_INACTIVITY_TIMEOUT_MS = 30_000L;
-
     private final HytaleLogger logger;
-    private final Function<UUID, Optional<String>> activeMatchIdLookup;
-    private final long inactivityTimeoutMs;
+    private final Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup;
     private final Map<UUID, PlayerActivityState> statesByPlayerUuid = new LinkedHashMap<>();
 
-    public AfkActivityService(@Nonnull Function<UUID, Optional<String>> activeMatchIdLookup) {
-        this(null, activeMatchIdLookup, DEFAULT_INACTIVITY_TIMEOUT_MS);
+    public AfkActivityService(@Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup) {
+        this(null, effectivePolicyLookup);
     }
 
     public AfkActivityService(
         @Nullable HytaleLogger logger,
-        @Nonnull Function<UUID, Optional<String>> activeMatchIdLookup
-    ) {
-        this(logger, activeMatchIdLookup, DEFAULT_INACTIVITY_TIMEOUT_MS);
-    }
-
-    public AfkActivityService(
-        @Nullable HytaleLogger logger,
-        @Nonnull Function<UUID, Optional<String>> activeMatchIdLookup,
-        long inactivityTimeoutMs
+        @Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup
     ) {
         this.logger = logger;
-        this.activeMatchIdLookup = activeMatchIdLookup;
-        this.inactivityTimeoutMs = Math.max(1L, inactivityTimeoutMs);
+        this.effectivePolicyLookup = effectivePolicyLookup;
     }
 
     public synchronized void handlePlayerInputTick(@Nonnull PlayerRef playerRef, boolean hasInputActivity, long nowEpochMs) {
@@ -51,11 +39,12 @@ public final class AfkActivityService {
         boolean hasInputActivity,
         long nowEpochMs
     ) {
-        String matchId = findActiveMatchId(playerUuid).orElse(null);
-        if (matchId == null) {
+        EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
+        if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
             statesByPlayerUuid.remove(playerUuid);
             return;
         }
+        String matchId = effectivePolicy.matchId();
 
         PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
         if (state == null || !state.matchId().equals(matchId)) {
@@ -68,7 +57,7 @@ public final class AfkActivityService {
             return;
         }
 
-        evaluateAfkLocked(playerUuid, username, state, nowEpochMs);
+        evaluateAfkLocked(playerUuid, username, state, effectivePolicy.policy(), nowEpochMs);
     }
 
     public synchronized void markInventoryActivity(@Nonnull PlayerRef playerRef, long nowEpochMs) {
@@ -76,12 +65,12 @@ public final class AfkActivityService {
     }
 
     synchronized void markInventoryActivity(@Nonnull UUID playerUuid, @Nonnull String username, long nowEpochMs) {
-        String matchId = findActiveMatchId(playerUuid).orElse(null);
-        if (matchId == null) {
+        EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
+        if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
             statesByPlayerUuid.remove(playerUuid);
             return;
         }
-        markActivityLocked(playerUuid, username, matchId, nowEpochMs, "INVENTORY_PACKET");
+        markActivityLocked(playerUuid, username, effectivePolicy.matchId(), nowEpochMs, "INVENTORY_PACKET");
     }
 
     public synchronized boolean isAfk(@Nonnull UUID playerUuid) {
@@ -98,12 +87,16 @@ public final class AfkActivityService {
         statesByPlayerUuid.remove(playerUuid);
     }
 
-    private Optional<String> findActiveMatchId(@Nonnull UUID playerUuid) {
-        Optional<String> matchId = activeMatchIdLookup.apply(playerUuid);
-        if (matchId == null || matchId.isEmpty() || matchId.get().isBlank()) {
+    private Optional<EffectiveAfkDetectionPolicy> findEffectivePolicy(@Nonnull UUID playerUuid) {
+        Optional<EffectiveAfkDetectionPolicy> effectivePolicy = effectivePolicyLookup.apply(playerUuid);
+        if (effectivePolicy == null || effectivePolicy.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(matchId.get());
+        EffectiveAfkDetectionPolicy normalized = effectivePolicy.get().normalized();
+        if (normalized.matchId().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(normalized);
     }
 
     private void markActivityLocked(
@@ -131,9 +124,11 @@ public final class AfkActivityService {
         @Nonnull UUID playerUuid,
         @Nonnull String username,
         @Nonnull PlayerActivityState state,
+        @Nonnull AfkDetectionPolicy policy,
         long nowEpochMs
     ) {
-        if (state.afk() || nowEpochMs - state.lastActivityEpochMs() < inactivityTimeoutMs) {
+        long idleMs = nowEpochMs - state.lastActivityEpochMs();
+        if (state.afk() || idleMs < policy.inactivityTimeoutMs()) {
             return;
         }
         statesByPlayerUuid.put(playerUuid, new PlayerActivityState(state.matchId(), state.lastActivityEpochMs(), true));
@@ -143,7 +138,7 @@ public final class AfkActivityService {
                     + " uuid=" + playerUuid
                     + " matchId=" + state.matchId()
                     + " state=AFK"
-                    + " idleMs=" + (nowEpochMs - state.lastActivityEpochMs())
+                    + " idleMs=" + idleMs
             );
         }
     }

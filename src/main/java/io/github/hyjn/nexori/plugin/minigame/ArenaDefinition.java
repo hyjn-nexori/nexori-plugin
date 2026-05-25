@@ -13,7 +13,8 @@ public record ArenaDefinition(
     String matchResolutionTriggerId,
     String rulesEngineId,
     int maxSupportedPlayers,
-    boolean enabled
+    boolean enabled,
+    AfkDetectionPolicy afkDetectionPolicy
 ) {
 
     public static final String NO_INSTANCE_TEMPLATE_ID = "none";
@@ -40,7 +41,33 @@ public record ArenaDefinition(
             matchResolutionTriggerId,
             "",
             maxSupportedPlayers,
-            enabled
+            enabled,
+            AfkDetectionPolicy.defaults()
+        );
+    }
+
+    public ArenaDefinition(
+        String arenaId,
+        String displayName,
+        String destinationConnectionAddress,
+        String destinationTargetId,
+        String instanceTemplateId,
+        String matchResolutionTriggerId,
+        String rulesEngineId,
+        int maxSupportedPlayers,
+        boolean enabled
+    ) {
+        this(
+            arenaId,
+            displayName,
+            destinationConnectionAddress,
+            destinationTargetId,
+            instanceTemplateId,
+            matchResolutionTriggerId,
+            rulesEngineId,
+            maxSupportedPlayers,
+            enabled,
+            AfkDetectionPolicy.defaults()
         );
     }
 
@@ -59,7 +86,8 @@ public record ArenaDefinition(
             normalizeTriggerId(matchResolutionTriggerId),
             normalizeRulesEngineId(rulesEngineId),
             maxSupportedPlayers,
-            enabled
+            enabled,
+            AfkDetectionPolicy.normalize(afkDetectionPolicy)
         );
     }
 

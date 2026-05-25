@@ -137,6 +137,35 @@ final class ArenaDefinitionTest {
     }
 
     @Test
+    void oldArenaDefinitionsDefaultAfkDetectionDisabledWithThirtySecondTimeout() {
+        ArenaDefinition a = new ArenaDefinition(
+            "a", "A", "addr:1", "hub", "none", "none", "", 4, true).normalized();
+
+        assertFalse(a.afkDetectionPolicy().enabled());
+        assertEquals(30, a.afkDetectionPolicy().inactivityTimeoutSeconds());
+    }
+
+    @Test
+    void normalizedAfkPolicyProtectsOutOfRangeTimeouts() {
+        ArenaDefinition belowMin = new ArenaDefinition(
+            "a", "A", "addr:1", "hub", "none", "none", "", 4, true,
+            new AfkDetectionPolicy(true, 1)
+        ).normalized();
+        ArenaDefinition aboveMax = new ArenaDefinition(
+            "b", "B", "addr:1", "hub", "none", "none", "", 4, true,
+            new AfkDetectionPolicy(true, 99999)
+        ).normalized();
+        ArenaDefinition missingTimeout = new ArenaDefinition(
+            "c", "C", "addr:1", "hub", "none", "none", "", 4, true,
+            new AfkDetectionPolicy(true, 0)
+        ).normalized();
+
+        assertEquals(AfkDetectionPolicy.MIN_INACTIVITY_TIMEOUT_SECONDS, belowMin.afkDetectionPolicy().inactivityTimeoutSeconds());
+        assertEquals(AfkDetectionPolicy.MAX_INACTIVITY_TIMEOUT_SECONDS, aboveMax.afkDetectionPolicy().inactivityTimeoutSeconds());
+        assertEquals(AfkDetectionPolicy.DEFAULT_INACTIVITY_TIMEOUT_SECONDS, missingTimeout.afkDetectionPolicy().inactivityTimeoutSeconds());
+    }
+
+    @Test
     void normalizedBlankRulesEngineIdBecomesEmpty() {
         ArenaDefinition a = new ArenaDefinition(
             "a", "A", "addr:1", "hub", "none", "none", "  ", 4, true).normalized();

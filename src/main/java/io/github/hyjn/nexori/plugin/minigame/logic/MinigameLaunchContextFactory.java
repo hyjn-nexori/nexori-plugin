@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame.logic;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
 import io.github.hyjn.nexori.plugin.minigame.ArenaPlayerReturnTarget;
@@ -179,6 +180,7 @@ public final class MinigameLaunchContextFactory {
         root.addProperty("backfillEnabled", queue.backfillEnabled());
         root.addProperty("backfillMode", backfillMode.id());
         root.addProperty("backfillWindowSeconds", Math.max(queue.backfillWindowSeconds(), 0));
+        root.add("afkDetectionPolicy", afkDetectionPolicyJson(arena.afkDetectionPolicy()));
         JsonArray expectedPlayerUuidsJson = new JsonArray();
         for (UUID expectedPlayerUuid : expectedPlayerUuids) {
             expectedPlayerUuidsJson.add(expectedPlayerUuid.toString());
@@ -222,6 +224,15 @@ public final class MinigameLaunchContextFactory {
             Map.copyOf(assignmentTicketsByPlayerUuid),
             reportingServerId == null ? "" : reportingServerId.trim()
         );
+    }
+
+    @Nonnull
+    private static JsonObject afkDetectionPolicyJson(AfkDetectionPolicy rawPolicy) {
+        AfkDetectionPolicy policy = AfkDetectionPolicy.normalize(rawPolicy);
+        JsonObject json = new JsonObject();
+        json.addProperty("enabled", policy.enabled());
+        json.addProperty("inactivityTimeoutSeconds", policy.inactivityTimeoutSeconds());
+        return json;
     }
 
     @Nonnull

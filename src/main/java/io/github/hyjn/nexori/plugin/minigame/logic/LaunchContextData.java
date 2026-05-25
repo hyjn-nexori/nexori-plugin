@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.minigame.logic;
 
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaPlayerReturnTarget;
+import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 
 import java.util.List;
 import java.util.UUID;
@@ -29,6 +30,7 @@ public record LaunchContextData(
     boolean backfillEnabled,
     String backfillMode,
     int backfillWindowSeconds,
+    AfkDetectionPolicy afkDetectionPolicy,
     List<UUID> expectedPlayerUuids,
     int expectedPlayerCount,
     UUID playerUuid,

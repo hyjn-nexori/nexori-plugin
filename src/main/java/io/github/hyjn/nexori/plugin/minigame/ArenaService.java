@@ -86,7 +86,8 @@ public class ArenaService {
             normalized.matchResolutionTriggerId(),
             normalized.rulesEngineId(),
             normalized.maxSupportedPlayers(),
-            normalized.enabled()
+            normalized.enabled(),
+            normalized.afkDetectionPolicy()
         );
     }
 

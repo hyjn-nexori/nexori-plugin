@@ -528,6 +528,26 @@ public class ArenaMatchService {
     }
 
     /**
+     * Resolves the AFK policy currently effective for a player in an active match.
+     *
+     * <p>This is intentionally match/player scoped so future phase, role, or player overrides
+     * can be layered here without making the activity service read persistent arena config.</p>
+     */
+    @Nonnull
+    public synchronized Optional<EffectiveAfkDetectionPolicy> findEffectiveAfkDetectionPolicy(@Nonnull UUID playerUuid) {
+        String matchId = matchIdByPlayerUuid.get(playerUuid);
+        if (matchId == null || matchId.isBlank()) {
+            return Optional.empty();
+        }
+
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null || !match.hasPlayer(playerUuid)) {
+            return Optional.empty();
+        }
+        return Optional.of(new EffectiveAfkDetectionPolicy(match.matchId(), match.afkDetectionPolicy()));
+    }
+
+    /**
      * Returns the public runtime snapshot for an active match.
      */
     @Nonnull
@@ -1088,6 +1108,7 @@ public class ArenaMatchService {
                 launch.backfillEnabled(),
                 launch.backfillMode(),
                 launch.backfillWindowSeconds(),
+                launch.afkDetectionPolicy(),
                 launch.expectedPlayerUuids(),
                 launch.expectedPlayerCount(),
                 List.of(playerRef.getUuid()),

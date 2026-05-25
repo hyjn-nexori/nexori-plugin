@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame.logic;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
 import io.github.hyjn.nexori.plugin.minigame.ArenaPlayerReturnTarget;
@@ -62,6 +63,7 @@ public final class LaunchContextParser {
                 ? normalizeOptional(root.get("backfillMode").getAsString(), QueueBackfillMode.defaultMode().id())
                 : QueueBackfillMode.defaultMode().id(),
             root.has("backfillWindowSeconds") ? Math.max(root.get("backfillWindowSeconds").getAsInt(), 0) : 0,
+            readAfkDetectionPolicy(root),
             readExpectedPlayerUuids(root),
             root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0,
             readOptionalUuid(root, "playerUuid"),
@@ -79,6 +81,19 @@ public final class LaunchContextParser {
                 readRequired(root, "launchTravelProfileId").toLowerCase()
             ).normalized()
         );
+    }
+
+    @Nonnull
+    private static AfkDetectionPolicy readAfkDetectionPolicy(@Nonnull JsonObject root) {
+        if (!root.has("afkDetectionPolicy") || !root.get("afkDetectionPolicy").isJsonObject()) {
+            return AfkDetectionPolicy.defaults();
+        }
+        JsonObject policy = root.getAsJsonObject("afkDetectionPolicy");
+        boolean enabled = policy.has("enabled") && policy.get("enabled").getAsBoolean();
+        int inactivityTimeoutSeconds = policy.has("inactivityTimeoutSeconds")
+            ? policy.get("inactivityTimeoutSeconds").getAsInt()
+            : AfkDetectionPolicy.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
+        return new AfkDetectionPolicy(enabled, inactivityTimeoutSeconds).normalized();
     }
 
     @Nonnull

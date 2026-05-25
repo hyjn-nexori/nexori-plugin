@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame.logic;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
@@ -47,7 +48,32 @@ final class MinigameLaunchContextFactoryTest {
         assertEquals(2, context.get("expectedPlayerCount").getAsInt());
         assertEquals(1, context.get("admissionPolicySchemaVersion").getAsInt());
         assertEquals("BACKEND_DRIVEN", context.get("matchSource").getAsString());
+        JsonObject afkPolicy = context.getAsJsonObject("afkDetectionPolicy");
+        assertFalse(afkPolicy.get("enabled").getAsBoolean());
+        assertEquals(30, afkPolicy.get("inactivityTimeoutSeconds").getAsInt());
         assertEquals(2, result.matchSessionState().expectedPlayerUuids().size());
+    }
+
+    @Test
+    void initialContextCopiesArenaAfkDetectionPolicy() {
+        ArenaDefinition arena = new ArenaDefinition(
+            "arena-1",
+            "Arena One",
+            "arena.example:19132",
+            "target-1",
+            ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
+            LastPlayerAliveArenaMatchResolutionTrigger.ID,
+            "rules-1",
+            4,
+            true,
+            new AfkDetectionPolicy(true, 12)
+        ).normalized();
+
+        JsonObject afkPolicy = context(buildInitial(List.of(PLAYER_ONE), "external-match-1", arena))
+            .getAsJsonObject("afkDetectionPolicy");
+
+        assertTrue(afkPolicy.get("enabled").getAsBoolean());
+        assertEquals(12, afkPolicy.get("inactivityTimeoutSeconds").getAsInt());
     }
 
     @Test

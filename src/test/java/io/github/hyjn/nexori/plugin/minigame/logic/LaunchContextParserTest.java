@@ -3,6 +3,7 @@ package io.github.hyjn.nexori.plugin.minigame.logic;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
@@ -151,6 +152,8 @@ final class LaunchContextParserTest {
         assertFalse(context.backfillEnabled());
         assertEquals(QueueBackfillMode.defaultMode().id(), context.backfillMode());
         assertEquals(0, context.backfillWindowSeconds());
+        assertFalse(context.afkDetectionPolicy().enabled());
+        assertEquals(30, context.afkDetectionPolicy().inactivityTimeoutSeconds());
         assertEquals(List.of(), context.expectedPlayerUuids());
         assertEquals(0, context.expectedPlayerCount());
         assertNull(context.playerUuid());
@@ -226,6 +229,34 @@ final class LaunchContextParserTest {
         assertEquals(0, context.backfillWindowSeconds());
         assertEquals(0, context.expectedPlayerCount());
         assertEquals(0L, context.admissionExpiresAtEpochMs());
+    }
+
+    @Test
+    void parsesAfkDetectionPolicy() {
+        JsonObject root = validInitialContext();
+        JsonObject afkPolicy = new JsonObject();
+        afkPolicy.addProperty("enabled", true);
+        afkPolicy.addProperty("inactivityTimeoutSeconds", 10);
+        root.add("afkDetectionPolicy", afkPolicy);
+
+        LaunchContextData context = parser.parse(root);
+
+        assertTrue(context.afkDetectionPolicy().enabled());
+        assertEquals(10, context.afkDetectionPolicy().inactivityTimeoutSeconds());
+    }
+
+    @Test
+    void normalizesInvalidAfkDetectionPolicyFromLaunchContext() {
+        JsonObject root = validInitialContext();
+        JsonObject afkPolicy = new JsonObject();
+        afkPolicy.addProperty("enabled", true);
+        afkPolicy.addProperty("inactivityTimeoutSeconds", 1);
+        root.add("afkDetectionPolicy", afkPolicy);
+
+        LaunchContextData context = parser.parse(root);
+
+        assertTrue(context.afkDetectionPolicy().enabled());
+        assertEquals(AfkDetectionPolicy.MIN_INACTIVITY_TIMEOUT_SECONDS, context.afkDetectionPolicy().inactivityTimeoutSeconds());
     }
 
     @Test

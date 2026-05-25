@@ -404,7 +404,7 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.afkActivityService = new AfkActivityService(
                 this.getLogger(),
-                this.arenaMatchService::findActiveMatchId
+                this.arenaMatchService::findEffectiveAfkDetectionPolicy
             );
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")

@@ -108,6 +108,61 @@ final class ArenaActiveMatchTest {
         assertEquals(List.of(PLAYER_ONE), updated.alivePlayerUuids());
     }
 
+    @Test
+    void normalizedKeepsActiveMatchAfkPolicySnapshot() {
+        ArenaActiveMatch match = new ArenaActiveMatch(
+            "match-1",
+            "queue-1",
+            "arena-1",
+            "lobby-1",
+            "lobby.example:19132",
+            "lobby-1.natural_spawn",
+            "keep_inventory",
+            ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
+            "",
+            LastPlayerAliveArenaMatchResolutionTrigger.ID,
+            "rules-default",
+            "assignment-1",
+            "INITIAL_MATCH",
+            "external-match-1",
+            ArenaMatchSource.BACKEND_DRIVEN.id(),
+            1,
+            4,
+            true,
+            QueueBackfillMode.ACTIVE_WINDOW.id(),
+            30,
+            new AfkDetectionPolicy(true, 9),
+            List.of(PLAYER_ONE, PLAYER_TWO),
+            2,
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
+            Map.of(),
+            0,
+            Set.of(),
+            false,
+            "",
+            "",
+            0L,
+            "",
+            0L,
+            0L,
+            0L,
+            0L,
+            "",
+            CREATED_AT,
+            CREATED_AT,
+            ""
+        ).normalized();
+
+        assertTrue(match.afkDetectionPolicy().enabled());
+        assertEquals(9, match.afkDetectionPolicy().inactivityTimeoutSeconds());
+    }
+
     private static ArenaActiveMatch baseMatch() {
         return new ArenaActiveMatch(
             "match-1",

@@ -69,6 +69,7 @@ import io.github.hyjn.nexori.plugin.ui.menu.context.NexoriMenuSetupState;
 import io.github.hyjn.nexori.plugin.ui.menu.state.BackendConfigDraft;
 import io.github.hyjn.nexori.plugin.ui.menu.state.BackendWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.AccessGateWorkspaceTab;
+import io.github.hyjn.nexori.plugin.ui.menu.state.AfkDetectionPolicyDraft;
 import io.github.hyjn.nexori.plugin.ui.menu.state.MinigameWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State;
 import io.github.hyjn.nexori.plugin.ui.menu.state.PortalWorkspaceTab;
@@ -128,6 +129,7 @@ public class NexoriMenuSections {
     protected static final String HOME_SERVER_ADDRESS_INPUT_ID = "nexori-v2-home-server-address";
     protected static final String DESTINATION_DISPLAY_NAME_INPUT_ID = "nexori-v2-destination-display-name";
     protected static final String DESTINATION_RULES_ENGINE_INPUT_ID = "nexori-v2-destination-rules-engine";
+    protected static final String DESTINATION_AFK_TIMEOUT_INPUT_ID = "nexori-v2-destination-afk-timeout";
     protected static final String QUEUE_DISPLAY_NAME_INPUT_ID = "nexori-v2-queue-display-name";
     protected static final String QUEUE_MIN_PLAYERS_INPUT_ID = "nexori-v2-queue-min-players";
     protected static final String QUEUE_MAX_PLAYERS_INPUT_ID = "nexori-v2-queue-max-players";
@@ -193,6 +195,7 @@ public class NexoriMenuSections {
     protected static final Map<UUID, BackendWorkspaceTab> BACKEND_WORKSPACE_TABS = new ConcurrentHashMap<>();
     protected static final Map<UUID, QueueMatchmakingMode> QUEUE_MODE_DRAFTS = new ConcurrentHashMap<>();
     protected static final Map<UUID, QueueBackfillDraft> QUEUE_BACKFILL_DRAFTS = new ConcurrentHashMap<>();
+    protected static final Map<UUID, AfkDetectionPolicyDraft> ARENA_AFK_POLICY_DRAFTS = new ConcurrentHashMap<>();
 
     protected NexoriMenuSections() {
     }
