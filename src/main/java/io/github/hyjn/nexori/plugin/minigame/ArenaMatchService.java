@@ -2887,6 +2887,102 @@ public class ArenaMatchService {
         }
     }
 
+    public enum SetPlayerAfkOutcome {
+        VALIDATED,
+        MATCH_MISSING,
+        PLAYER_MISSING,
+        MATCH_ALREADY_COMPLETED
+    }
+
+    public record SetPlayerAfkResult(
+        SetPlayerAfkOutcome outcome,
+        String matchId,
+        String queueId,
+        String arenaId,
+        String rulesEngineId,
+        @Nullable UUID playerUuid,
+        String username,
+        String message
+    ) {
+
+        @Nonnull
+        public static SetPlayerAfkResult validated(
+            @Nonnull ArenaActiveMatch match,
+            @Nonnull UUID playerUuid,
+            @Nonnull String username
+        ) {
+            return new SetPlayerAfkResult(
+                SetPlayerAfkOutcome.VALIDATED,
+                match.matchId(),
+                match.queueId(),
+                match.arenaId(),
+                match.rulesEngineId(),
+                playerUuid,
+                username,
+                ""
+            );
+        }
+
+        @Nonnull
+        public static SetPlayerAfkResult matchMissing(@Nonnull String matchId) {
+            return new SetPlayerAfkResult(
+                SetPlayerAfkOutcome.MATCH_MISSING,
+                matchId,
+                "", "", "", null, "",
+                "Match is not active."
+            );
+        }
+
+        @Nonnull
+        public static SetPlayerAfkResult playerMissing(@Nonnull ArenaActiveMatch match, UUID playerUuid) {
+            return new SetPlayerAfkResult(
+                SetPlayerAfkOutcome.PLAYER_MISSING,
+                match.matchId(),
+                match.queueId(),
+                match.arenaId(),
+                match.rulesEngineId(),
+                playerUuid,
+                "",
+                "Player is not part of the active match."
+            );
+        }
+
+        @Nonnull
+        public static SetPlayerAfkResult matchAlreadyCompleted(@Nonnull ArenaActiveMatch match, UUID playerUuid) {
+            return new SetPlayerAfkResult(
+                SetPlayerAfkOutcome.MATCH_ALREADY_COMPLETED,
+                match.matchId(),
+                match.queueId(),
+                match.arenaId(),
+                match.rulesEngineId(),
+                playerUuid,
+                "",
+                "Match result was already submitted."
+            );
+        }
+    }
+
+    @Nonnull
+    public synchronized SetPlayerAfkResult validateForExternalAfk(
+        @Nonnull String rawMatchId,
+        @Nullable UUID playerUuid
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetPlayerAfkResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetPlayerAfkResult.matchAlreadyCompleted(match, playerUuid);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return SetPlayerAfkResult.playerMissing(match, playerUuid);
+        }
+        PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+        String username = playerRef != null && playerRef.isValid() ? playerRef.getUsername() : "";
+        return SetPlayerAfkResult.validated(match, playerUuid, username);
+    }
+
     public record SetPlayerSpectatorResult(
         SetPlayerSpectatorOutcome outcome,
         String matchId,

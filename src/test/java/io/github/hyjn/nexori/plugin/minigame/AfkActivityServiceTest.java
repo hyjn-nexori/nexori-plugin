@@ -167,6 +167,207 @@ final class AfkActivityServiceTest {
         assertEquals(List.of(), service.afkPlayerUuids("match-1"));
     }
 
+    @Test
+    void setExternalAfkTrueWhenActiveReturnsUpdatedAndAddsToAfkList() {
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty());
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+
+        boolean changed = service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        assertTrue(changed);
+        assertTrue(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(PLAYER_UUID), service.afkPlayerUuids("match-1"));
+    }
+
+    @Test
+    void setExternalAfkTrueEmitsExternalApiTransition() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty(), transitions::add);
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        assertEquals(1, transitions.size());
+        assertTrue(transitions.get(0).afk());
+        assertEquals(NexoriAfkActivitySource.EXTERNAL_API, transitions.get(0).source());
+        assertEquals("match-1", transitions.get(0).matchId());
+    }
+
+    @Test
+    void setExternalAfkFalseWhenAfkReturnsUpdatedAndRemovesFromAfkList() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty(), transitions::add);
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        boolean changed = service.setExternalAfk(PLAYER_UUID, context, false, 6_000L);
+
+        assertTrue(changed);
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+    }
+
+    @Test
+    void setExternalAfkFalseEmitsExternalApiTransition() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty(), transitions::add);
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        service.setExternalAfk(PLAYER_UUID, context, false, 6_000L);
+
+        assertEquals(2, transitions.size());
+        assertFalse(transitions.get(1).afk());
+        assertEquals(NexoriAfkActivitySource.EXTERNAL_API, transitions.get(1).source());
+    }
+
+    @Test
+    void setExternalAfkSameStateReturnsUnchangedAndEmitsNoTransition() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty(), transitions::add);
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        boolean changed = service.setExternalAfk(PLAYER_UUID, context, true, 6_000L);
+
+        assertFalse(changed);
+        assertEquals(1, transitions.size());
+    }
+
+    @Test
+    void setExternalAfkWorksWhenAutomaticDetectionIsDisabled() {
+        boolean[] enabled = {false};
+        AfkActivityService service = new AfkActivityService(
+            null,
+            playerUuid -> Optional.of(new EffectiveAfkDetectionPolicy("match-1", new AfkDetectionPolicy(enabled[0], 30)))
+        );
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+
+        boolean changed = service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        assertTrue(changed);
+        assertTrue(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(PLAYER_UUID), service.afkPlayerUuids("match-1"));
+    }
+
+    @Test
+    void setExternalAfkAfkStatePersistsAcrossTicksWhenDetectorIsDisabled() {
+        AfkActivityService service = new AfkActivityService(
+            null,
+            playerUuid -> Optional.of(new EffectiveAfkDetectionPolicy("match-1", new AfkDetectionPolicy(false, 30)))
+        );
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        // Simulate detector ticks with disabled policy — AFK state must survive
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 7_000L);
+
+        assertTrue(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(PLAYER_UUID), service.afkPlayerUuids("match-1"));
+    }
+
+    @Test
+    void setExternalAfkFalseResetsTimerToPreventImmediateReTrigger() {
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 5);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 1_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+        assertTrue(service.isAfk(PLAYER_UUID));
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(true, 5)
+        );
+
+        service.setExternalAfk(PLAYER_UUID, context, false, 7_000L);
+
+        // Timer was reset to 7_000, so the player is no longer AFK and the timeout won't re-fire immediately
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(7_000L, service.lastActivityEpochMs(PLAYER_UUID));
+
+        // One more tick just below the timeout — still not AFK
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 11_999L);
+        assertFalse(service.isAfk(PLAYER_UUID));
+    }
+
+    @Test
+    void setExternalAfkFalseClearsAutomaticAfk() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 5, transitions);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 1_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+        assertTrue(service.isAfk(PLAYER_UUID));
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(true, 5)
+        );
+
+        service.setExternalAfk(PLAYER_UUID, context, false, 7_000L);
+
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+        assertEquals(NexoriAfkActivitySource.EXTERNAL_API, transitions.get(1).source());
+        assertFalse(transitions.get(1).afk());
+    }
+
+    @Test
+    void automaticInputClearsExternallySetAfkWhenDetectorEnabled() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 30, transitions);
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(true, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 1_000L);
+        assertTrue(service.isAfk(PLAYER_UUID));
+
+        // Player input clears AFK in single-state model when detector is enabled
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", true, 2_000L);
+
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(2, transitions.size());
+        assertFalse(transitions.get(1).afk());
+        assertEquals(NexoriAfkActivitySource.PLAYER_INPUT, transitions.get(1).source());
+    }
+
+    @Test
+    void removePlayerClearsExternallySetAfk() {
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty());
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        service.removePlayer(PLAYER_UUID);
+
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+    }
+
+    @Test
+    void removeMatchClearsExternallySetAfk() {
+        AfkActivityService service = new AfkActivityService(null, playerUuid -> Optional.empty());
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            "match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)
+        );
+        service.setExternalAfk(PLAYER_UUID, context, true, 5_000L);
+
+        service.removeMatch("match-1");
+
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+    }
+
     private static AfkActivityService serviceForActivePlayers(Set<UUID> activePlayerUuids, boolean enabled, int inactivityTimeoutSeconds) {
         return serviceForActivePlayers(activePlayerUuids, enabled, inactivityTimeoutSeconds, new ArrayList<>());
     }

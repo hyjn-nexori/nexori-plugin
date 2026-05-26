@@ -22,6 +22,9 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyResu
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetMatchAfkDetectionPolicyRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkDetectionPolicyRequest;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkRequest;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkResult;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult;
@@ -137,6 +140,66 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         ArenaMatchService.SetAfkDetectionPolicyResult result = arenaMatchService.clearPlayerAfkDetectionPolicy(matchId, playerUuid);
         applyAfkPolicyStateActions(result);
         return publicAfkPolicyResult(result);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetPlayerAfkResult setPlayerAfk(@Nonnull NexoriSetPlayerAfkRequest request) {
+        if (request == null || isBlank(request.matchId()) || request.playerUuid() == null) {
+            String matchId = request == null ? "" : request.matchId() == null ? "" : request.matchId().trim();
+            UUID playerUuid = request == null ? null : request.playerUuid();
+            boolean afk = request != null && request.afk();
+            return new NexoriSetPlayerAfkResult(
+                NexoriSetPlayerAfkStatus.INVALID_REQUEST,
+                matchId,
+                playerUuid,
+                afk,
+                "Request, match id, and player UUID must be non-null."
+            );
+        }
+        ArenaMatchService.SetPlayerAfkResult validation = arenaMatchService.validateForExternalAfk(
+            request.matchId(),
+            request.playerUuid()
+        );
+        if (validation.outcome() != ArenaMatchService.SetPlayerAfkOutcome.VALIDATED) {
+            NexoriSetPlayerAfkStatus errorStatus = switch (validation.outcome()) {
+                case MATCH_MISSING -> NexoriSetPlayerAfkStatus.MATCH_MISSING;
+                case PLAYER_MISSING -> NexoriSetPlayerAfkStatus.PLAYER_MISSING;
+                case MATCH_ALREADY_COMPLETED -> NexoriSetPlayerAfkStatus.MATCH_ALREADY_COMPLETED;
+                case VALIDATED -> throw new IllegalStateException("Unreachable");
+            };
+            return new NexoriSetPlayerAfkResult(
+                errorStatus,
+                validation.matchId(),
+                validation.playerUuid(),
+                request.afk(),
+                validation.message()
+            );
+        }
+        EffectiveAfkDetectionPolicy context = new EffectiveAfkDetectionPolicy(
+            validation.matchId(),
+            validation.queueId(),
+            validation.arenaId(),
+            validation.rulesEngineId(),
+            AfkDetectionPolicy.defaults()
+        );
+        boolean changed = afkActivityService.setExternalAfk(
+            request.playerUuid(),
+            validation.username(),
+            context,
+            request.afk(),
+            System.currentTimeMillis()
+        );
+        NexoriSetPlayerAfkStatus status = changed
+            ? NexoriSetPlayerAfkStatus.UPDATED
+            : NexoriSetPlayerAfkStatus.UNCHANGED;
+        return new NexoriSetPlayerAfkResult(
+            status,
+            validation.matchId(),
+            validation.playerUuid(),
+            request.afk(),
+            ""
+        );
     }
 
     @Nonnull

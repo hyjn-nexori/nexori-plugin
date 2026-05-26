@@ -59,7 +59,7 @@ public final class AfkActivityService {
         synchronized (this) {
             EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
             if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
-                statesByPlayerUuid.remove(playerUuid);
+                removeStaleTrackingStateLocked(playerUuid, effectivePolicy);
                 return;
             }
             String matchId = effectivePolicy.matchId();
@@ -88,7 +88,7 @@ public final class AfkActivityService {
         synchronized (this) {
             EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
             if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
-                statesByPlayerUuid.remove(playerUuid);
+                removeStaleTrackingStateLocked(playerUuid, effectivePolicy);
                 return;
             }
             transition = markActivityLocked(playerUuid, username, effectivePolicy, nowEpochMs, NexoriAfkActivitySource.INVENTORY_PACKET);
@@ -173,6 +173,111 @@ public final class AfkActivityService {
             }
         }
         return afkPlayerUuids.stream().distinct().toList();
+    }
+
+    /**
+     * Sets or clears the AFK state for one player via the external API.
+     *
+     * <p>Operates on the single unified AFK state. Calling with {@code afk=false} resets the
+     * activity timer to {@code nowEpochMs} so the automatic detector does not re-trigger
+     * immediately on the next tick if it is still enabled.</p>
+     *
+     * <p>When there is no prior activity state for this player (i.e. the automatic detector has
+     * not yet seen any ticks), the emitted transition uses {@code usernameHint} as the player
+     * name. If the player already has a cached username from prior activity ticks, that name
+     * takes precedence.</p>
+     *
+     * @return {@code true} if the state changed and a transition was dispatched,
+     *         {@code false} if the state was already as requested (UNCHANGED)
+     */
+    public boolean setExternalAfk(
+        @Nonnull UUID playerUuid,
+        @Nonnull String usernameHint,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
+        boolean afk,
+        long nowEpochMs
+    ) {
+        AfkActivityTransition transition;
+        synchronized (this) {
+            PlayerActivityState current = statesByPlayerUuid.get(playerUuid);
+            boolean currentlyAfk = current != null && current.afk();
+            if (afk == currentlyAfk) {
+                return false;
+            }
+            String cachedUsername = current != null ? current.username() : null;
+            String username = (cachedUsername != null && !cachedUsername.isBlank()) ? cachedUsername : usernameHint;
+            long idleMs = current != null ? Math.max(0L, nowEpochMs - current.lastActivityEpochMs()) : 0L;
+            if (afk) {
+                long lastActivity = current != null ? current.lastActivityEpochMs() : nowEpochMs;
+                statesByPlayerUuid.put(playerUuid, new PlayerActivityState(
+                    effectivePolicy.matchId(), username, lastActivity, true
+                ));
+                if (logger != null) {
+                    logger.atInfo().log(
+                        "Nexori AFK state changed player=" + username
+                            + " uuid=" + playerUuid
+                            + " matchId=" + effectivePolicy.matchId()
+                            + " state=AFK"
+                            + " source=" + NexoriAfkActivitySource.EXTERNAL_API
+                    );
+                }
+            } else {
+                // Reset timer to now so automatic detector does not re-trigger immediately
+                statesByPlayerUuid.put(playerUuid, new PlayerActivityState(
+                    effectivePolicy.matchId(), username, nowEpochMs, false
+                ));
+                if (logger != null) {
+                    logger.atInfo().log(
+                        "Nexori AFK state changed player=" + username
+                            + " uuid=" + playerUuid
+                            + " matchId=" + effectivePolicy.matchId()
+                            + " state=ACTIVE"
+                            + " source=" + NexoriAfkActivitySource.EXTERNAL_API
+                    );
+                }
+            }
+            transition = new AfkActivityTransition(
+                effectivePolicy.matchId(),
+                effectivePolicy.queueId(),
+                effectivePolicy.arenaId(),
+                effectivePolicy.rulesEngineId(),
+                playerUuid,
+                username,
+                afk,
+                nowEpochMs,
+                idleMs,
+                NexoriAfkActivitySource.EXTERNAL_API
+            );
+        }
+        dispatchTransition(transition);
+        return true;
+    }
+
+    public boolean setExternalAfk(
+        @Nonnull UUID playerUuid,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
+        boolean afk,
+        long nowEpochMs
+    ) {
+        return setExternalAfk(playerUuid, "", effectivePolicy, afk, nowEpochMs);
+    }
+
+    // Removes automatic-tracking state when the policy is disabled or the player is not in a match,
+    // but preserves AFK state so externally-asserted AFK survives across ticks when detection is disabled.
+    private void removeStaleTrackingStateLocked(
+        @Nonnull UUID playerUuid,
+        @Nullable EffectiveAfkDetectionPolicy effectivePolicy
+    ) {
+        if (effectivePolicy == null) {
+            // Player not in any active match — always clean up
+            statesByPlayerUuid.remove(playerUuid);
+            return;
+        }
+        // Detector disabled but player is in match — only remove non-AFK tracking state
+        PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
+        if (state == null || !state.afk()) {
+            statesByPlayerUuid.remove(playerUuid);
+        }
     }
 
     private Optional<EffectiveAfkDetectionPolicy> findEffectivePolicy(@Nonnull UUID playerUuid) {
