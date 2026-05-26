@@ -66,7 +66,7 @@ public final class AfkActivityService {
 
             PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
             if (state == null || !state.matchId().equals(matchId)) {
-                state = new PlayerActivityState(matchId, nowEpochMs, false);
+                state = new PlayerActivityState(matchId, username, nowEpochMs, false);
                 statesByPlayerUuid.put(playerUuid, state);
             }
 
@@ -108,6 +108,48 @@ public final class AfkActivityService {
 
     public synchronized void removePlayer(@Nonnull UUID playerUuid) {
         statesByPlayerUuid.remove(playerUuid);
+    }
+
+    public synchronized void resetPlayerActivity(@Nonnull UUID playerUuid) {
+        statesByPlayerUuid.remove(playerUuid);
+    }
+
+    public void clearPlayerForPolicyChange(
+        @Nonnull UUID playerUuid,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
+        long nowEpochMs
+    ) {
+        AfkActivityTransition transition;
+        synchronized (this) {
+            PlayerActivityState previous = statesByPlayerUuid.remove(playerUuid);
+            if (previous == null || !previous.afk()) {
+                return;
+            }
+            String username = previous.username();
+            long idleMs = Math.max(0L, nowEpochMs - previous.lastActivityEpochMs());
+            if (logger != null) {
+                logger.atInfo().log(
+                    "Nexori AFK state changed player=" + username
+                        + " uuid=" + playerUuid
+                        + " matchId=" + effectivePolicy.matchId()
+                        + " state=ACTIVE"
+                        + " source=" + NexoriAfkActivitySource.POLICY_CHANGE
+                );
+            }
+            transition = new AfkActivityTransition(
+                effectivePolicy.matchId(),
+                effectivePolicy.queueId(),
+                effectivePolicy.arenaId(),
+                effectivePolicy.rulesEngineId(),
+                playerUuid,
+                username,
+                false,
+                nowEpochMs,
+                idleMs,
+                NexoriAfkActivitySource.POLICY_CHANGE
+            );
+        }
+        dispatchTransition(transition);
     }
 
     public synchronized void removeMatch(@Nonnull String matchId) {
@@ -155,7 +197,7 @@ public final class AfkActivityService {
         PlayerActivityState previous = statesByPlayerUuid.get(playerUuid);
         boolean wasAfk = previous != null && previous.afk();
         long idleMs = previous == null ? 0L : Math.max(0L, nowEpochMs - previous.lastActivityEpochMs());
-        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(effectivePolicy.matchId(), nowEpochMs, false));
+        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(effectivePolicy.matchId(), username, nowEpochMs, false));
         if (wasAfk && logger != null) {
             logger.atInfo().log(
                 "Nexori AFK state changed player=" + username
@@ -193,7 +235,7 @@ public final class AfkActivityService {
         if (state.afk() || idleMs < effectivePolicy.policy().inactivityTimeoutMs()) {
             return null;
         }
-        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(state.matchId(), state.lastActivityEpochMs(), true));
+        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(state.matchId(), username, state.lastActivityEpochMs(), true));
         if (logger != null) {
             logger.atInfo().log(
                 "Nexori AFK state changed player=" + username
@@ -239,6 +281,7 @@ public final class AfkActivityService {
 
     private record PlayerActivityState(
         @Nonnull String matchId,
+        @Nonnull String username,
         long lastActivityEpochMs,
         boolean afk
     ) {

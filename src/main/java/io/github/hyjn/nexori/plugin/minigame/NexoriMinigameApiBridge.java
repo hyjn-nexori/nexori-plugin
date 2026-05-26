@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriBackendReportStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest;
@@ -17,6 +18,10 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerOutcomeState;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriReturnPlayerResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriReturnPlayerStatus;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyResult;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyStatus;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetMatchAfkDetectionPolicyRequest;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkDetectionPolicyRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult;
@@ -74,6 +79,64 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         @Nonnull NexoriAfkActivityListener listener
     ) {
         return afkActivityDispatcher.register(rulesEngineId, listener);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetAfkDetectionPolicyResult setMatchAfkDetectionPolicy(
+        @Nonnull NexoriSetMatchAfkDetectionPolicyRequest request
+    ) {
+        if (request == null || request.policy() == null || isBlank(request.matchId())) {
+            return invalidAfkPolicyResult(request == null ? "" : request.matchId(), null);
+        }
+        ArenaMatchService.SetAfkDetectionPolicyResult result = arenaMatchService.setMatchAfkDetectionPolicy(
+            request.matchId(),
+            runtimeAfkPolicy(request.policy())
+        );
+        applyAfkPolicyStateActions(result);
+        return publicAfkPolicyResult(result);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetAfkDetectionPolicyResult clearMatchAfkDetectionPolicy(@Nonnull String matchId) {
+        if (isBlank(matchId)) {
+            return invalidAfkPolicyResult(matchId, null);
+        }
+        ArenaMatchService.SetAfkDetectionPolicyResult result = arenaMatchService.clearMatchAfkDetectionPolicy(matchId);
+        applyAfkPolicyStateActions(result);
+        return publicAfkPolicyResult(result);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetAfkDetectionPolicyResult setPlayerAfkDetectionPolicy(
+        @Nonnull NexoriSetPlayerAfkDetectionPolicyRequest request
+    ) {
+        if (request == null || request.playerUuid() == null || request.policy() == null || isBlank(request.matchId())) {
+            return invalidAfkPolicyResult(request == null ? "" : request.matchId(), request == null ? null : request.playerUuid());
+        }
+        ArenaMatchService.SetAfkDetectionPolicyResult result = arenaMatchService.setPlayerAfkDetectionPolicy(
+            request.matchId(),
+            request.playerUuid(),
+            runtimeAfkPolicy(request.policy())
+        );
+        applyAfkPolicyStateActions(result);
+        return publicAfkPolicyResult(result);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriSetAfkDetectionPolicyResult clearPlayerAfkDetectionPolicy(
+        @Nonnull String matchId,
+        @Nonnull UUID playerUuid
+    ) {
+        if (playerUuid == null || isBlank(matchId)) {
+            return invalidAfkPolicyResult(matchId, null);
+        }
+        ArenaMatchService.SetAfkDetectionPolicyResult result = arenaMatchService.clearPlayerAfkDetectionPolicy(matchId, playerUuid);
+        applyAfkPolicyStateActions(result);
+        return publicAfkPolicyResult(result);
     }
 
     @Nonnull
@@ -360,6 +423,63 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         String resultId,
         String message
     ) {
+    }
+
+    private void applyAfkPolicyStateActions(@Nonnull ArenaMatchService.SetAfkDetectionPolicyResult result) {
+        for (ArenaMatchService.AfkPolicyStateAction action : result.stateActions()) {
+            if (action.type() == ArenaMatchService.AfkPolicyStateActionType.CLEAR_FOR_POLICY_CHANGE) {
+                afkActivityService.clearPlayerForPolicyChange(action.playerUuid(), action.effectivePolicy(), System.currentTimeMillis());
+            } else {
+                afkActivityService.resetPlayerActivity(action.playerUuid());
+            }
+        }
+    }
+
+    @Nonnull
+    private NexoriSetAfkDetectionPolicyResult publicAfkPolicyResult(
+        @Nonnull ArenaMatchService.SetAfkDetectionPolicyResult result
+    ) {
+        return new NexoriSetAfkDetectionPolicyResult(
+            switch (result.outcome()) {
+                case UPDATED -> NexoriSetAfkDetectionPolicyStatus.UPDATED;
+                case CLEARED -> NexoriSetAfkDetectionPolicyStatus.CLEARED;
+                case MATCH_MISSING -> NexoriSetAfkDetectionPolicyStatus.MATCH_MISSING;
+                case PLAYER_MISSING -> NexoriSetAfkDetectionPolicyStatus.PLAYER_MISSING;
+                case MATCH_ALREADY_COMPLETED -> NexoriSetAfkDetectionPolicyStatus.MATCH_ALREADY_COMPLETED;
+                case INVALID_POLICY -> NexoriSetAfkDetectionPolicyStatus.INVALID_POLICY;
+            },
+            result.matchId(),
+            result.playerUuid(),
+            result.policy() == null ? null : publicAfkPolicy(result.policy()),
+            result.message()
+        );
+    }
+
+    @Nonnull
+    private NexoriSetAfkDetectionPolicyResult invalidAfkPolicyResult(String matchId, UUID playerUuid) {
+        return new NexoriSetAfkDetectionPolicyResult(
+            NexoriSetAfkDetectionPolicyStatus.INVALID_POLICY,
+            matchId == null ? "" : matchId.trim(),
+            playerUuid,
+            null,
+            "AFK detection policy request and policy must be non-null."
+        );
+    }
+
+    private boolean isBlank(String rawValue) {
+        return rawValue == null || rawValue.trim().isBlank();
+    }
+
+    @Nonnull
+    private AfkDetectionPolicy runtimeAfkPolicy(@Nonnull NexoriAfkDetectionPolicy policy) {
+        NexoriAfkDetectionPolicy normalized = policy.normalized();
+        return new AfkDetectionPolicy(normalized.enabled(), normalized.inactivityTimeoutSeconds());
+    }
+
+    @Nonnull
+    private NexoriAfkDetectionPolicy publicAfkPolicy(@Nonnull AfkDetectionPolicy policy) {
+        AfkDetectionPolicy normalized = AfkDetectionPolicy.normalize(policy);
+        return new NexoriAfkDetectionPolicy(normalized.enabled(), normalized.inactivityTimeoutSeconds());
     }
 
     @Nonnull

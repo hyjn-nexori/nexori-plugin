@@ -2,7 +2,12 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerAfkChangedEvent;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyResult;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyStatus;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetMatchAfkDetectionPolicyRequest;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -11,6 +16,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -77,10 +83,114 @@ final class NexoriMinigameApiBridgeAfkTest {
             true,
             10_000L,
             5_000L,
-            io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource.IDLE_TIMEOUT
+            NexoriAfkActivitySource.IDLE_TIMEOUT
         ));
 
         assertEquals(1, received.size());
+    }
+
+    @Test
+    void setMatchAfkDetectionPolicyMapsPublicPolicyAndResetsAffectedPlayers() {
+        ArenaMatchService arenaMatchService = mock(ArenaMatchService.class);
+        when(arenaMatchService.setMatchAfkDetectionPolicy("match-1", new AfkDetectionPolicy(true, 10)))
+            .thenReturn(new ArenaMatchService.SetAfkDetectionPolicyResult(
+                ArenaMatchService.SetAfkDetectionPolicyOutcome.UPDATED,
+                "match-1",
+                null,
+                new AfkDetectionPolicy(true, 10),
+                "",
+                List.of(new ArenaMatchService.AfkPolicyStateAction(
+                    PLAYER_ONE,
+                    new EffectiveAfkDetectionPolicy("match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(true, 10)),
+                    ArenaMatchService.AfkPolicyStateActionType.RESET_TIMER
+                ))
+            ));
+        AfkActivityService afkActivityService = new AfkActivityService(
+            playerUuid -> Optional.of(new EffectiveAfkDetectionPolicy(
+                "match-1",
+                "queue-1",
+                "arena-1",
+                "rules-1",
+                new AfkDetectionPolicy(true, 10)
+            ))
+        );
+        afkActivityService.handlePlayerInputTick(PLAYER_ONE, "PlayerOne", true, 1_000L);
+        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
+            arenaMatchService,
+            afkActivityService,
+            null,
+            new NexoriMatchLifecycleDispatcher(),
+            new NexoriAfkActivityDispatcher()
+        );
+
+        NexoriSetAfkDetectionPolicyResult result = bridge.setMatchAfkDetectionPolicy(
+            new NexoriSetMatchAfkDetectionPolicyRequest("match-1", new NexoriAfkDetectionPolicy(true, 10))
+        );
+
+        assertEquals(NexoriSetAfkDetectionPolicyStatus.UPDATED, result.status());
+        assertEquals(new NexoriAfkDetectionPolicy(true, 10), result.policy());
+        assertEquals(0L, afkActivityService.lastActivityEpochMs(PLAYER_ONE));
+    }
+
+    @Test
+    void policyDisabledActionClearsAfkWithPolicyChangeSource() {
+        ArenaMatchService arenaMatchService = mock(ArenaMatchService.class);
+        when(arenaMatchService.setMatchAfkDetectionPolicy("match-1", new AfkDetectionPolicy(false, 30)))
+            .thenReturn(new ArenaMatchService.SetAfkDetectionPolicyResult(
+                ArenaMatchService.SetAfkDetectionPolicyOutcome.UPDATED,
+                "match-1",
+                null,
+                new AfkDetectionPolicy(false, 30),
+                "",
+                List.of(new ArenaMatchService.AfkPolicyStateAction(
+                    PLAYER_ONE,
+                    new EffectiveAfkDetectionPolicy("match-1", "queue-1", "arena-1", "rules-1", new AfkDetectionPolicy(false, 30)),
+                    ArenaMatchService.AfkPolicyStateActionType.CLEAR_FOR_POLICY_CHANGE
+                ))
+            ));
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService afkActivityService = new AfkActivityService(
+            null,
+            playerUuid -> Optional.of(new EffectiveAfkDetectionPolicy(
+                "match-1",
+                "queue-1",
+                "arena-1",
+                "rules-1",
+                new AfkDetectionPolicy(true, 5)
+            )),
+            transitions::add
+        );
+        afkActivityService.handlePlayerInputTick(PLAYER_ONE, "PlayerOne", false, 1_000L);
+        afkActivityService.handlePlayerInputTick(PLAYER_ONE, "PlayerOne", false, 6_000L);
+        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
+            arenaMatchService,
+            afkActivityService,
+            null,
+            new NexoriMatchLifecycleDispatcher(),
+            new NexoriAfkActivityDispatcher()
+        );
+
+        bridge.setMatchAfkDetectionPolicy(
+            new NexoriSetMatchAfkDetectionPolicyRequest("match-1", new NexoriAfkDetectionPolicy(false, 30))
+        );
+
+        assertFalse(afkActivityService.isAfk(PLAYER_ONE));
+        assertEquals(NexoriAfkActivitySource.POLICY_CHANGE, transitions.get(1).source());
+    }
+
+    @Test
+    void invalidAfkPolicyRequestReturnsInvalidPolicy() {
+        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
+            mock(ArenaMatchService.class),
+            new AfkActivityService(playerUuid -> Optional.empty()),
+            null,
+            new NexoriMatchLifecycleDispatcher(),
+            new NexoriAfkActivityDispatcher()
+        );
+
+        NexoriSetAfkDetectionPolicyResult result = bridge.setMatchAfkDetectionPolicy(null);
+
+        assertEquals(NexoriSetAfkDetectionPolicyStatus.INVALID_POLICY, result.status());
     }
 
     private static ArenaMatchService.ActiveMatchInfo activeMatchInfo() {

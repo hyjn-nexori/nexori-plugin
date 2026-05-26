@@ -106,6 +106,33 @@ final class AfkActivityServiceTest {
     }
 
     @Test
+    void policyChangeClearsAfkStateAndEmitsTransition() {
+        List<AfkActivityService.AfkActivityTransition> transitions = new ArrayList<>();
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 5, transitions);
+
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 1_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+        service.clearPlayerForPolicyChange(
+            PLAYER_UUID,
+            new EffectiveAfkDetectionPolicy(
+                "match-1",
+                "queue-1",
+                "arena-1",
+                "rules-1",
+                new AfkDetectionPolicy(false, 5)
+            ),
+            7_000L
+        );
+
+        assertFalse(service.isAfk(PLAYER_UUID));
+        assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+        assertEquals(2, transitions.size());
+        assertFalse(transitions.get(1).afk());
+        assertEquals(NexoriAfkActivitySource.POLICY_CHANGE, transitions.get(1).source());
+        assertEquals(6_000L, transitions.get(1).idleMs());
+    }
+
+    @Test
     void configuredTimeoutControlsAfkThreshold() {
         AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 10);
 

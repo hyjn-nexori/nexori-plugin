@@ -75,6 +75,35 @@ final class NexoriAfkPublicApiCompatibilityTest {
         assertFalse(api.findActiveMatchInfo("match-1").isPresent());
     }
 
+    @Test
+    void minigameApiDefaultRuntimeAfkPolicyMethodsReturnNotSupported() {
+        NexoriMinigameApi api = new MinimalMinigameApi();
+
+        assertEquals(
+            NexoriSetAfkDetectionPolicyStatus.NOT_SUPPORTED,
+            api.setMatchAfkDetectionPolicy(new NexoriSetMatchAfkDetectionPolicyRequest(
+                "match-1",
+                new NexoriAfkDetectionPolicy(true, 5)
+            )).status()
+        );
+        assertEquals(
+            NexoriSetAfkDetectionPolicyStatus.NOT_SUPPORTED,
+            api.clearMatchAfkDetectionPolicy("match-1").status()
+        );
+        assertEquals(
+            NexoriSetAfkDetectionPolicyStatus.NOT_SUPPORTED,
+            api.setPlayerAfkDetectionPolicy(new NexoriSetPlayerAfkDetectionPolicyRequest(
+                "match-1",
+                PLAYER_ONE,
+                new NexoriAfkDetectionPolicy(false, 30)
+            )).status()
+        );
+        assertEquals(
+            NexoriSetAfkDetectionPolicyStatus.NOT_SUPPORTED,
+            api.clearPlayerAfkDetectionPolicy("match-1", PLAYER_ONE).status()
+        );
+    }
+
     private static final class MinimalMinigameApi implements NexoriMinigameApi {
 
         @Override

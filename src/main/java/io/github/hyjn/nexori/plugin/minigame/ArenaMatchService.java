@@ -115,6 +115,8 @@ public class ArenaMatchService {
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
+    private final Map<String, AfkDetectionPolicy> matchAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
+    private final Map<String, Map<UUID, AfkDetectionPolicy>> playerAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
     private final Set<UUID> patchedRespawnPagePlayers = new HashSet<>();
 
     /**
@@ -257,6 +259,7 @@ public class ArenaMatchService {
         if (matchId == null) {
             return lifecycleDispatches;
         }
+        removePlayerAfkPolicyOverride(matchId, playerRef.getUuid());
 
         ArenaActiveMatch match = matchesById.get(matchId);
         if (match == null || !match.hasPlayer(playerRef.getUuid())) {
@@ -552,13 +555,230 @@ public class ArenaMatchService {
         if (match == null || !match.hasPlayer(playerUuid)) {
             return Optional.empty();
         }
+        AfkDetectionPolicy policy = resolveEffectiveAfkDetectionPolicy(match, playerUuid);
         return Optional.of(new EffectiveAfkDetectionPolicy(
             match.matchId(),
             match.queueId(),
             match.arenaId(),
             match.rulesEngineId(),
-            match.afkDetectionPolicy()
+            policy
         ));
+    }
+
+    @Nonnull
+    public synchronized SetAfkDetectionPolicyResult setMatchAfkDetectionPolicy(
+        @Nonnull String rawMatchId,
+        @Nonnull AfkDetectionPolicy rawPolicy
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetAfkDetectionPolicyResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetAfkDetectionPolicyResult.matchAlreadyCompleted(match, null);
+        }
+        AfkDetectionPolicy policy = AfkDetectionPolicy.normalize(rawPolicy);
+        Map<UUID, EffectiveAfkDetectionPolicy> previousPolicies = effectiveAfkPoliciesForMatch(match);
+        matchAfkPolicyOverridesByMatchId.put(match.matchId(), policy);
+        List<AfkPolicyStateAction> actions = collectAfkPolicyStateActions(match, previousPolicies);
+        return SetAfkDetectionPolicyResult.updated(match, null, policy, actions);
+    }
+
+    @Nonnull
+    public synchronized SetAfkDetectionPolicyResult clearMatchAfkDetectionPolicy(@Nonnull String rawMatchId) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetAfkDetectionPolicyResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetAfkDetectionPolicyResult.matchAlreadyCompleted(match, null);
+        }
+        Map<UUID, EffectiveAfkDetectionPolicy> previousPolicies = effectiveAfkPoliciesForMatch(match);
+        matchAfkPolicyOverridesByMatchId.remove(match.matchId());
+        List<AfkPolicyStateAction> actions = collectAfkPolicyStateActions(match, previousPolicies);
+        return SetAfkDetectionPolicyResult.cleared(match, null, actions);
+    }
+
+    @Nonnull
+    public synchronized SetAfkDetectionPolicyResult setPlayerAfkDetectionPolicy(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid,
+        @Nonnull AfkDetectionPolicy rawPolicy
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetAfkDetectionPolicyResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetAfkDetectionPolicyResult.matchAlreadyCompleted(match, playerUuid);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return SetAfkDetectionPolicyResult.playerMissing(match, playerUuid);
+        }
+        EffectiveAfkDetectionPolicy previousPolicy = effectiveAfkDetectionPolicyFor(match, playerUuid);
+        AfkDetectionPolicy policy = AfkDetectionPolicy.normalize(rawPolicy);
+        playerAfkPolicyOverridesByMatchId
+            .computeIfAbsent(match.matchId(), ignored -> new LinkedHashMap<>())
+            .put(playerUuid, policy);
+        List<AfkPolicyStateAction> actions = collectAfkPolicyStateActions(
+            playerUuid,
+            previousPolicy,
+            effectiveAfkDetectionPolicyFor(match, playerUuid)
+        );
+        return SetAfkDetectionPolicyResult.updated(match, playerUuid, policy, actions);
+    }
+
+    @Nonnull
+    public synchronized SetAfkDetectionPolicyResult clearPlayerAfkDetectionPolicy(
+        @Nonnull String rawMatchId,
+        @Nonnull UUID playerUuid
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SetAfkDetectionPolicyResult.matchMissing(matchId);
+        }
+        if (match.hasCompleted()) {
+            return SetAfkDetectionPolicyResult.matchAlreadyCompleted(match, playerUuid);
+        }
+        if (playerUuid == null || !match.hasPlayer(playerUuid)) {
+            return SetAfkDetectionPolicyResult.playerMissing(match, playerUuid);
+        }
+        EffectiveAfkDetectionPolicy previousPolicy = effectiveAfkDetectionPolicyFor(match, playerUuid);
+        Map<UUID, AfkDetectionPolicy> playerOverrides = playerAfkPolicyOverridesByMatchId.get(match.matchId());
+        if (playerOverrides != null) {
+            playerOverrides.remove(playerUuid);
+            if (playerOverrides.isEmpty()) {
+                playerAfkPolicyOverridesByMatchId.remove(match.matchId());
+            }
+        }
+        List<AfkPolicyStateAction> actions = collectAfkPolicyStateActions(
+            playerUuid,
+            previousPolicy,
+            effectiveAfkDetectionPolicyFor(match, playerUuid)
+        );
+        return SetAfkDetectionPolicyResult.cleared(match, playerUuid, actions);
+    }
+
+    @Nonnull
+    private AfkDetectionPolicy resolveEffectiveAfkDetectionPolicy(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull UUID playerUuid
+    ) {
+        Map<UUID, AfkDetectionPolicy> playerOverrides = playerAfkPolicyOverridesByMatchId.get(match.matchId());
+        if (playerOverrides != null && playerOverrides.containsKey(playerUuid)) {
+            return AfkDetectionPolicy.normalize(playerOverrides.get(playerUuid));
+        }
+        AfkDetectionPolicy matchOverride = matchAfkPolicyOverridesByMatchId.get(match.matchId());
+        if (matchOverride != null) {
+            return AfkDetectionPolicy.normalize(matchOverride);
+        }
+        return AfkDetectionPolicy.normalize(match.afkDetectionPolicy());
+    }
+
+    @Nonnull
+    private EffectiveAfkDetectionPolicy effectiveAfkDetectionPolicyFor(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull UUID playerUuid
+    ) {
+        return new EffectiveAfkDetectionPolicy(
+            match.matchId(),
+            match.queueId(),
+            match.arenaId(),
+            match.rulesEngineId(),
+            resolveEffectiveAfkDetectionPolicy(match, playerUuid)
+        ).normalized();
+    }
+
+    @Nonnull
+    private Map<UUID, EffectiveAfkDetectionPolicy> effectiveAfkPoliciesForMatch(@Nonnull ArenaActiveMatch match) {
+        LinkedHashMap<UUID, EffectiveAfkDetectionPolicy> policiesByPlayerUuid = new LinkedHashMap<>();
+        for (UUID playerUuid : afkPolicyPlayerUuids(match)) {
+            policiesByPlayerUuid.put(playerUuid, effectiveAfkDetectionPolicyFor(match, playerUuid));
+        }
+        return Map.copyOf(policiesByPlayerUuid);
+    }
+
+    @Nonnull
+    private List<AfkPolicyStateAction> collectAfkPolicyStateActions(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull Map<UUID, EffectiveAfkDetectionPolicy> previousPolicies
+    ) {
+        List<AfkPolicyStateAction> actions = new ArrayList<>();
+        for (UUID playerUuid : afkPolicyPlayerUuids(match)) {
+            EffectiveAfkDetectionPolicy previousPolicy = previousPolicies.get(playerUuid);
+            if (previousPolicy == null) {
+                previousPolicy = effectiveAfkDetectionPolicyFor(match, playerUuid);
+            }
+            actions.addAll(collectAfkPolicyStateActions(
+                playerUuid,
+                previousPolicy,
+                effectiveAfkDetectionPolicyFor(match, playerUuid)
+            ));
+        }
+        return List.copyOf(actions);
+    }
+
+    @Nonnull
+    private List<AfkPolicyStateAction> collectAfkPolicyStateActions(
+        @Nonnull UUID playerUuid,
+        @Nonnull EffectiveAfkDetectionPolicy previousPolicy,
+        @Nonnull EffectiveAfkDetectionPolicy updatedPolicy
+    ) {
+        AfkDetectionPolicy previous = AfkDetectionPolicy.normalize(previousPolicy.policy());
+        AfkDetectionPolicy updated = AfkDetectionPolicy.normalize(updatedPolicy.policy());
+        if (sameAfkDetectionPolicy(previous, updated)) {
+            return List.of();
+        }
+        if (!updated.enabled()) {
+            return List.of(new AfkPolicyStateAction(playerUuid, updatedPolicy, AfkPolicyStateActionType.CLEAR_FOR_POLICY_CHANGE));
+        }
+        return List.of(new AfkPolicyStateAction(playerUuid, updatedPolicy, AfkPolicyStateActionType.RESET_TIMER));
+    }
+
+    @Nonnull
+    private List<UUID> afkPolicyPlayerUuids(@Nonnull ArenaActiveMatch match) {
+        LinkedHashSet<UUID> playerUuids = new LinkedHashSet<>();
+        playerUuids.addAll(match.arrivedPlayerUuids());
+        playerUuids.addAll(match.activePlayerUuids());
+        playerUuids.addAll(match.eliminatedPlayerUuids());
+        playerUuids.addAll(match.spectatorPlayerUuids());
+        playerUuids.addAll(match.expectedPlayerUuids());
+        return PlayerUuidLists.canonicalize(playerUuids);
+    }
+
+    private static boolean sameAfkDetectionPolicy(@Nonnull AfkDetectionPolicy left, @Nonnull AfkDetectionPolicy right) {
+        AfkDetectionPolicy normalizedLeft = AfkDetectionPolicy.normalize(left);
+        AfkDetectionPolicy normalizedRight = AfkDetectionPolicy.normalize(right);
+        return normalizedLeft.enabled() == normalizedRight.enabled()
+            && normalizedLeft.inactivityTimeoutSeconds() == normalizedRight.inactivityTimeoutSeconds();
+    }
+
+    private void removePlayerAfkPolicyOverride(@Nonnull String rawMatchId, @Nonnull UUID playerUuid) {
+        String matchId = normalizeOptional(rawMatchId);
+        if (matchId.isBlank()) {
+            return;
+        }
+        Map<UUID, AfkDetectionPolicy> playerOverrides = playerAfkPolicyOverridesByMatchId.get(matchId);
+        if (playerOverrides == null) {
+            return;
+        }
+        playerOverrides.remove(playerUuid);
+        if (playerOverrides.isEmpty()) {
+            playerAfkPolicyOverridesByMatchId.remove(matchId);
+        }
+    }
+
+    private void clearAfkPolicyOverrides(@Nonnull String rawMatchId) {
+        String matchId = normalizeOptional(rawMatchId);
+        if (matchId.isBlank()) {
+            return;
+        }
+        matchAfkPolicyOverridesByMatchId.remove(matchId);
+        playerAfkPolicyOverridesByMatchId.remove(matchId);
     }
 
     /**
@@ -1382,6 +1602,7 @@ public class ArenaMatchService {
             return;
         }
         NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
+        clearAfkPolicyOverrides(matchEvent.matchId());
         lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchRuntimeClosed(matchEvent));
         lifecycleDispatches.add(() -> matchRuntimeClosedCallback.accept(matchEvent.matchId()));
     }
@@ -2314,6 +2535,7 @@ public class ArenaMatchService {
         if (updated.isEmpty()) {
             if (!shouldReportEmptyRuntimeAdmissionClosure(updated)) {
                 matchesById.remove(updated.matchId());
+                clearAfkPolicyOverrides(updated.matchId());
                 return;
             }
             stored = updated.withExplicitAdmissionClosed(
@@ -2551,6 +2773,118 @@ public class ArenaMatchService {
         PLAYER_MISSING,
         MATCH_ALREADY_COMPLETED,
         INVALID_REASON
+    }
+
+    public enum SetAfkDetectionPolicyOutcome {
+        UPDATED,
+        CLEARED,
+        MATCH_MISSING,
+        PLAYER_MISSING,
+        MATCH_ALREADY_COMPLETED,
+        INVALID_POLICY
+    }
+
+    public enum AfkPolicyStateActionType {
+        RESET_TIMER,
+        CLEAR_FOR_POLICY_CHANGE
+    }
+
+    public record AfkPolicyStateAction(
+        @Nonnull UUID playerUuid,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
+        @Nonnull AfkPolicyStateActionType type
+    ) {
+    }
+
+    public record SetAfkDetectionPolicyResult(
+        SetAfkDetectionPolicyOutcome outcome,
+        String matchId,
+        UUID playerUuid,
+        AfkDetectionPolicy policy,
+        String message,
+        List<AfkPolicyStateAction> stateActions
+    ) {
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult updated(
+            @Nonnull ArenaActiveMatch activeMatch,
+            UUID playerUuid,
+            @Nonnull AfkDetectionPolicy policy,
+            @Nonnull List<AfkPolicyStateAction> stateActions
+        ) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.UPDATED,
+                activeMatch.matchId(),
+                playerUuid,
+                AfkDetectionPolicy.normalize(policy),
+                "",
+                List.copyOf(stateActions)
+            );
+        }
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult cleared(
+            @Nonnull ArenaActiveMatch activeMatch,
+            UUID playerUuid,
+            @Nonnull List<AfkPolicyStateAction> stateActions
+        ) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.CLEARED,
+                activeMatch.matchId(),
+                playerUuid,
+                null,
+                "",
+                List.copyOf(stateActions)
+            );
+        }
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult matchMissing(@Nonnull String matchId) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.MATCH_MISSING,
+                normalizeRequired(matchId, "Match id cannot be blank."),
+                null,
+                null,
+                "Match is not active.",
+                List.of()
+            );
+        }
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult playerMissing(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.PLAYER_MISSING,
+                activeMatch.matchId(),
+                playerUuid,
+                null,
+                "Player is not part of the active match.",
+                List.of()
+            );
+        }
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult matchAlreadyCompleted(@Nonnull ArenaActiveMatch activeMatch, UUID playerUuid) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.MATCH_ALREADY_COMPLETED,
+                activeMatch.matchId(),
+                playerUuid,
+                null,
+                "Match result was already submitted.",
+                List.of()
+            );
+        }
+
+        @Nonnull
+        public static SetAfkDetectionPolicyResult invalidPolicy(@Nonnull String matchId, UUID playerUuid, @Nonnull String message) {
+            return new SetAfkDetectionPolicyResult(
+                SetAfkDetectionPolicyOutcome.INVALID_POLICY,
+                normalizeOptional(matchId),
+                playerUuid,
+                null,
+                normalizeOptional(message, "Invalid AFK detection policy."),
+                List.of()
+            );
+        }
     }
 
     public record SetPlayerSpectatorResult(
