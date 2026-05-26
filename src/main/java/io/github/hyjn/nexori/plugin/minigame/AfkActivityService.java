@@ -2,75 +2,98 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 public final class AfkActivityService {
 
     private final HytaleLogger logger;
     private final Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup;
+    private final Consumer<AfkActivityTransition> transitionConsumer;
     private final Map<UUID, PlayerActivityState> statesByPlayerUuid = new LinkedHashMap<>();
 
     public AfkActivityService(@Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup) {
-        this(null, effectivePolicyLookup);
+        this(null, effectivePolicyLookup, ignored -> {
+        });
     }
 
     public AfkActivityService(
         @Nullable HytaleLogger logger,
         @Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup
     ) {
-        this.logger = logger;
-        this.effectivePolicyLookup = effectivePolicyLookup;
+        this(logger, effectivePolicyLookup, ignored -> {
+        });
     }
 
-    public synchronized void handlePlayerInputTick(@Nonnull PlayerRef playerRef, boolean hasInputActivity, long nowEpochMs) {
+    public AfkActivityService(
+        @Nullable HytaleLogger logger,
+        @Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup,
+        @Nonnull Consumer<AfkActivityTransition> transitionConsumer
+    ) {
+        this.logger = logger;
+        this.effectivePolicyLookup = effectivePolicyLookup;
+        this.transitionConsumer = transitionConsumer;
+    }
+
+    public void handlePlayerInputTick(@Nonnull PlayerRef playerRef, boolean hasInputActivity, long nowEpochMs) {
         handlePlayerInputTick(playerRef.getUuid(), playerRef.getUsername(), hasInputActivity, nowEpochMs);
     }
 
-    synchronized void handlePlayerInputTick(
+    void handlePlayerInputTick(
         @Nonnull UUID playerUuid,
         @Nonnull String username,
         boolean hasInputActivity,
         long nowEpochMs
     ) {
-        EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
-        if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
-            statesByPlayerUuid.remove(playerUuid);
-            return;
-        }
-        String matchId = effectivePolicy.matchId();
+        AfkActivityTransition transition;
+        synchronized (this) {
+            EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
+            if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
+                statesByPlayerUuid.remove(playerUuid);
+                return;
+            }
+            String matchId = effectivePolicy.matchId();
 
-        PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
-        if (state == null || !state.matchId().equals(matchId)) {
-            state = new PlayerActivityState(matchId, nowEpochMs, false);
-            statesByPlayerUuid.put(playerUuid, state);
-        }
+            PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
+            if (state == null || !state.matchId().equals(matchId)) {
+                state = new PlayerActivityState(matchId, nowEpochMs, false);
+                statesByPlayerUuid.put(playerUuid, state);
+            }
 
-        if (hasInputActivity) {
-            markActivityLocked(playerUuid, username, matchId, nowEpochMs, "PLAYER_INPUT");
-            return;
+            if (hasInputActivity) {
+                transition = markActivityLocked(playerUuid, username, effectivePolicy, nowEpochMs, NexoriAfkActivitySource.PLAYER_INPUT);
+            } else {
+                transition = evaluateAfkLocked(playerUuid, username, state, effectivePolicy, nowEpochMs);
+            }
         }
-
-        evaluateAfkLocked(playerUuid, username, state, effectivePolicy.policy(), nowEpochMs);
+        dispatchTransition(transition);
     }
 
-    public synchronized void markInventoryActivity(@Nonnull PlayerRef playerRef, long nowEpochMs) {
+    public void markInventoryActivity(@Nonnull PlayerRef playerRef, long nowEpochMs) {
         markInventoryActivity(playerRef.getUuid(), playerRef.getUsername(), nowEpochMs);
     }
 
-    synchronized void markInventoryActivity(@Nonnull UUID playerUuid, @Nonnull String username, long nowEpochMs) {
-        EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
-        if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
-            statesByPlayerUuid.remove(playerUuid);
-            return;
+    void markInventoryActivity(@Nonnull UUID playerUuid, @Nonnull String username, long nowEpochMs) {
+        AfkActivityTransition transition;
+        synchronized (this) {
+            EffectiveAfkDetectionPolicy effectivePolicy = findEffectivePolicy(playerUuid).orElse(null);
+            if (effectivePolicy == null || !effectivePolicy.policy().enabled()) {
+                statesByPlayerUuid.remove(playerUuid);
+                return;
+            }
+            transition = markActivityLocked(playerUuid, username, effectivePolicy, nowEpochMs, NexoriAfkActivitySource.INVENTORY_PACKET);
         }
-        markActivityLocked(playerUuid, username, effectivePolicy.matchId(), nowEpochMs, "INVENTORY_PACKET");
+        dispatchTransition(transition);
     }
 
     public synchronized boolean isAfk(@Nonnull UUID playerUuid) {
@@ -87,6 +110,29 @@ public final class AfkActivityService {
         statesByPlayerUuid.remove(playerUuid);
     }
 
+    public synchronized void removeMatch(@Nonnull String matchId) {
+        String normalizedMatchId = matchId == null ? "" : matchId.trim();
+        if (normalizedMatchId.isBlank()) {
+            return;
+        }
+        statesByPlayerUuid.entrySet().removeIf(entry -> entry.getValue().matchId().equals(normalizedMatchId));
+    }
+
+    @Nonnull
+    public synchronized List<UUID> afkPlayerUuids(@Nonnull String matchId) {
+        String normalizedMatchId = matchId == null ? "" : matchId.trim();
+        if (normalizedMatchId.isBlank()) {
+            return List.of();
+        }
+        List<UUID> afkPlayerUuids = new ArrayList<>();
+        for (Map.Entry<UUID, PlayerActivityState> entry : statesByPlayerUuid.entrySet()) {
+            if (entry.getValue().afk() && entry.getValue().matchId().equals(normalizedMatchId)) {
+                afkPlayerUuids.add(entry.getKey());
+            }
+        }
+        return afkPlayerUuids.stream().distinct().toList();
+    }
+
     private Optional<EffectiveAfkDetectionPolicy> findEffectivePolicy(@Nonnull UUID playerUuid) {
         Optional<EffectiveAfkDetectionPolicy> effectivePolicy = effectivePolicyLookup.apply(playerUuid);
         if (effectivePolicy == null || effectivePolicy.isEmpty()) {
@@ -99,37 +145,53 @@ public final class AfkActivityService {
         return Optional.of(normalized);
     }
 
-    private void markActivityLocked(
+    private AfkActivityTransition markActivityLocked(
         @Nonnull UUID playerUuid,
         @Nonnull String username,
-        @Nonnull String matchId,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
         long nowEpochMs,
-        @Nonnull String source
+        @Nonnull NexoriAfkActivitySource source
     ) {
         PlayerActivityState previous = statesByPlayerUuid.get(playerUuid);
         boolean wasAfk = previous != null && previous.afk();
-        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(matchId, nowEpochMs, false));
+        long idleMs = previous == null ? 0L : Math.max(0L, nowEpochMs - previous.lastActivityEpochMs());
+        statesByPlayerUuid.put(playerUuid, new PlayerActivityState(effectivePolicy.matchId(), nowEpochMs, false));
         if (wasAfk && logger != null) {
             logger.atInfo().log(
                 "Nexori AFK state changed player=" + username
                     + " uuid=" + playerUuid
-                    + " matchId=" + matchId
+                    + " matchId=" + effectivePolicy.matchId()
                     + " state=ACTIVE"
                     + " source=" + source
             );
         }
+        if (!wasAfk) {
+            return null;
+        }
+        return new AfkActivityTransition(
+            effectivePolicy.matchId(),
+            effectivePolicy.queueId(),
+            effectivePolicy.arenaId(),
+            effectivePolicy.rulesEngineId(),
+            playerUuid,
+            username,
+            false,
+            nowEpochMs,
+            idleMs,
+            source
+        );
     }
 
-    private void evaluateAfkLocked(
+    private AfkActivityTransition evaluateAfkLocked(
         @Nonnull UUID playerUuid,
         @Nonnull String username,
         @Nonnull PlayerActivityState state,
-        @Nonnull AfkDetectionPolicy policy,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
         long nowEpochMs
     ) {
         long idleMs = nowEpochMs - state.lastActivityEpochMs();
-        if (state.afk() || idleMs < policy.inactivityTimeoutMs()) {
-            return;
+        if (state.afk() || idleMs < effectivePolicy.policy().inactivityTimeoutMs()) {
+            return null;
         }
         statesByPlayerUuid.put(playerUuid, new PlayerActivityState(state.matchId(), state.lastActivityEpochMs(), true));
         if (logger != null) {
@@ -141,6 +203,38 @@ public final class AfkActivityService {
                     + " idleMs=" + idleMs
             );
         }
+        return new AfkActivityTransition(
+            effectivePolicy.matchId(),
+            effectivePolicy.queueId(),
+            effectivePolicy.arenaId(),
+            effectivePolicy.rulesEngineId(),
+            playerUuid,
+            username,
+            true,
+            nowEpochMs,
+            idleMs,
+            NexoriAfkActivitySource.IDLE_TIMEOUT
+        );
+    }
+
+    private void dispatchTransition(AfkActivityTransition transition) {
+        if (transition != null) {
+            transitionConsumer.accept(transition);
+        }
+    }
+
+    public record AfkActivityTransition(
+        @Nonnull String matchId,
+        @Nonnull String queueId,
+        @Nonnull String arenaId,
+        @Nonnull String rulesEngineId,
+        @Nonnull UUID playerUuid,
+        @Nonnull String playerName,
+        boolean afk,
+        long changedAtEpochMs,
+        long idleMs,
+        @Nonnull NexoriAfkActivitySource source
+    ) {
     }
 
     private record PlayerActivityState(

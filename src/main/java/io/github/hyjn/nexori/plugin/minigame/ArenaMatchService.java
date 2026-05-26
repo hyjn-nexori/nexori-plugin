@@ -65,6 +65,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * Tracks active arena matches, observes player arrivals and returns, and coordinates the
@@ -108,6 +109,8 @@ public class ArenaMatchService {
     private final MatchPlacementEvaluator matchPlacementEvaluator = new MatchPlacementEvaluator();
     private final MatchResultValidator matchResultValidator = new MatchResultValidator();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
+    private Consumer<String> matchRuntimeClosedCallback = ignored -> {
+    };
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
@@ -176,6 +179,11 @@ public class ArenaMatchService {
         BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService
     ) {
         this.backendMatchAdmissionStateReportingService = backendMatchAdmissionStateReportingService;
+    }
+
+    public synchronized void setMatchRuntimeClosedCallback(Consumer<String> matchRuntimeClosedCallback) {
+        this.matchRuntimeClosedCallback = matchRuntimeClosedCallback == null ? ignored -> {
+        } : matchRuntimeClosedCallback;
     }
 
     /**
@@ -544,7 +552,13 @@ public class ArenaMatchService {
         if (match == null || !match.hasPlayer(playerUuid)) {
             return Optional.empty();
         }
-        return Optional.of(new EffectiveAfkDetectionPolicy(match.matchId(), match.afkDetectionPolicy()));
+        return Optional.of(new EffectiveAfkDetectionPolicy(
+            match.matchId(),
+            match.queueId(),
+            match.arenaId(),
+            match.rulesEngineId(),
+            match.afkDetectionPolicy()
+        ));
     }
 
     /**
@@ -1369,6 +1383,7 @@ public class ArenaMatchService {
         }
         NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
         lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchRuntimeClosed(matchEvent));
+        lifecycleDispatches.add(() -> matchRuntimeClosedCallback.accept(matchEvent.matchId()));
     }
 
     @Nonnull

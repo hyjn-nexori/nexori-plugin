@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerAfkChangedEvent;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateService;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateStore;
 import io.github.hyjn.nexori.plugin.bootstrap.BootstrapState;
@@ -86,6 +87,7 @@ import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionStore;
 import io.github.hyjn.nexori.plugin.minigame.NexoriAssignedSpawnProvider;
+import io.github.hyjn.nexori.plugin.minigame.NexoriAfkActivityDispatcher;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMatchLifecycleDispatcher;
 import io.github.hyjn.nexori.plugin.minigame.NexoriMinigameApiBridge;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
@@ -188,6 +190,7 @@ public class NexoriPlugin extends JavaPlugin {
     private ArenaMatchService arenaMatchService;
     private AfkActivityService afkActivityService;
     private SpectatorRuntimeService spectatorRuntimeService;
+    private NexoriAfkActivityDispatcher afkActivityDispatcher;
     private NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private NexoriMinigameApi minigameApi;
     private NexoriStatusHudService nexoriStatusHudService;
@@ -393,6 +396,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.spectatorRuntimeService = new SpectatorRuntimeService(this.getLogger());
             SpectatorPacketGuard.register(this.spectatorRuntimeService, this.getLogger());
             this.matchLifecycleDispatcher = new NexoriMatchLifecycleDispatcher(this.getLogger());
+            this.afkActivityDispatcher = new NexoriAfkActivityDispatcher(this.getLogger());
             this.arenaMatchService = new ArenaMatchService(
                 this.getLogger(),
                 this.secureTravelService,
@@ -404,8 +408,21 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.afkActivityService = new AfkActivityService(
                 this.getLogger(),
-                this.arenaMatchService::findEffectiveAfkDetectionPolicy
+                this.arenaMatchService::findEffectiveAfkDetectionPolicy,
+                transition -> this.afkActivityDispatcher.dispatchPlayerAfkChanged(new NexoriPlayerAfkChangedEvent(
+                    transition.matchId(),
+                    transition.queueId(),
+                    transition.arenaId(),
+                    transition.rulesEngineId(),
+                    transition.playerUuid(),
+                    transition.playerName(),
+                    transition.afk(),
+                    transition.changedAtEpochMs(),
+                    transition.idleMs(),
+                    transition.source()
+                ))
             );
+            this.arenaMatchService.setMatchRuntimeClosedCallback(this.afkActivityService::removeMatch);
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
             );
@@ -451,8 +468,10 @@ public class NexoriPlugin extends JavaPlugin {
             );
             this.minigameApi = new NexoriMinigameApiBridge(
                 this.arenaMatchService,
+                this.afkActivityService,
                 this.backendResultReportingService,
-                this.matchLifecycleDispatcher
+                this.matchLifecycleDispatcher,
+                this.afkActivityDispatcher
             );
             this.portalSetupDraftService = new PortalSetupDraftService();
             this.targetSetupDraftService = new TargetSetupDraftService();

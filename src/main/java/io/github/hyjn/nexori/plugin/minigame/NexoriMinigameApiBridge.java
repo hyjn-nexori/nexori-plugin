@@ -1,6 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriBackendReportStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest;
@@ -35,20 +36,26 @@ import java.util.UUID;
 public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
     private final ArenaMatchService arenaMatchService;
+    private final AfkActivityService afkActivityService;
     private final BackendResultReportingService backendResultReportingService;
     private final NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
+    private final NexoriAfkActivityDispatcher afkActivityDispatcher;
 
     /**
      * Creates one bridge backed by the live arena-match service.
      */
     public NexoriMinigameApiBridge(
         @Nonnull ArenaMatchService arenaMatchService,
+        @Nonnull AfkActivityService afkActivityService,
         @Nonnull BackendResultReportingService backendResultReportingService,
-        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher
+        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher,
+        @Nonnull NexoriAfkActivityDispatcher afkActivityDispatcher
     ) {
         this.arenaMatchService = arenaMatchService;
+        this.afkActivityService = afkActivityService;
         this.backendResultReportingService = backendResultReportingService;
         this.matchLifecycleDispatcher = matchLifecycleDispatcher;
+        this.afkActivityDispatcher = afkActivityDispatcher;
     }
 
     @Nonnull
@@ -58,6 +65,15 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         @Nonnull NexoriMatchLifecycleListener listener
     ) {
         return matchLifecycleDispatcher.register(rulesEngineId, listener);
+    }
+
+    @Nonnull
+    @Override
+    public NexoriListenerRegistration registerAfkActivityListener(
+        @Nonnull String rulesEngineId,
+        @Nonnull NexoriAfkActivityListener listener
+    ) {
+        return afkActivityDispatcher.register(rulesEngineId, listener);
     }
 
     @Nonnull
@@ -89,6 +105,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 info.activePlayerUuids(),
                 info.eliminatedPlayerUuids(),
                 info.spectatorPlayerUuids(),
+                afkActivityService.afkPlayerUuids(info.matchId()),
                 info.requiredResultPlayerUuids(),
                 info.playerOutcomes().stream()
                     .map(outcome -> new NexoriPlayerOutcomeState(
