@@ -2,6 +2,7 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkContinuationDecision;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriBackendReportStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason;
@@ -31,6 +32,7 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultResult;
+import io.github.hyjn.nexori.plugin.backend.BackendAfkContinuationCheckService;
 import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
 
 import javax.annotation.Nonnull;
@@ -46,6 +48,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
     private final ArenaMatchService arenaMatchService;
     private final AfkActivityService afkActivityService;
     private final BackendResultReportingService backendResultReportingService;
+    private final BackendAfkContinuationCheckService backendAfkContinuationCheckService;
     private final NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private final NexoriAfkActivityDispatcher afkActivityDispatcher;
 
@@ -55,13 +58,28 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
     public NexoriMinigameApiBridge(
         @Nonnull ArenaMatchService arenaMatchService,
         @Nonnull AfkActivityService afkActivityService,
-        @Nonnull BackendResultReportingService backendResultReportingService,
+        BackendResultReportingService backendResultReportingService,
+        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher,
+        @Nonnull NexoriAfkActivityDispatcher afkActivityDispatcher
+    ) {
+        this(arenaMatchService, afkActivityService, backendResultReportingService, null, matchLifecycleDispatcher, afkActivityDispatcher);
+    }
+
+    /**
+     * Creates one bridge backed by the live arena-match service, including the AFK continuation check service.
+     */
+    public NexoriMinigameApiBridge(
+        @Nonnull ArenaMatchService arenaMatchService,
+        @Nonnull AfkActivityService afkActivityService,
+        BackendResultReportingService backendResultReportingService,
+        BackendAfkContinuationCheckService backendAfkContinuationCheckService,
         @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher,
         @Nonnull NexoriAfkActivityDispatcher afkActivityDispatcher
     ) {
         this.arenaMatchService = arenaMatchService;
         this.afkActivityService = afkActivityService;
         this.backendResultReportingService = backendResultReportingService;
+        this.backendAfkContinuationCheckService = backendAfkContinuationCheckService;
         this.matchLifecycleDispatcher = matchLifecycleDispatcher;
         this.afkActivityDispatcher = afkActivityDispatcher;
     }
@@ -200,6 +218,15 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             request.afk(),
             ""
         );
+    }
+
+    @Nonnull
+    @Override
+    public NexoriAfkContinuationDecision getAfkContinuationDecision(@Nonnull String matchId) {
+        if (backendAfkContinuationCheckService == null) {
+            return NexoriAfkContinuationDecision.unavailable(matchId == null ? "" : matchId.trim());
+        }
+        return backendAfkContinuationCheckService.getAfkContinuationDecision(matchId);
     }
 
     @Nonnull
