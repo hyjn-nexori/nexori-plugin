@@ -1,7 +1,7 @@
 package io.github.hyjn.nexori.plugin.portal;
 
-import com.hypixel.hytale.math.vector.Vector3f;
-import com.hypixel.hytale.math.vector.Vector3i;
+import com.hypixel.hytale.math.vector.Rotation3f;
+import org.joml.Vector3i;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsAction;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsCategory;
 import io.github.hyjn.nexori.plugin.diagnostics.DiagnosticsOutcome;
@@ -95,7 +95,7 @@ public final class PortalInstanceService {
      */
     @Nonnull
     public synchronized Optional<PortalInstanceDefinition> findByLocation(@Nonnull String worldName, @Nonnull Vector3i blockPosition) {
-        String locationKey = PortalInstanceDefinition.locationKey(worldName, blockPosition.getX(), blockPosition.getY(), blockPosition.getZ());
+        String locationKey = PortalInstanceDefinition.locationKey(worldName, blockPosition.x, blockPosition.y, blockPosition.z);
         return portalsById.values().stream()
             .filter(portal -> portal.locationKey().equals(locationKey))
             .findFirst();
@@ -112,7 +112,7 @@ public final class PortalInstanceService {
         int verticalRadius
     ) {
         return PortalLocationMatcher.findNearest(portalsById.values(), worldName,
-            blockPosition.getX(), blockPosition.getY(), blockPosition.getZ(),
+            blockPosition.x, blockPosition.y, blockPosition.z,
             horizontalRadius, verticalRadius);
     }
 
@@ -123,12 +123,12 @@ public final class PortalInstanceService {
     public synchronized PortalInstanceDefinition registerPlacedPortal(
         @Nonnull String worldName,
         @Nonnull Vector3i blockPosition,
-        @Nonnull Vector3f arrivalRotation
+        @Nonnull Rotation3f arrivalRotation
     ) throws IOException {
         long now = System.currentTimeMillis();
         String normalizedWorldName = worldName.trim().toLowerCase();
         String autoTargetId = PortalAutoTargetPlanner.buildAutoDestinationTargetId(
-            normalizedWorldName, blockPosition.getX(), blockPosition.getY(), blockPosition.getZ());
+            normalizedWorldName, blockPosition.x, blockPosition.y, blockPosition.z);
         DestinationTargetDefinition autoTarget = new DestinationTargetDefinition(
             autoTargetId,
             "Portal Arrival (" + normalizedWorldName + ")",
@@ -137,7 +137,7 @@ public final class PortalInstanceService {
             "portal_entry",
             "",
             PortalAutoTargetPlanner.buildPortalTargetMetadataJson(
-                blockPosition.getX(), blockPosition.getY(), blockPosition.getZ(),
+                blockPosition.x, blockPosition.y, blockPosition.z,
                 arrivalRotation.x, arrivalRotation.y, arrivalRotation.z)
         );
         destinationTargetService.upsert(autoTarget);
@@ -146,11 +146,11 @@ public final class PortalInstanceService {
         PortalInstanceDefinition portal = existing == null
             ? new PortalInstanceDefinition(
                 UUID.randomUUID().toString().toLowerCase(),
-                "Portal @ " + normalizedWorldName + " (" + blockPosition.getX() + ", " + blockPosition.getY() + ", " + blockPosition.getZ() + ")",
+                "Portal @ " + normalizedWorldName + " (" + blockPosition.x + ", " + blockPosition.y + ", " + blockPosition.z + ")",
                 normalizedWorldName,
-                blockPosition.getX(),
-                blockPosition.getY(),
-                blockPosition.getZ(),
+                blockPosition.x,
+                blockPosition.y,
+                blockPosition.z,
                 autoTargetId,
                 true,
                 now,
@@ -160,9 +160,9 @@ public final class PortalInstanceService {
                 existing.portalId(),
                 existing.displayName(),
                 normalizedWorldName,
-                blockPosition.getX(),
-                blockPosition.getY(),
-                blockPosition.getZ(),
+                blockPosition.x,
+                blockPosition.y,
+                blockPosition.z,
                 autoTargetId,
                 existing.enabled(),
                 existing.createdAtEpochMillis(),

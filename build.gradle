@@ -38,7 +38,19 @@ java {
     withJavadocJar()
 }
 
-def nexoriApiJar = file("$rootDir/../nexori-api/build/libs/nexori-api-2.4.0.jar")
+def nexoriApiJars = fileTree("$rootDir/../nexori-api/build/libs") {
+    include 'nexori-api-*.jar'
+    exclude '*-sources.jar'
+    exclude '*-javadoc.jar'
+}
+
+def resolveNexoriApiJar = {
+    def jars = nexoriApiJars.files.sort { -it.lastModified() }
+    if (jars.isEmpty()) {
+        throw new GradleException("No nexori-api jar found in $rootDir/../nexori-api/build/libs. Run build-nexori-api.bat first.")
+    }
+    jars.first()
+}
 
 configurations {
     // Force ByteBuddy 1.15.11 on test configurations so SubclassByteBuddyMockMaker
@@ -70,7 +82,7 @@ javadoc {
 // compile against their code. This requires you to have Hytale installed using
 // the official launcher for now.
 dependencies {
-    implementation(files(nexoriApiJar))
+    implementation(files(resolveNexoriApiJar()))
     implementation(files("$hytaleHome/install/$patchline/package/game/latest/Server/HytaleServer.jar"))
     compileOnly("curse.maven:hyui-1431415:7667069")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
@@ -83,7 +95,7 @@ dependencies {
 }
 
 tasks.named('jar') {
-    from(zipTree(nexoriApiJar)) {
+    from(zipTree(resolveNexoriApiJar())) {
         include 'io/github/hyjn/nexori/plugin/api/**'
     }
 }

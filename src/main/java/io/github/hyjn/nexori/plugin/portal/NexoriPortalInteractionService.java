@@ -4,7 +4,7 @@ import com.hypixel.hytale.component.ComponentAccessor;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.math.vector.Vector3i;
+import org.joml.Vector3i;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.protocol.BlockPosition;
 import com.hypixel.hytale.server.core.Message;
@@ -299,7 +299,7 @@ public final class NexoriPortalInteractionService {
                         .travelProfileId(binding.travelProfileId())
                         .remoteConnectionAddress(binding.destinationConnectionAddress())
                 );
-                player.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
+                playerRef.sendMessage(Message.raw("This Nexori portal could not start its secure travel: " + exception.getMessage()));
                 logger.atWarning().withCause(exception).log("Failed to trigger secure travel from portal " + portal.get().portalId());
             }
             return;
@@ -314,7 +314,7 @@ public final class NexoriPortalInteractionService {
         if (currentQueueId.isBlank()) {
             return false;
         }
-        player.sendMessage(Message.raw(
+        playerRef.sendMessage(Message.raw(
             "You are currently in Nexori queue " + currentQueueId + ". Leave the queue before using a cross-server portal."
         ));
         return true;
@@ -327,11 +327,11 @@ public final class NexoriPortalInteractionService {
     ) {
         String currentQueueId = queueCoordinatorService.findQueuedQueueId(playerRef.getUuid()).orElse("");
         if (currentQueueId.isBlank()) {
-            player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
+            playerRef.sendMessage(Message.raw("You are not currently in a Nexori queue."));
             return false;
         }
         if (!binding.queueId().isBlank() && !currentQueueId.equals(binding.queueId())) {
-            player.sendMessage(Message.raw(
+            playerRef.sendMessage(Message.raw(
                 "This portal leaves Nexori queue " + binding.queueId() + ", but you are currently in " + currentQueueId + "."
             ));
             return false;
@@ -339,10 +339,10 @@ public final class NexoriPortalInteractionService {
 
         QueueCoordinatorService.LeaveResult result = queueCoordinatorService.leaveCurrentQueue(playerRef.getUuid());
         if (result.outcome() == QueueCoordinatorService.LeaveOutcome.LEFT) {
-            player.sendMessage(Message.raw("Left Nexori queue " + result.queueId() + "."));
+            playerRef.sendMessage(Message.raw("Left Nexori queue " + result.queueId() + "."));
             return true;
         }
-        player.sendMessage(Message.raw("You are not currently in a Nexori queue."));
+        playerRef.sendMessage(Message.raw("You are not currently in a Nexori queue."));
         return false;
     }
 
@@ -356,7 +356,7 @@ public final class NexoriPortalInteractionService {
             .resolve(binding.destinationTargetId(), "")
             .orElse(null);
         if (resolvedTarget == null) {
-            player.sendMessage(Message.raw(
+            playerRef.sendMessage(Message.raw(
                 "This Nexori portal points to local target '" + binding.destinationTargetId() + "', but that target does not exist."
             ));
             return false;
@@ -364,7 +364,7 @@ public final class NexoriPortalInteractionService {
 
         Transform transform = resolveLocalTargetTransform(resolvedTarget, playerRef.getUuid());
         if (transform == null) {
-            player.sendMessage(Message.raw(
+            playerRef.sendMessage(Message.raw(
                 "This Nexori portal could not resolve its local target transform."
             ));
             return false;
@@ -376,11 +376,11 @@ public final class NexoriPortalInteractionService {
             : Teleport.createForPlayer(targetWorld, transform.clone());
         World currentWorld = player.getWorld();
         if (currentWorld == null) {
-            player.sendMessage(Message.raw("This Nexori portal could not find your current world for local teleport."));
+            playerRef.sendMessage(Message.raw("This Nexori portal could not find your current world for local teleport."));
             return false;
         }
         currentWorld.execute(() -> ref.getStore().addComponent(ref, Teleport.getComponentType(), teleport));
-        player.sendMessage(Message.raw("Teleported to Nexori target " + binding.destinationTargetId() + "."));
+        playerRef.sendMessage(Message.raw("Teleported to Nexori target " + binding.destinationTargetId() + "."));
         return true;
     }
 
@@ -406,7 +406,7 @@ public final class NexoriPortalInteractionService {
                     : (result.state().phase() == io.github.hyjn.nexori.plugin.minigame.QueuePhase.READY
                         ? " ready batch pending."
                         : "");
-                player.sendMessage(Message.raw(
+                playerRef.sendMessage(Message.raw(
                     "Joined Nexori queue " + result.state().queueId()
                         + ". waiting=" + waiting
                         + " ready=" + ready
@@ -415,19 +415,19 @@ public final class NexoriPortalInteractionService {
                 return true;
             }
             case ALREADY_QUEUED -> {
-                player.sendMessage(Message.raw(
+                playerRef.sendMessage(Message.raw(
                     "You are already in Nexori queue " + result.existingQueueId() + "."
                 ));
                 return result.existingQueueId().equals(binding.queueId());
             }
             case QUEUE_MISSING -> {
-                player.sendMessage(Message.raw(
+                playerRef.sendMessage(Message.raw(
                     "This Nexori portal points to queue '" + binding.queueId() + "', but that queue does not exist."
                 ));
                 return false;
             }
             case QUEUE_DISABLED -> {
-                player.sendMessage(Message.raw(
+                playerRef.sendMessage(Message.raw(
                     "This Nexori queue is currently disabled."
                 ));
                 return false;
@@ -467,12 +467,12 @@ public final class NexoriPortalInteractionService {
             var position = root.getAsJsonObject("position");
             var rotation = root.has("rotation") ? root.getAsJsonObject("rotation") : null;
             return new Transform(
-                new com.hypixel.hytale.math.vector.Vector3d(
+                new org.joml.Vector3d(
                     position.has("x") ? position.get("x").getAsDouble() : 0.0,
                     position.has("y") ? position.get("y").getAsDouble() : 0.0,
                     position.has("z") ? position.get("z").getAsDouble() : 0.0
                 ),
-                new com.hypixel.hytale.math.vector.Vector3f(
+                new com.hypixel.hytale.math.vector.Rotation3f(
                     rotation != null && rotation.has("pitch") ? (float) rotation.get("pitch").getAsDouble() : 0.0f,
                     rotation != null && rotation.has("yaw") ? (float) rotation.get("yaw").getAsDouble() : 0.0f,
                     rotation != null && rotation.has("roll") ? (float) rotation.get("roll").getAsDouble() : 0.0f

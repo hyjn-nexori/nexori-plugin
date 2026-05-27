@@ -270,7 +270,7 @@ public final class DestinationTargetDiscoveryService {
             );
             return;
         }
-        event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+        playerRef.sendMessage(Message.raw(pendingReturn.message()));
     }
 
     private void handleRequest(@Nonnull PlayerSetupConnectEvent event, @Nonnull VerifiedSecureReferral referral) {

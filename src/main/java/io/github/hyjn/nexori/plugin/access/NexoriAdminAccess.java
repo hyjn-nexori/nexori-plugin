@@ -12,7 +12,7 @@ public final class NexoriAdminAccess {
     }
 
     public static boolean canManage(@Nonnull PlayerRef playerRef, Player player, @Nonnull String adminPermission) {
-        if (player != null && (player.hasPermission("*") || player.hasPermission(adminPermission))) {
+        if (player != null && (playerRef.hasPermission("*") || playerRef.hasPermission(adminPermission))) {
             return true;
         }
 

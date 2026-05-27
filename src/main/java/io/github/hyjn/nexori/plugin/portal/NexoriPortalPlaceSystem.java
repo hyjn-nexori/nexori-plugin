@@ -7,8 +7,8 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.EntityEventSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.math.vector.Vector3f;
-import com.hypixel.hytale.math.vector.Vector3i;
+import com.hypixel.hytale.math.vector.Rotation3f;
+import org.joml.Vector3i;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.ecs.PlaceBlockEvent;
 import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
@@ -56,14 +56,14 @@ public final class NexoriPortalPlaceSystem extends EntityEventSystem<EntityStore
         }
 
         HeadRotation headRotation = store.getComponent(ref, HeadRotation.getComponentType());
-        Vector3f rotation = headRotation == null
-            ? new Vector3f(0.0f, 0.0f, 0.0f)
+        Rotation3f rotation = headRotation == null
+            ? new Rotation3f(0.0f, 0.0f, 0.0f)
             : headRotation.getRotation().clone();
 
         try {
             PortalInstanceDefinition portal = portalInstanceService.registerPlacedPortal(
                 player.getWorld().getName(),
-                new Vector3i(event.getTargetBlock()),
+                new Vector3i(event.getTargetBlock().x, event.getTargetBlock().y, event.getTargetBlock().z),
                 rotation
             );
             logger.atInfo().log("Registered Nexori portal " + portal.portalId()

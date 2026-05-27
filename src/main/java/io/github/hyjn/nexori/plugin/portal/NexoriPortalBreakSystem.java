@@ -7,7 +7,7 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.EntityEventSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.math.vector.Vector3i;
+import org.joml.Vector3i;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.ecs.BreakBlockEvent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -56,7 +56,7 @@ public final class NexoriPortalBreakSystem extends EntityEventSystem<EntityStore
         try {
             boolean removed = portalInstanceService.removePlacedPortal(
                 player.getWorld().getName(),
-                new Vector3i(event.getTargetBlock())
+                new Vector3i(event.getTargetBlock().x, event.getTargetBlock().y, event.getTargetBlock().z)
             );
             if (removed) {
                 logger.atInfo().log("Removed Nexori portal record at "

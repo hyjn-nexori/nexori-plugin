@@ -7,8 +7,8 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.PlayerConnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
@@ -501,7 +501,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         if (!tryQueueInstanceArrival(event, playerRef, arrival)) {
             applyArrivalTeleport(event, playerRef, arrival);
         }
-        event.getPlayer().sendMessage(Message.raw(arrivalPlanner.buildArrivalMessage(arrival)));
+        playerRef.sendMessage(Message.raw(arrivalPlanner.buildArrivalMessage(arrival)));
         inventoryTransferService.handlePlayerReady(event);
     }
 
@@ -725,9 +725,9 @@ public final class SecureTravelService implements SecureReferralHandler {
             );
 
             JsonObject rotation = root.has("rotation") ? root.getAsJsonObject("rotation") : null;
-            Vector3f rotationVector = rotation == null
-                ? new Vector3f(0.0f, 0.0f, 0.0f)
-                : new Vector3f(
+            Rotation3f rotationVector = rotation == null
+                ? new Rotation3f(0.0f, 0.0f, 0.0f)
+                : new Rotation3f(
                     (float) getDouble(rotation, "pitch"),
                     (float) getDouble(rotation, "yaw"),
                     (float) getDouble(rotation, "roll")

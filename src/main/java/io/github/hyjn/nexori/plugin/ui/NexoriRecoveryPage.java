@@ -14,7 +14,7 @@ import au.ellie.hyui.types.ScrollbarStyle;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3f;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
@@ -313,7 +313,7 @@ public final class NexoriRecoveryPage {
                 throw new IllegalStateException("Could not read your live world for Nexori recovery return.");
             }
 
-            Vector3f rotation = transformComponent.getRotation();
+            Rotation3f rotation = transformComponent.getRotation();
             HeadRotation headRotation = store.getComponent(ref, HeadRotation.getComponentType());
             if (headRotation != null) {
                 rotation = headRotation.getRotation();
@@ -326,7 +326,7 @@ public final class NexoriRecoveryPage {
                 new Transform(transformComponent.getPosition(), rotation)
             );
             if (result.remoteTravelStarted()) {
-                player.sendMessage(Message.raw(result.message()));
+                playerRef.sendMessage(Message.raw(result.message()));
             } else {
                 open(ref, store, playerRef, player, inventoryTransferService, "", result.message());
             }

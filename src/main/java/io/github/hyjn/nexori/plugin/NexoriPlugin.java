@@ -560,7 +560,7 @@ public class NexoriPlugin extends JavaPlugin {
                     return;
                 }
 
-                event.getPlayer().sendMessage(Message.raw(resumeStatus));
+                playerRef.sendMessage(Message.raw(resumeStatus));
                 resumeState = NexoriMenuV2State.initial().withStatusText(resumeStatus);
                 NexoriMenuV2Page.open(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef, event.getPlayer(), this, resumeState);
             });

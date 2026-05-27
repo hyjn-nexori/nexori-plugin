@@ -19,8 +19,8 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -391,7 +391,7 @@ public class NexoriMenuSections {
         if (transformComponent == null) {
             throw new IllegalStateException("Could not read the live player position for secure portal binding.");
         }
-        Vector3f rotation = transformComponent.getRotation();
+        Rotation3f rotation = transformComponent.getRotation();
         HeadRotation headRotation = store.getComponent(ref, HeadRotation.getComponentType());
         if (headRotation != null) {
             rotation = headRotation.getRotation();

@@ -355,7 +355,7 @@ public final class ServerPolicySyncService {
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
         Ref<EntityStore> storeRef = event.getPlayerRef();
         storeRef.getStore().addComponent(storeRef, Teleport.getComponentType(), teleport);
-        event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+        playerRef.sendMessage(Message.raw(pendingReturn.message()));
         if (pendingReturn.resumeAction() != null) {
             pendingReturn.resumeAction().reopen(
                 storeRef,

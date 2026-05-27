@@ -3,8 +3,8 @@ package io.github.hyjn.nexori.plugin.target;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.server.core.universe.world.World;
 
 import javax.annotation.Nonnull;
@@ -55,7 +55,7 @@ public final class WorldSpawnResolver {
                     getDouble(spawnPoint, "Y"),
                     getDouble(spawnPoint, "Z")
                 ),
-                new Vector3f(
+                new Rotation3f(
                     (float) getDouble(spawnPoint, "Pitch"),
                     (float) getDouble(spawnPoint, "Yaw"),
                     (float) getDouble(spawnPoint, "Roll")
