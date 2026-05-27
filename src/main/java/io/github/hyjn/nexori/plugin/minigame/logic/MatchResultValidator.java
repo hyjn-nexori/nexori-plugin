@@ -123,6 +123,7 @@ public final class MatchResultValidator {
         LinkedHashSet<UUID> requiredSet = new LinkedHashSet<>(requiredPlayers);
         List<MatchResultValidationResult.PlayerResult> orderedPlayers = new ArrayList<>();
         boolean hasWinner = false;
+        boolean allNoContest = true;
         for (UUID requiredPlayer : requiredSet) {
             ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(requiredPlayer);
             if (outcome == null || outcome.outcome() == null) {
@@ -130,6 +131,9 @@ public final class MatchResultValidator {
             }
             if (outcome.outcome() == ArenaPlayerResolutionOutcome.WIN) {
                 hasWinner = true;
+            }
+            if (outcome.outcome() != ArenaPlayerResolutionOutcome.NO_CONTEST) {
+                allNoContest = false;
             }
             orderedPlayers.add(new MatchResultValidationResult.PlayerResult(
                 requiredPlayer,
@@ -143,8 +147,8 @@ public final class MatchResultValidator {
                 return MatchResultValidationResult.invalid("Result contains unexpected player outcome " + submittedPlayer + ".");
             }
         }
-        if (!hasWinner) {
-            return MatchResultValidationResult.invalid("Final match result must include at least one WIN outcome.");
+        if (!hasWinner && !allNoContest) {
+            return MatchResultValidationResult.invalid("Final match result must include at least one WIN outcome unless all players are NO_CONTEST.");
         }
         return MatchResultValidationResult.valid(orderedPlayers, metadataResult.metadata(), reason, customDataResult.customData());
     }

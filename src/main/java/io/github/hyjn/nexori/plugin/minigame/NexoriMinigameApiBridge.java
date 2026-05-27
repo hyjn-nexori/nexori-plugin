@@ -578,6 +578,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             case WIN -> ArenaPlayerResolutionOutcome.WIN;
             case LOSS -> ArenaPlayerResolutionOutcome.LOSS;
             case DISCONNECTED -> ArenaPlayerResolutionOutcome.DISCONNECTED;
+            case NO_CONTEST -> ArenaPlayerResolutionOutcome.NO_CONTEST;
         };
     }
 
@@ -592,6 +593,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         return switch (outcome) {
             case WIN -> NexoriMatchResultPlayerOutcome.WIN;
             case LOSS, DISCONNECTED -> NexoriMatchResultPlayerOutcome.LOSS;
+            case NO_CONTEST -> NexoriMatchResultPlayerOutcome.NO_CONTEST;
         };
     }
 

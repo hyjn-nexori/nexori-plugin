@@ -6,7 +6,8 @@ import java.util.Locale;
 public enum ArenaPlayerResolutionOutcome {
     WIN,
     LOSS,
-    DISCONNECTED;
+    DISCONNECTED,
+    NO_CONTEST;
 
     @Nonnull
     public static ArenaPlayerResolutionOutcome parse(@Nonnull String rawValue) {

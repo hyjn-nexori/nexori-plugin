@@ -12,6 +12,7 @@ import io.github.hyjn.nexori.plugin.minigame.AfkActivityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -133,13 +134,15 @@ final class BackendAfkContinuationCheckServiceTest {
         transport.enqueueResponse(200, cancelResponse("AFK_LIMIT", "Too many AFK players."));
 
         service.enqueue(afkTransition(MATCH_ID, PLAYER, true));
-        service.handleTick(T1);
+        List<NexoriAfkContinuationDecision> cancelDecisions = service.handleTick(T1);
 
         NexoriAfkContinuationDecision decision = service.getAfkContinuationDecision(MATCH_ID);
         assertEquals(NexoriAfkContinuationDecisionType.CANCEL, decision.decision());
         assertEquals("AFK_LIMIT", decision.reasonCode());
         assertEquals("Too many AFK players.", decision.message());
         assertEquals(PLAYER, decision.triggeringPlayerUuid());
+        assertEquals(1, cancelDecisions.size());
+        assertEquals(decision, cancelDecisions.get(0));
     }
 
     // ── 7: CANCEL is sticky — not overwritten by subsequent CONTINUE ──────────

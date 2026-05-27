@@ -10,8 +10,8 @@ final class ArenaPlayerResolutionOutcomeTest {
     // ── enum values ───────────────────────────────────────────────────────────
 
     @Test
-    void enumHasThreeValues() {
-        assertEquals(3, ArenaPlayerResolutionOutcome.values().length);
+    void enumHasFourValues() {
+        assertEquals(4, ArenaPlayerResolutionOutcome.values().length);
     }
 
     // ── parse ─────────────────────────────────────────────────────────────────
@@ -32,10 +32,16 @@ final class ArenaPlayerResolutionOutcomeTest {
     }
 
     @Test
+    void parseFindsNoContestExact() {
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, ArenaPlayerResolutionOutcome.parse("NO_CONTEST"));
+    }
+
+    @Test
     void parseIsCaseInsensitive() {
         assertEquals(ArenaPlayerResolutionOutcome.WIN, ArenaPlayerResolutionOutcome.parse("win"));
         assertEquals(ArenaPlayerResolutionOutcome.LOSS, ArenaPlayerResolutionOutcome.parse("Loss"));
         assertEquals(ArenaPlayerResolutionOutcome.DISCONNECTED, ArenaPlayerResolutionOutcome.parse("disconnected"));
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, ArenaPlayerResolutionOutcome.parse("no_contest"));
     }
 
     @Test

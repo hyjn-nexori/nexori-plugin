@@ -14,8 +14,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -141,12 +143,24 @@ public final class BackendAfkContinuationCheckService {
      * Drains completed HTTP responses and stores the resulting decisions.
      * Must be called from the game tick thread.
      */
-    public synchronized void handleTick(long nowEpochMs) {
+    @Nonnull
+    public synchronized List<NexoriAfkContinuationDecision> handleTick(long nowEpochMs) {
+        List<NexoriAfkContinuationDecision> cancelDecisions = new ArrayList<>();
         AfkCheckCompletion completion;
         while ((completion = completions.poll()) != null) {
             pendingMatchIds.remove(completion.transition().matchId());
-            storeDecision(completion.transition(), completion.decisionType(), completion.reasonCode(), completion.message(), nowEpochMs);
+            NexoriAfkContinuationDecision decision = storeDecision(
+                completion.transition(),
+                completion.decisionType(),
+                completion.reasonCode(),
+                completion.message(),
+                nowEpochMs
+            );
+            if (decision != null && decision.decision() == NexoriAfkContinuationDecisionType.CANCEL) {
+                cancelDecisions.add(decision);
+            }
         }
+        return List.copyOf(cancelDecisions);
     }
 
     /**
@@ -194,7 +208,7 @@ public final class BackendAfkContinuationCheckService {
         }
     }
 
-    private void storeDecision(
+    private NexoriAfkContinuationDecision storeDecision(
         @Nonnull AfkActivityService.AfkActivityTransition transition,
         @Nonnull NexoriAfkContinuationDecisionType type,
         @Nonnull String reasonCode,
@@ -205,16 +219,17 @@ public final class BackendAfkContinuationCheckService {
         NexoriAfkContinuationDecision existing = decisions.get(matchId);
         // CANCEL is sticky: never overwrite CANCEL with anything else
         if (existing != null && existing.decision() == NexoriAfkContinuationDecisionType.CANCEL) {
-            return;
+            return null;
         }
-        decisions.put(matchId, new NexoriAfkContinuationDecision(
+        NexoriAfkContinuationDecision decision = new NexoriAfkContinuationDecision(
             matchId,
             type,
             transition.playerUuid(),
             reasonCode,
             message,
             nowEpochMs
-        ));
+        );
+        decisions.put(matchId, decision);
         if (logger != null && (type == NexoriAfkContinuationDecisionType.CONTINUE || type == NexoriAfkContinuationDecisionType.CANCEL)) {
             logger.atInfo().log(
                 "Nexori AFK continuation decision matchId=" + matchId
@@ -224,6 +239,7 @@ public final class BackendAfkContinuationCheckService {
                     + " reasonCode=" + reasonCode
             );
         }
+        return decision;
     }
 
     @Nonnull

@@ -76,6 +76,7 @@ public class ArenaMatchService {
     private static final Gson GSON = new Gson();
     private static final long ELIMINATED_RETURN_DELAY_MS = 5_000L;
     private static final long WINNER_RETURN_DELAY_MS = 10_000L;
+    private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 5_000L;
     private static final long RETURN_RETRY_DELAY_MS = 5_000L;
     private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
     private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
@@ -477,7 +478,10 @@ public class ArenaMatchService {
             .orElse(match.arenaId());
 
         String outcomeLabel;
-        if (playerUuid.toString().equalsIgnoreCase(match.winnerPlayerUuid())) {
+        ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(playerUuid);
+        if (outcome != null && outcome.outcome() == ArenaPlayerResolutionOutcome.NO_CONTEST) {
+            outcomeLabel = "No Contest";
+        } else if (playerUuid.toString().equalsIgnoreCase(match.winnerPlayerUuid())) {
             outcomeLabel = "Victory";
         } else if (match.isPlayerEliminated(playerUuid)) {
             outcomeLabel = "Eliminated";
@@ -1148,6 +1152,100 @@ public class ArenaMatchService {
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
     }
 
+    /**
+     * Cancels a match after the backend decides an AFK player should stop continuation.
+     */
+    @Nonnull
+    public SubmitMatchResult cancelMatchForBackendAfk(
+        @Nonnull String rawMatchId,
+        @Nullable UUID triggeringPlayerUuid,
+        @Nonnull String rawReasonCode,
+        @Nonnull String rawMessage
+    ) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
+        SubmitMatchResult result;
+        synchronized (this) {
+            result = cancelMatchForBackendAfkLocked(rawMatchId, triggeringPlayerUuid, rawReasonCode, rawMessage, lifecycleDispatches);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+        return result;
+    }
+
+    @Nonnull
+    private SubmitMatchResult cancelMatchForBackendAfkLocked(
+        @Nonnull String rawMatchId,
+        @Nullable UUID triggeringPlayerUuid,
+        @Nonnull String rawReasonCode,
+        @Nonnull String rawMessage,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return SubmitMatchResult.matchMissing(matchId);
+        }
+        if (match.hasSubmittedResult()) {
+            return SubmitMatchResult.alreadySubmitted(match, match.resultPayloadHash(), false);
+        }
+        if (match.hasCompleted()) {
+            return SubmitMatchResult.invalid(match, "Match was already completed.");
+        }
+
+        long now = System.currentTimeMillis();
+        long returnAt = now + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
+        String reasonCode = normalizeOptional(rawReasonCode, "BACKEND_AFK_CANCEL");
+        String playerReason = normalizeOptional(rawMessage, "Match cancelled because a player went AFK.");
+        collectMatchCancellationRequested(match, "BACKEND_AFK_CANCEL", now, lifecycleDispatches);
+        ArenaActiveMatch updated = match;
+        for (UUID playerUuid : buildRequiredResultPlayerUuids(match)) {
+            updated = updated
+                .withPlayerOutcome(playerUuid, ArenaPlayerResolutionOutcome.NO_CONTEST, "NO_CONTEST", playerReason, now)
+                .withPendingReturn(playerUuid, returnAt, now);
+        }
+
+        String reason = "BACKEND_AFK_CANCEL";
+        JsonObject customData = new JsonObject();
+        customData.addProperty("cancelledBy", "nexori");
+        customData.addProperty("cancelReason", reason);
+        customData.addProperty("backendReasonCode", reasonCode);
+        customData.addProperty("backendMessage", playerReason);
+        if (triggeringPlayerUuid != null) {
+            customData.addProperty("triggeringPlayerUuid", triggeringPlayerUuid.toString());
+        }
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("cancelled_by", "nexori");
+        metadata.put("cancel_reason", reason);
+        metadata.put("backend_reason_code", reasonCode);
+
+        MatchResultValidationResult validation = matchResultValidator.validateFinalResult(updated, reason, metadata, customData);
+        if (!validation.valid()) {
+            return SubmitMatchResult.invalid(updated, validation.message());
+        }
+        String payloadHash = hashFinalSubmittedResult(
+            updated,
+            toSubmitMatchPlayerResults(validation.players()),
+            validation.metadata(),
+            validation.reason(),
+            validation.customData()
+        );
+        updated = updated
+            .withLastError("Backend AFK cancellation requested: " + reasonCode, now)
+            .withSubmittedResult(now, now, payloadHash);
+        matchesById.put(updated.matchId(), updated);
+        restoreRuntimeSpectators(updated, SpectatorRuntimeReason.MATCH_CLEANUP);
+        maybeScheduleAdmissionReporting(match, updated, now, "");
+        collectMatchCompletedTransition(match, updated, "MATCH_COMPLETED", now, lifecycleDispatches);
+        return SubmitMatchResult.accepted(
+            updated,
+            toSubmitMatchPlayerResults(validation.players()),
+            validation.metadata(),
+            validation.customData(),
+            validation.reason(),
+            payloadHash,
+            now
+        );
+    }
+
     @Nonnull
     private List<UUID> buildRequiredResultPlayerUuids(@Nonnull ArenaActiveMatch match) {
         if (!match.expectedPlayerUuids().isEmpty()) {
@@ -1589,6 +1687,19 @@ public class ArenaMatchService {
         }
         NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
         lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchCompleted(matchEvent));
+    }
+
+    private void collectMatchCancellationRequested(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (match.hasCompleted()) {
+            return;
+        }
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(match, reason, eventAtEpochMs);
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchCancellationRequested(matchEvent));
     }
 
     private void collectMatchRuntimeClosedTransition(

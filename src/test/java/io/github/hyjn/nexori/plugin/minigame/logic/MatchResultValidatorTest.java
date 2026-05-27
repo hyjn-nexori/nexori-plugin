@@ -308,7 +308,20 @@ final class MatchResultValidatorTest {
 
         MatchResultValidationResult result = validator.validateFinalResult(match, "", Map.of(), new JsonObject());
 
-        assertInvalid(result, "Final match result must include at least one WIN outcome.");
+        assertInvalid(result, "Final match result must include at least one WIN outcome unless all players are NO_CONTEST.");
+    }
+
+    @Test
+    void acceptsFinalResultWhenAllPlayersAreNoContest() {
+        ArenaActiveMatch match = baseMatchWithOutcomes(
+            outcome(PLAYER_ONE, ArenaPlayerResolutionOutcome.NO_CONTEST, "afk cancel"),
+            outcome(PLAYER_TWO, ArenaPlayerResolutionOutcome.NO_CONTEST, "afk cancel")
+        );
+
+        MatchResultValidationResult result = validator.validateFinalResult(match, "BACKEND_AFK_CANCEL", Map.of(), new JsonObject());
+
+        assertTrue(result.valid());
+        assertEquals(List.of(PLAYER_ONE, PLAYER_TWO), result.players().stream().map(MatchResultValidationResult.PlayerResult::playerUuid).toList());
     }
 
     @Test

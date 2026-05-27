@@ -634,11 +634,13 @@ public record ArenaActiveMatch(
         if (outcome == ArenaPlayerResolutionOutcome.WIN) {
             eliminated.remove(playerUuid);
             winner = playerUuid.toString();
-        } else {
+        } else if (outcome != ArenaPlayerResolutionOutcome.NO_CONTEST) {
             eliminated.add(playerUuid);
             if (winner.equalsIgnoreCase(playerUuid.toString())) {
                 winner = "";
             }
+        } else if (winner.equalsIgnoreCase(playerUuid.toString())) {
+            winner = "";
         }
         LinkedHashMap<UUID, ArenaPlayerOutcomeState> outcomes = new LinkedHashMap<>(playerOutcomeByUuid());
         outcomes.put(playerUuid, new ArenaPlayerOutcomeState(playerUuid, outcome, backendOutcome, reason, nowEpochMs));

@@ -32,6 +32,7 @@ public final class NexoriStatusHudService {
     private static final String RETURN_VICTORY_COLOR = "#F7D774";
     private static final String RETURN_ELIMINATED_COLOR = "#FF8B9A";
     private static final String RETURN_GENERIC_COLOR = "#8FC7FF";
+    private static final String RETURN_NO_CONTEST_COLOR = "#FFD36E";
 
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaMatchService arenaMatchService;
@@ -181,6 +182,9 @@ public final class NexoriStatusHudService {
         } else if ("eliminated".equals(normalizedOutcome)) {
             titleText = "ELIMINATED";
             accentColor = RETURN_ELIMINATED_COLOR;
+        } else if ("no contest".equals(normalizedOutcome)) {
+            titleText = "MATCH CANCELLED";
+            accentColor = RETURN_NO_CONTEST_COLOR;
         } else {
             titleText = "MATCH COMPLETE";
             accentColor = RETURN_GENERIC_COLOR;
