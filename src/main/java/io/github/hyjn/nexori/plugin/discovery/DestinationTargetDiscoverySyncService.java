@@ -222,7 +222,7 @@ public final class DestinationTargetDiscoverySyncService {
             return;
         }
         if (!pendingReturn.message().isBlank()) {
-            event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+            playerRef.sendMessage(Message.raw(pendingReturn.message()));
         }
     }
 

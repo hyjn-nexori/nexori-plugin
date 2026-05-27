@@ -19,8 +19,8 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -2206,9 +2206,9 @@ public final class NexoriPortalSections extends NexoriMenuSections {
                                 position.get("z").getAsDouble()
                             );
                             JsonObject rotation = root.has("rotation") ? root.getAsJsonObject("rotation") : null;
-                            Vector3f rot = rotation == null
-                                ? new Vector3f(0.0f, 0.0f, 0.0f)
-                                : new Vector3f(
+                            Rotation3f rot = rotation == null
+                                ? new Rotation3f(0.0f, 0.0f, 0.0f)
+                                : new Rotation3f(
                                     rotation.get("pitch").getAsFloat(),
                                     rotation.get("yaw").getAsFloat(),
                                     rotation.get("roll").getAsFloat()

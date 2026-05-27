@@ -3,7 +3,7 @@ package io.github.hyjn.nexori.plugin.command;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3f;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -54,7 +54,7 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
                 throw new IllegalStateException("Could not read your live position for Nexori recovery return.");
             }
 
-            Vector3f rotation = transformComponent.getRotation();
+            Rotation3f rotation = transformComponent.getRotation();
             HeadRotation headRotation = store.getComponent(ref, HeadRotation.getComponentType());
             if (headRotation != null) {
                 rotation = headRotation.getRotation();

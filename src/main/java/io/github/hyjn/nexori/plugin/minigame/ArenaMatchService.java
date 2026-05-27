@@ -6,7 +6,7 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3f;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPage;
 import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBinding;
@@ -1778,7 +1778,7 @@ public class ArenaMatchService {
             return Optional.empty();
         }
 
-        Vector3f rotation = transformComponent.getRotation();
+        Rotation3f rotation = transformComponent.getRotation();
         HeadRotation headRotation = store.getComponent(playerEntityRef, HeadRotation.getComponentType());
         if (headRotation != null) {
             rotation = headRotation.getRotation();
@@ -1806,7 +1806,7 @@ public class ArenaMatchService {
         World currentWorld = player.getWorld();
 
         long nowEpochMs = System.currentTimeMillis();
-        double distanceSquared = transformComponent.getPosition().distanceSquaredTo(pending.transform().getPosition());
+        double distanceSquared = transformComponent.getPosition().distanceSquared(pending.transform().getPosition());
         boolean withinTolerance = distanceSquared <= INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED;
         boolean teleportPending = store.getComponent(ref, Teleport.getComponentType()) != null;
         String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());

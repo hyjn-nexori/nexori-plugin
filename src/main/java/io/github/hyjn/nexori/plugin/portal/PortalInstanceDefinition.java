@@ -1,6 +1,6 @@
 package io.github.hyjn.nexori.plugin.portal;
 
-import com.hypixel.hytale.math.vector.Vector3i;
+import org.joml.Vector3i;
 
 import javax.annotation.Nonnull;
 import java.util.Locale;

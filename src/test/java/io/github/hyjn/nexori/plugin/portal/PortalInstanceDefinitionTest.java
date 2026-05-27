@@ -190,9 +190,9 @@ final class PortalInstanceDefinitionTest {
     void blockPositionReturnsCoordsAsVector() {
         PortalInstanceDefinition portal = portal("portal-1", "world", 10, 64, 5);
         assertNotNull(portal.blockPosition());
-        assertEquals(10, portal.blockPosition().getX());
-        assertEquals(64, portal.blockPosition().getY());
-        assertEquals(5, portal.blockPosition().getZ());
+        assertEquals(10, portal.blockPosition().x);
+        assertEquals(64, portal.blockPosition().y);
+        assertEquals(5, portal.blockPosition().z);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

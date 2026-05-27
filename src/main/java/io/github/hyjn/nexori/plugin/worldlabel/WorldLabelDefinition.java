@@ -1,6 +1,6 @@
 package io.github.hyjn.nexori.plugin.worldlabel;
 
-import com.hypixel.hytale.math.vector.Vector3d;
+import org.joml.Vector3d;
 
 import javax.annotation.Nonnull;
 

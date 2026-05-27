@@ -6,7 +6,7 @@ import com.hypixel.hytale.codec.codecs.array.ArrayCodec;
 import com.hypixel.hytale.codec.codecs.simple.StringCodec;
 import com.hypixel.hytale.math.util.HashUtil;
 import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Vector3d;
+import org.joml.Vector3d;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.spawn.ISpawnProvider;
 
@@ -111,7 +111,7 @@ public final class NexoriAssignedSpawnProvider implements ISpawnProvider {
     public boolean isWithinSpawnDistance(@Nonnull Vector3d position, double distance) {
         double maxDistanceSquared = distance * distance;
         for (Transform spawnPoint : spawnPoints) {
-            if (spawnPoint != null && position.distanceSquaredTo(spawnPoint.getPosition()) < maxDistanceSquared) {
+            if (spawnPoint != null && position.distanceSquared(spawnPoint.getPosition()) < maxDistanceSquared) {
                 return true;
             }
         }

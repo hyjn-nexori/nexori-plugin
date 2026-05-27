@@ -309,11 +309,12 @@ public final class DiagnosticsCollectService {
             return;
         }
 
-        finalizeReturn(event, pendingReturn.originSnapshot(), pendingReturn.message(), pendingReturn.reopenUi());
+        finalizeReturn(event, playerRef, pendingReturn.originSnapshot(), pendingReturn.message(), pendingReturn.reopenUi());
     }
 
     private void finalizeReturn(
         @Nonnull PlayerReadyEvent event,
+        @Nonnull PlayerRef playerRef,
         @Nonnull DiagnosticsCollectOriginSnapshot originSnapshot,
         @Nonnull String message,
         boolean reopenUi
@@ -325,9 +326,9 @@ public final class DiagnosticsCollectService {
         Ref<EntityStore> ref = event.getPlayerRef();
         Store<EntityStore> store = ref.getStore();
         store.addComponent(ref, Teleport.getComponentType(), teleport);
-        event.getPlayer().sendMessage(Message.raw(message));
+        playerRef.sendMessage(Message.raw(message));
         if (reopenUi) {
-            event.getPlayer().sendMessage(Message.raw("Open the Nexori diagnostics page again to review the latest collect status."));
+            playerRef.sendMessage(Message.raw("Open the Nexori diagnostics page again to review the latest collect status."));
         }
     }
 

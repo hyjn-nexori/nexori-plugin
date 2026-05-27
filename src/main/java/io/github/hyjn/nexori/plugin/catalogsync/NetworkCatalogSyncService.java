@@ -147,7 +147,7 @@ public final class NetworkCatalogSyncService {
         if (pendingReturn == null) {
             String localFailureMessage = pendingLocalFailureMessages.remove(playerRef.getUuid());
             if (localFailureMessage != null && !localFailureMessage.isBlank()) {
-                event.getPlayer().sendMessage(Message.raw(localFailureMessage));
+                playerRef.sendMessage(Message.raw(localFailureMessage));
             }
             return;
         }
@@ -171,7 +171,7 @@ public final class NetworkCatalogSyncService {
             return;
         }
         if (!pendingReturn.message().isBlank()) {
-            event.getPlayer().sendMessage(Message.raw(pendingReturn.message()));
+            playerRef.sendMessage(Message.raw(pendingReturn.message()));
         }
     }
 
