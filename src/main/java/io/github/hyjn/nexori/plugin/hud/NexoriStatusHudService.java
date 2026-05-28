@@ -198,6 +198,12 @@ public final class NexoriStatusHudService {
                     removeImmediately(playerUuid);
                     return;
                 }
+                // Return HUD skips exit animation — players are teleported to lobby
+                // before it would finish, so there is no point playing it.
+                if (activeHudKinds.get(playerUuid) == HudRenderKind.RETURN) {
+                    removeImmediately(playerUuid);
+                    return;
+                }
                 activeAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.EXITING, nowEpochMs));
             }
 
@@ -374,7 +380,7 @@ public final class NexoriStatusHudService {
             titleText = "ELIMINATED";
             accentColor = RETURN_ELIMINATED_COLOR;
         } else if ("no contest".equals(normalizedOutcome)) {
-            titleText = "MATCH CANCELLED";
+            titleText = "MATCH CANCELLED DO TO AFK PLAYER";
             accentColor = RETURN_NO_CONTEST_COLOR;
         } else {
             titleText = "MATCH COMPLETE";
@@ -537,97 +543,111 @@ public final class NexoriStatusHudService {
     }
 
     // -------------------------------------------------------------------------
-    // Return HUD — legacy layout
+    // Return HUD — card design with entry animation only
     //
-    // frame: accepted for API consistency; exit animation not yet applied here.
+    // Left section (235px): Nexori logo, same as queue HUD.
+    // Right section (centered): "Returning to Origin Server" / outcome label /
+    //                           "Lobby in Xs" countdown — all centered.
+    //
+    // ENTERING (ease-out-quad):
+    //   alpha = easedProgress          (0→1, fades in)
+    //   slideOffset = 30*(1-eased)     (card starts 30px below, rises to final)
+    //
+    // No EXITING animation — players are teleported away before exit would
+    // be visible, so removeImmediately() is called from the refresh() exit path.
     // -------------------------------------------------------------------------
 
     @Nonnull
     private HudBuilder buildReturnHud(
         @Nonnull PlayerRef playerRef,
         @Nonnull HudRenderState state,
-        @Nonnull HudAnimationFrame frame   // reserved for future return HUD animation
+        @Nonnull HudAnimationFrame frame
     ) {
         HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
 
-        PanelBuilder root = PanelBuilder.panel()
-            .withId("nexori-status-root")
-            .withAnchor(new HyUIAnchor()
-                .setLeft(0)
-                .setRight(0)
-                .setTop(200)
-                .setHeight(250))
+        float p = frame.easedProgress();
+        float alpha;
+        int slideOffset;
+
+        if (frame.phase() == HudAnimationPhase.ENTERING) {
+            alpha = p;
+            slideOffset = Math.round(30f * (1f - p));
+        } else {
+            alpha = Math.max(0f, 1f - p);
+            slideOffset = Math.round(30f * p);
+        }
+
+        // ── Main card ─────────────────────────────────────────────────────────
+        PanelBuilder card = PanelBuilder.panel()
+            .withId("nexori-return-card")
+            .withAnchor(new HyUIAnchor().setLeft(475).setTop(114 + slideOffset).setWidth(970).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_CARD_BG, alpha)))
+            .withOutlineColor(lerpAlpha(QUEUE_CARD_OUTLINE, alpha))
+            .withOutlineSize(2f)
             .withHitTestVisible(false);
 
-        LabelBuilder title = LabelBuilder.label()
-            .withId("nexori-status-title")
-            .withText(state.titleText())
-            .withAnchor(new HyUIAnchor()
-                .setLeft(0)
-                .setRight(0)
-                .setTop(0)
-                .setHeight(44))
-            .withHitTestVisible(false)
-            .withStyle(new HyUIStyle()
-                .setFontSize(36)
-                .setRenderBold(true)
-                .setTextColor(state.accentColor())
-                .setOutlineColor("#000000")
-                .setAlignment(Alignment.Center));
+        // ── Left logo section (same as queue HUD) ────────────────────────────
+        PanelBuilder logoSection = PanelBuilder.panel()
+            .withId("nexori-return-logo-section")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_LEFT_BG, alpha)))
+            .withOutlineColor(lerpAlpha(QUEUE_LEFT_OUTLINE, alpha))
+            .withOutlineSize(1f)
+            .withHitTestVisible(false);
 
-        LabelBuilder main = LabelBuilder.label()
-            .withId("nexori-status-main")
+        ImageBuilder logo = ImageBuilder.image()
+            .withId("nexori-return-logo")
+            .withImage("HUD/Nexori_logo_fondo_transparente.png")
+            .withAnchor(new HyUIAnchor().setLeft(37).setTop(22).setWidth(160).setHeight(160))
+            .withHitTestVisible(false);
+
+        // ── "Returning to Origin Server" — centered in the right section ──────
+        LabelBuilder mainLabel = LabelBuilder.label()
+            .withId("nexori-return-main")
             .withText(state.mainText())
-            .withAnchor(new HyUIAnchor()
-                .setLeft(0)
-                .setRight(0)
-                .setTop(54)
-                .setHeight(44))
+            .withAnchor(new HyUIAnchor().setLeft(240).setRight(0).setTop(28).setHeight(46))
             .withHitTestVisible(false)
             .withStyle(new HyUIStyle()
-                .setFontSize(42)
+                .setFontSize(28)
                 .setRenderBold(true)
                 .setTextColor(MAIN_TEXT_COLOR)
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Center));
 
-        LabelBuilder detail = LabelBuilder.label()
-            .withId("nexori-status-detail")
-            .withText(state.detailText())
-            .withAnchor(new HyUIAnchor()
-                .setLeft(0)
-                .setRight(0)
-                .setTop(110)
-                .setHeight(34))
+        // ── Outcome label (MATCH CANCELLED / VICTORY / ELIMINATED / MATCH COMPLETE) ──
+        LabelBuilder outcomeLabel = LabelBuilder.label()
+            .withId("nexori-return-outcome")
+            .withText(state.titleText())
+            .withAnchor(new HyUIAnchor().setLeft(240).setRight(0).setTop(84).setHeight(40))
             .withHitTestVisible(false)
             .withStyle(new HyUIStyle()
-                .setFontSize(26)
-                .setTextColor(DETAIL_TEXT_COLOR)
-                .setOutlineColor("#000000")
-                .setAlignment(Alignment.Center));
-
-        LabelBuilder status = LabelBuilder.label()
-            .withId("nexori-status-countdown")
-            .withText(state.statusText())
-            .withAnchor(new HyUIAnchor()
-                .setLeft(0)
-                .setRight(0)
-                .setTop(156)
-                .setHeight(38))
-            .withHitTestVisible(false)
-            .withStyle(new HyUIStyle()
-                .setFontSize(30)
+                .setFontSize(24)
                 .setRenderBold(true)
                 .setTextColor(state.accentColor())
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Center));
 
-        root.addChild(title);
-        root.addChild(main);
-        root.addChild(detail);
-        root.addChild(status);
+        // ── "Lobby in Xs" countdown ───────────────────────────────────────────
+        LabelBuilder countdownLabel = LabelBuilder.label()
+            .withId("nexori-return-countdown")
+            .withText(state.statusText())
+            .withAnchor(new HyUIAnchor().setLeft(240).setRight(0).setTop(138).setHeight(42))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(26)
+                .setRenderBold(true)
+                .setTextColor(state.accentColor())
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
 
-        hud.addElement(root);
+        // ── Assemble ──────────────────────────────────────────────────────────
+        card.addChild(logoSection);
+        card.addChild(logo);
+        card.addChild(mainLabel);
+        card.addChild(outcomeLabel);
+        card.addChild(countdownLabel);
+
+        hud.addElement(card);
         return hud;
     }
 

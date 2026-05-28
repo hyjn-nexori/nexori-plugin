@@ -76,7 +76,7 @@ public class ArenaMatchService {
     private static final Gson GSON = new Gson();
     private static final long ELIMINATED_RETURN_DELAY_MS = 5_000L;
     private static final long WINNER_RETURN_DELAY_MS = 10_000L;
-    private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 5_000L;
+    private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 10_000L;
     private static final long RETURN_RETRY_DELAY_MS = 5_000L;
     private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
     private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
