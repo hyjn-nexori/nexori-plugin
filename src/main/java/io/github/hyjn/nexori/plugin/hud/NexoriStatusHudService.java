@@ -27,45 +27,66 @@ import java.util.concurrent.ConcurrentMap;
 public final class NexoriStatusHudService {
 
     // -------------------------------------------------------------------------
-    // HUD kind — used to force remove+recreate when switching between queue
-    // and return layouts, since they use different element ID trees.
+    // HUD kind — QUEUE and RETURN use different element ID trees, so we force
+    // remove+recreate whenever the kind changes.
     // -------------------------------------------------------------------------
     private enum HudRenderKind { QUEUE, RETURN }
 
     // -------------------------------------------------------------------------
-    // Intro animation — short entry animation played once when a HUD is first
-    // shown (or re-shown after kind change).  After INTRO_DURATION_MS the
-    // animation is marked complete and normal dedup resumes.
+    // Animation phase
     // -------------------------------------------------------------------------
-    private static final long INTRO_DURATION_MS = 600L;
+    private enum HudAnimationPhase { ENTERING, EXITING }
 
-    /**
-     * Snapshot of the intro animation at a single point in time.
-     * {@code easedProgress} is 0.0 at the first frame and 1.0 when the
-     * animation is complete.  {@code complete} is true once progress reaches 1.
-     */
-    private record HudIntroFrame(float easedProgress, boolean complete) {
+    // -------------------------------------------------------------------------
+    // Per-player animation state — stores which phase is active and when it started.
+    // -------------------------------------------------------------------------
+    private record HudAnimationState(HudAnimationPhase phase, long startedAtEpochMs) {}
 
-        /** Build a frame from raw (linear) progress in [0, 1]. */
-        static HudIntroFrame compute(long startedAtEpochMs, long nowEpochMs) {
-            float raw = (float) (nowEpochMs - startedAtEpochMs) / INTRO_DURATION_MS;
+    // -------------------------------------------------------------------------
+    // Animation frame — snapshot for one render call during an animation.
+    //
+    // easedProgress is always in [0, 1]:
+    //   ENTERING:  0 = start of entry  →  1 = fully visible, animation done.
+    //   EXITING:   0 = start of exit   →  1 = fully gone, ready to remove.
+    //
+    // Easing:
+    //   ENTERING uses ease-out-quad (fast rise, gentle settle).
+    //   EXITING  uses ease-in-quad  (gentle start, fast disappear).
+    // -------------------------------------------------------------------------
+    private record HudAnimationFrame(HudAnimationPhase phase, float easedProgress, boolean complete) {
+
+        static HudAnimationFrame compute(@Nonnull HudAnimationState state, long nowEpochMs) {
+            long duration = state.phase() == HudAnimationPhase.ENTERING
+                ? ENTER_DURATION_MS
+                : EXIT_DURATION_MS;
+            float raw = (float) (nowEpochMs - state.startedAtEpochMs()) / duration;
             float clamped = Math.max(0f, Math.min(1f, raw));
-            return new HudIntroFrame(easeOutQuad(clamped), clamped >= 1f);
+            float eased = state.phase() == HudAnimationPhase.ENTERING
+                ? easeOutQuad(clamped)
+                : easeInQuad(clamped);
+            return new HudAnimationFrame(state.phase(), eased, clamped >= 1f);
         }
 
-        /** A fully-completed frame — used when no animation is tracked. */
-        static HudIntroFrame completed() {
-            return new HudIntroFrame(1f, true);
+        /**
+         * Steady-state frame — no animation active, HUD is fully visible.
+         * Phase is ENTERING so builder logic reads alpha=1, slideOffset=0.
+         */
+        static HudAnimationFrame steady() {
+            return new HudAnimationFrame(HudAnimationPhase.ENTERING, 1f, true);
         }
 
-        /** Quadratic ease-out: fast start, gentle finish. */
-        private static float easeOutQuad(float t) {
-            return 1f - (1f - t) * (1f - t);
-        }
+        private static float easeOutQuad(float t) { return 1f - (1f - t) * (1f - t); }
+        private static float easeInQuad(float t)  { return t * t; }
     }
 
     // -------------------------------------------------------------------------
-    // Queue card colors  (format: #RRGGBBAA)
+    // Animation durations
+    // -------------------------------------------------------------------------
+    private static final long ENTER_DURATION_MS = 600L;
+    private static final long EXIT_DURATION_MS  = 375L;
+
+    // -------------------------------------------------------------------------
+    // Queue card colors  (#RRGGBBAA — lerpAlpha interpolates the last two digits)
     // -------------------------------------------------------------------------
     private static final String QUEUE_CARD_BG         = "#051218BE";
     private static final String QUEUE_CARD_OUTLINE     = "#5FDEFFD2";
@@ -96,12 +117,15 @@ public final class NexoriStatusHudService {
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaMatchService arenaMatchService;
     private final HytaleLogger logger;
-    private final ConcurrentMap<UUID, HyUIHud>        activeHuds      = new ConcurrentHashMap<>();
-    private final ConcurrentMap<UUID, HudRenderState> renderedStates  = new ConcurrentHashMap<>();
-    /** Which kind of HUD is currently shown — used to detect kind changes. */
-    private final ConcurrentMap<UUID, HudRenderKind>  activeHudKinds  = new ConcurrentHashMap<>();
-    /** Epoch-ms when the active HUD's intro animation started. Absent when no animation is tracked. */
-    private final ConcurrentMap<UUID, Long>           introStartedAt  = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, HyUIHud>           activeHuds       = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, HudRenderState>    renderedStates   = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, HudRenderKind>     activeHudKinds   = new ConcurrentHashMap<>();
+    /**
+     * Active animation per player.  Absent when the HUD is in its steady
+     * (fully visible, no animation) state.  Kept alive during EXITING so we
+     * can drive the exit frames before removing the HUD.
+     */
+    private final ConcurrentMap<UUID, HudAnimationState> activeAnimations = new ConcurrentHashMap<>();
 
     public NexoriStatusHudService(
         @Nonnull QueueCoordinatorService queueCoordinatorService,
@@ -133,25 +157,17 @@ public final class NexoriStatusHudService {
         refresh(playerRef, System.currentTimeMillis());
     }
 
+    /**
+     * Removes the HUD immediately with no exit animation.
+     * Use for cleanup, error handling, and player unload — not for normal
+     * disappearance, which goes through {@link #refresh} and plays the exit animation.
+     */
     public void remove(@Nonnull PlayerRef playerRef) {
         UUID playerUuid = playerRef.getUuid();
         if (playerUuid == null) {
             return;
         }
-
-        renderedStates.remove(playerUuid);
-        activeHudKinds.remove(playerUuid);
-        introStartedAt.remove(playerUuid);   // clear animation state so next appearance replays intro
-        HyUIHud hud = activeHuds.remove(playerUuid);
-        if (hud == null) {
-            return;
-        }
-
-        try {
-            hud.remove();
-        } catch (Exception exception) {
-            logger.atWarning().withCause(exception).log("Failed to remove Nexori status HUD for " + playerUuid + ".");
-        }
+        removeImmediately(playerUuid);
     }
 
     // -------------------------------------------------------------------------
@@ -165,43 +181,76 @@ public final class NexoriStatusHudService {
         }
 
         Optional<HudRenderState> resolved = resolveState(playerUuid, nowEpochMs);
+
+        // ── No active queue/return state → drive or start exit animation ──────
         if (resolved.isEmpty()) {
-            remove(playerRef);
+            HyUIHud existing = activeHuds.get(playerUuid);
+            if (existing == null) {
+                return;  // nothing on screen, nothing to do
+            }
+
+            HudAnimationState currentAnim = activeAnimations.get(playerUuid);
+            if (currentAnim == null || currentAnim.phase() != HudAnimationPhase.EXITING) {
+                // Begin exit animation.  We need the last visible state so we can
+                // keep rendering the card during the fade-out.
+                if (renderedStates.get(playerUuid) == null) {
+                    // No state to animate — remove immediately.
+                    removeImmediately(playerUuid);
+                    return;
+                }
+                activeAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.EXITING, nowEpochMs));
+            }
+
+            HudAnimationFrame frame = resolveFrame(playerUuid, nowEpochMs);
+            if (frame.complete()) {
+                removeImmediately(playerUuid);
+                return;
+            }
+
+            // Render the exit frame using the last known state (renderedStates is
+            // NOT cleared during EXITING — we need it to build the HUD).
+            HudRenderState lastState = renderedStates.get(playerUuid);
+            if (lastState == null) {
+                removeImmediately(playerUuid);
+                return;
+            }
+
+            HudBuilder builder = buildHud(playerRef, lastState, frame);
+            try {
+                existing.update(builder);
+            } catch (Exception exception) {
+                logger.atWarning().withCause(exception).log("Failed to update Nexori status HUD exit for " + playerUuid + ".");
+                removeImmediately(playerUuid);
+            }
             return;
         }
 
+        // ── State is present → enter or update ───────────────────────────────
         HudRenderState nextState = resolved.get();
         HudRenderState previousState = renderedStates.get(playerUuid);
 
         HyUIHud existing = activeHuds.get(playerUuid);
         HudRenderKind existingKind = activeHudKinds.get(playerUuid);
 
-        // QUEUE and RETURN have different element trees — force remove+recreate on kind change.
         boolean kindChanged = existing != null && existingKind != null && existingKind != nextState.kind();
         boolean isNewHud = existing == null || kindChanged;
 
-        // IMPORTANT: register the animation start time BEFORE resolving the intro frame.
-        // If we're about to create a new HUD, the first frame must have p=0 (fully at
-        // the start position). If we set introStartedAt after show(), the first call to
-        // resolveIntroFrame() returns completed() → p=1 → the card flashes at its final
-        // position for one frame, then jumps back to the start of the slide.
         if (isNewHud) {
-            introStartedAt.put(playerUuid, nowEpochMs);
+            // Register ENTERING animation BEFORE resolveFrame() so the very first
+            // frame is built at p=0 (card invisible, 30 px below final position).
+            // If we registered after show(), resolveFrame() would see no animation
+            // and return steady() → p=1 → one-frame flash at the final position.
+            activeAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.ENTERING, nowEpochMs));
         }
 
-        HudIntroFrame introFrame = resolveIntroFrame(playerUuid, nowEpochMs);
+        HudAnimationFrame frame = resolveFrame(playerUuid, nowEpochMs);
 
-        // Skip update only when:
-        //   (a) the logical state is unchanged  AND
-        //   (b) the intro animation has already finished.
-        // During the animation window we must keep sending updates even if the
-        // queue state itself hasn't changed, because every tick the anchors and
-        // alpha values are different.
-        if (introFrame.complete() && nextState.equals(previousState)) {
+        // Skip only when animation is done AND state hasn't changed.
+        if (frame.complete() && nextState.equals(previousState)) {
             return;
         }
 
-        HudBuilder builder = buildHud(playerRef, nextState, introFrame);
+        HudBuilder builder = buildHud(playerRef, nextState, frame);
 
         try {
             if (isNewHud) {
@@ -215,24 +264,47 @@ public final class NexoriStatusHudService {
                 existing.update(builder);
             }
             renderedStates.put(playerUuid, nextState);
+
+            // Once the entry animation finishes, remove the animation record so
+            // deduplication works normally and we stop re-rendering every tick.
+            if (frame.complete()) {
+                activeAnimations.remove(playerUuid);
+            }
         } catch (Exception exception) {
             logger.atWarning().withCause(exception).log("Failed to update Nexori status HUD for " + playerUuid + ".");
         }
     }
 
     // -------------------------------------------------------------------------
-    // Intro animation resolution
+    // Immediate removal — clears all maps and calls hud.remove()
+    // -------------------------------------------------------------------------
+
+    private void removeImmediately(@Nonnull UUID playerUuid) {
+        renderedStates.remove(playerUuid);
+        activeHudKinds.remove(playerUuid);
+        activeAnimations.remove(playerUuid);
+        HyUIHud hud = activeHuds.remove(playerUuid);
+        if (hud == null) {
+            return;
+        }
+        try {
+            hud.remove();
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log("Failed to remove Nexori status HUD for " + playerUuid + ".");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Animation frame resolution
     // -------------------------------------------------------------------------
 
     @Nonnull
-    private HudIntroFrame resolveIntroFrame(@Nonnull UUID playerUuid, long nowEpochMs) {
-        Long startedAt = introStartedAt.get(playerUuid);
-        if (startedAt == null) {
-            // No animation tracked for this player — treat as fully complete so
-            // we don't force unnecessary re-renders.
-            return HudIntroFrame.completed();
+    private HudAnimationFrame resolveFrame(@Nonnull UUID playerUuid, long nowEpochMs) {
+        HudAnimationState state = activeAnimations.get(playerUuid);
+        if (state == null) {
+            return HudAnimationFrame.steady();
         }
-        return HudIntroFrame.compute(startedAt, nowEpochMs);
+        return HudAnimationFrame.compute(state, nowEpochMs);
     }
 
     // -------------------------------------------------------------------------
@@ -280,8 +352,8 @@ public final class NexoriStatusHudService {
 
         return new HudRenderState(
             HudRenderKind.QUEUE,
-            "",                          // titleText — not shown in queue HUD
-            queueState.displayName(),    // mainText  — game display name (queue title)
+            "",
+            queueState.displayName(),
             queueState.queuedPlayers() + " / " + queueState.maxPlayers() + " players",
             statusText,
             accentColor
@@ -331,48 +403,57 @@ public final class NexoriStatusHudService {
     private HudBuilder buildHud(
         @Nonnull PlayerRef playerRef,
         @Nonnull HudRenderState state,
-        @Nonnull HudIntroFrame intro
+        @Nonnull HudAnimationFrame frame
     ) {
         return state.kind() == HudRenderKind.QUEUE
-            ? buildQueueHud(playerRef, state, intro)
-            : buildReturnHud(playerRef, state, intro);
+            ? buildQueueHud(playerRef, state, frame)
+            : buildReturnHud(playerRef, state, frame);
     }
 
     // -------------------------------------------------------------------------
-    // Queue HUD — card design with intro animation
+    // Queue HUD — card design with enter/exit animation
     //
-    // All coordinates are relative to the card panel (top=114, left=475 on a
-    // 1920×1080 screen) unless noted.
+    // Coordinates are relative to the card panel (top=114, left=475 on 1920×1080)
+    // unless noted.
     //
-    // Intro animation (first 600 ms):
-    //   • Card slides up 30 px — all children follow automatically.
-    //   • Card background + outline alpha fade from 0 → full target value.
-    //   • Logo section background + outline alpha fade in the same way.
-    //   • Text labels and images appear at full opacity from the first frame
-    //     (they look natural as part of the sliding card).
+    // ENTERING (ease-out-quad):
+    //   alpha = easedProgress          (0→1, fades in)
+    //   slideOffset = 30*(1-eased)     (card starts 30px below, rises to final)
+    //
+    // EXITING (ease-in-quad):
+    //   alpha = 1 - easedProgress      (1→0, fades out)
+    //   slideOffset = 30*eased         (card drifts 30px below from final)
+    //
+    // All card children inherit the slide because their anchors are relative
+    // to the card panel.
     // -------------------------------------------------------------------------
 
     @Nonnull
     private HudBuilder buildQueueHud(
         @Nonnull PlayerRef playerRef,
         @Nonnull HudRenderState state,
-        @Nonnull HudIntroFrame intro
+        @Nonnull HudAnimationFrame frame
     ) {
         HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
 
-        float p = intro.easedProgress();
+        float p = frame.easedProgress();
+        float alpha;
+        int slideOffset;
 
-        // Vertical slide: 30 px offset at t=0, 0 px offset at t=1.
-        // All card children inherit this slide because they are positioned
-        // relative to the card.
-        int slideOffset = Math.round(30f * (1f - p));
+        if (frame.phase() == HudAnimationPhase.ENTERING) {
+            alpha = p;
+            slideOffset = Math.round(30f * (1f - p));
+        } else {
+            alpha = Math.max(0f, 1f - p);
+            slideOffset = Math.round(30f * p);
+        }
 
         // ── Main card ─────────────────────────────────────────────────────────
         PanelBuilder card = PanelBuilder.panel()
             .withId("nexori-queue-card")
             .withAnchor(new HyUIAnchor().setLeft(475).setTop(114 + slideOffset).setWidth(970).setHeight(205))
-            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_CARD_BG, p)))
-            .withOutlineColor(lerpAlpha(QUEUE_CARD_OUTLINE, p))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_CARD_BG, alpha)))
+            .withOutlineColor(lerpAlpha(QUEUE_CARD_OUTLINE, alpha))
             .withOutlineSize(2f)
             .withHitTestVisible(false);
 
@@ -380,17 +461,14 @@ public final class NexoriStatusHudService {
         PanelBuilder logoSection = PanelBuilder.panel()
             .withId("nexori-queue-logo-section")
             .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
-            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_LEFT_BG, p)))
-            .withOutlineColor(lerpAlpha(QUEUE_LEFT_OUTLINE, p))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_LEFT_BG, alpha)))
+            .withOutlineColor(lerpAlpha(QUEUE_LEFT_OUTLINE, alpha))
             .withOutlineSize(1f)
             .withHitTestVisible(false);
 
         // ── Nexori logo image ─────────────────────────────────────────────────
-        // Centered within the 235×205 left section:
-        //   horizontal: (235 - 160) / 2 = 37  → left=37
-        //   vertical:   (205 - 160) / 2 = 22  → top=22
-        // ImageBuilder prepends "UI/Custom/" automatically, so
-        // "HUD/Nexori_logo_fondo_transparente.png" resolves to
+        // Centered in the 235×205 left section: left=(235-160)/2=37, top=(205-160)/2=22.
+        // ImageBuilder prepends "UI/Custom/" so the path resolves to
         // "UI/Custom/HUD/Nexori_logo_fondo_transparente.png" on the client.
         ImageBuilder logo = ImageBuilder.image()
             .withId("nexori-queue-logo")
@@ -399,8 +477,6 @@ public final class NexoriStatusHudService {
             .withHitTestVisible(false);
 
         // ── Queue title (game display name) ───────────────────────────────────
-        // Width 620 px (left=320 → x=940) prevents the framework from
-        // adding ellipsis for typical game display names.
         LabelBuilder title = LabelBuilder.label()
             .withId("nexori-queue-title")
             .withText(state.mainText())
@@ -463,15 +539,14 @@ public final class NexoriStatusHudService {
     // -------------------------------------------------------------------------
     // Return HUD — legacy layout
     //
-    // intro: accepted for API consistency with buildQueueHud; entry animation
-    // for the return HUD is not yet implemented and can be added here later.
+    // frame: accepted for API consistency; exit animation not yet applied here.
     // -------------------------------------------------------------------------
 
     @Nonnull
     private HudBuilder buildReturnHud(
         @Nonnull PlayerRef playerRef,
         @Nonnull HudRenderState state,
-        @Nonnull HudIntroFrame intro   // reserved — not yet applied
+        @Nonnull HudAnimationFrame frame   // reserved for future return HUD animation
     ) {
         HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
 
@@ -561,13 +636,9 @@ public final class NexoriStatusHudService {
     // -------------------------------------------------------------------------
 
     /**
-     * Interpolates the alpha channel of a {@code #RRGGBBAA} hex color string.
-     * At {@code t=0} the color is fully transparent; at {@code t=1} it equals
-     * the original color exactly.
-     *
-     * @param hexColor a 9-character string in {@code #RRGGBBAA} format
-     * @param t        progress in [0, 1]
-     * @return interpolated color string in {@code #RRGGBBAA} format
+     * Interpolates the alpha channel of a {@code #RRGGBBAA} hex color.
+     * At {@code t=0} the result is fully transparent; at {@code t=1} it
+     * equals the original color.
      */
     @Nonnull
     private static String lerpAlpha(@Nonnull String hexColor, float t) {
@@ -588,6 +659,5 @@ public final class NexoriStatusHudService {
         String detailText,
         String statusText,
         String accentColor
-    ) {
-    }
+    ) {}
 }
