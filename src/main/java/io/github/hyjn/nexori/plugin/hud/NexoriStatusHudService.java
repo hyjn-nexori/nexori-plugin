@@ -336,6 +336,7 @@ public final class NexoriStatusHudService {
     private HudRenderState buildQueueState(@Nonnull QueueCoordinatorService.QueueHudState queueState, long nowEpochMs) {
         String accentColor;
         String statusText;
+        long scanMs = -1L;
 
         switch (queueState.phase()) {
             case COUNTDOWN -> {
@@ -352,6 +353,10 @@ public final class NexoriStatusHudService {
                 statusText = needed > 0
                     ? "Need " + needed + " more player" + (needed == 1 ? "" : "s")
                     : "Waiting for players";
+                // Raw ms within a 9000 ms cycle. Changes every tick → dedup never
+                // skips this state → glow updates at full tick rate (~50 Hz),
+                // same mechanism that makes the entry slide animation look smooth.
+                scanMs = nowEpochMs % 9000L;
             }
             default -> throw new IllegalStateException("Unexpected queue phase: " + queueState.phase());
         }
@@ -362,7 +367,8 @@ public final class NexoriStatusHudService {
             queueState.displayName(),
             queueState.queuedPlayers() + " / " + queueState.maxPlayers() + " players",
             statusText,
-            accentColor
+            accentColor,
+            scanMs
         );
     }
 
@@ -397,7 +403,8 @@ public final class NexoriStatusHudService {
             "Returning to Origin Server",
             detailText,
             "Lobby in " + secondsRemaining(returnHudState.returnAtEpochMs(), nowEpochMs) + "s",
-            accentColor
+            accentColor,
+            -1L
         );
     }
 
@@ -530,10 +537,33 @@ public final class NexoriStatusHudService {
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Start));
 
+        // ── Scan indicator (WAITING only) ─────────────────────────────────────
+        // Both panels are always present to keep the element tree stable across
+        // WAITING ↔ COUNTDOWN ↔ READY transitions (all reuse the same HUD via
+        // update()). Colors go transparent when not in WAITING.
+        boolean showScan = state.scanMs() >= 0L;
+        int scanGlowLeft = 320 + (showScan ? (int)(state.scanMs() * 540L / 9000L) : 0);
+
+        // Thin base line — full track width, very faint.
+        PanelBuilder scanBase = PanelBuilder.panel()
+            .withId("nexori-queue-scan-base")
+            .withAnchor(new HyUIAnchor().setLeft(320).setTop(105).setWidth(620).setHeight(2))
+            .withBackground(new HyUIPatchStyle().setColor(showScan ? "#5FDEFF25" : "#5FDEFF00"))
+            .withHitTestVisible(false);
+
+        // Bright glow segment — travels left to right.
+        PanelBuilder scanGlow = PanelBuilder.panel()
+            .withId("nexori-queue-scan-glow")
+            .withAnchor(new HyUIAnchor().setLeft(scanGlowLeft).setTop(104).setWidth(80).setHeight(4))
+            .withBackground(new HyUIPatchStyle().setColor(showScan ? "#5AF0FFBB" : "#5AF0FF00"))
+            .withHitTestVisible(false);
+
         // ── Assemble ──────────────────────────────────────────────────────────
         card.addChild(logoSection);
         card.addChild(logo);
         card.addChild(title);
+        card.addChild(scanBase);
+        card.addChild(scanGlow);
         card.addChild(playerIcon);
         card.addChild(playerCount);
         card.addChild(queueDetail);
@@ -678,6 +708,7 @@ public final class NexoriStatusHudService {
         String mainText,
         String detailText,
         String statusText,
-        String accentColor
+        String accentColor,
+        long scanMs   // nowEpochMs % 9000 during WAITING (changes every tick → no dedup); -1 otherwise
     ) {}
 }
