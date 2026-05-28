@@ -4,7 +4,9 @@ import au.ellie.hyui.builders.Alignment;
 import au.ellie.hyui.builders.HudBuilder;
 import au.ellie.hyui.builders.HyUIAnchor;
 import au.ellie.hyui.builders.HyUIHud;
+import au.ellie.hyui.builders.HyUIPatchStyle;
 import au.ellie.hyui.builders.HyUIStyle;
+import au.ellie.hyui.builders.ImageBuilder;
 import au.ellie.hyui.builders.LabelBuilder;
 import au.ellie.hyui.builders.PanelBuilder;
 import com.hypixel.hytale.component.Ref;
@@ -24,21 +26,48 @@ import java.util.concurrent.ConcurrentMap;
 
 public final class NexoriStatusHudService {
 
-    private static final String MAIN_TEXT_COLOR = "#FFFFFF";
-    private static final String DETAIL_TEXT_COLOR = "#C8D7EA";
-    private static final String QUEUE_WAITING_COLOR = "#8FDBFF";
-    private static final String QUEUE_COUNTDOWN_COLOR = "#FFD36E";
-    private static final String QUEUE_READY_COLOR = "#9AF4A8";
-    private static final String RETURN_VICTORY_COLOR = "#F7D774";
+    // -------------------------------------------------------------------------
+    // HUD kind — used to force remove+recreate when switching between queue
+    // and return layouts, since they use different element ID trees.
+    // -------------------------------------------------------------------------
+    private enum HudRenderKind { QUEUE, RETURN }
+
+    // -------------------------------------------------------------------------
+    // Queue card colors
+    // -------------------------------------------------------------------------
+    private static final String QUEUE_CARD_BG          = "#051218BE";
+    private static final String QUEUE_CARD_OUTLINE      = "#5FDEFFD2";
+    private static final String QUEUE_LEFT_BG           = "#081E2669";
+    private static final String QUEUE_LEFT_OUTLINE      = "#4BCDF546";
+    private static final String QUEUE_TITLE_COLOR       = "#F5FCFF";
+    private static final String QUEUE_COUNT_COLOR       = "#E1ECF2";
+    private static final String QUEUE_DETAIL_FALLBACK   = "#5AEBFF";
+
+    // Queue phase accent colors
+    private static final String QUEUE_WAITING_COLOR    = "#8FDBFF";
+    private static final String QUEUE_COUNTDOWN_COLOR  = "#FFD36E";
+    private static final String QUEUE_READY_COLOR      = "#9AF4A8";
+
+    // -------------------------------------------------------------------------
+    // Return HUD colors (legacy, unchanged)
+    // -------------------------------------------------------------------------
+    private static final String MAIN_TEXT_COLOR         = "#FFFFFF";
+    private static final String DETAIL_TEXT_COLOR       = "#C8D7EA";
+    private static final String RETURN_VICTORY_COLOR    = "#F7D774";
     private static final String RETURN_ELIMINATED_COLOR = "#FF8B9A";
-    private static final String RETURN_GENERIC_COLOR = "#8FC7FF";
+    private static final String RETURN_GENERIC_COLOR    = "#8FC7FF";
     private static final String RETURN_NO_CONTEST_COLOR = "#FFD36E";
 
+    // -------------------------------------------------------------------------
+    // State
+    // -------------------------------------------------------------------------
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaMatchService arenaMatchService;
     private final HytaleLogger logger;
     private final ConcurrentMap<UUID, HyUIHud> activeHuds = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, HudRenderState> renderedStates = new ConcurrentHashMap<>();
+    // Tracks which HUD kind is currently shown, so we can force remove+recreate on kind change.
+    private final ConcurrentMap<UUID, HudRenderKind> activeHudKinds = new ConcurrentHashMap<>();
 
     public NexoriStatusHudService(
         @Nonnull QueueCoordinatorService queueCoordinatorService,
@@ -49,6 +78,10 @@ public final class NexoriStatusHudService {
         this.arenaMatchService = arenaMatchService;
         this.logger = logger;
     }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
 
     public void handlePlayerTick(
         @Nonnull Ref<EntityStore> ref,
@@ -73,6 +106,7 @@ public final class NexoriStatusHudService {
         }
 
         renderedStates.remove(playerUuid);
+        activeHudKinds.remove(playerUuid);
         HyUIHud hud = activeHuds.remove(playerUuid);
         if (hud == null) {
             return;
@@ -84,6 +118,10 @@ public final class NexoriStatusHudService {
             logger.atWarning().withCause(exception).log("Failed to remove Nexori status HUD for " + playerUuid + ".");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Refresh logic
+    // -------------------------------------------------------------------------
 
     private void refresh(@Nonnull PlayerRef playerRef, long nowEpochMs) {
         UUID playerUuid = playerRef.getUuid();
@@ -105,11 +143,19 @@ public final class NexoriStatusHudService {
 
         HudBuilder builder = buildHud(playerRef, nextState);
         HyUIHud existing = activeHuds.get(playerUuid);
+        HudRenderKind existingKind = activeHudKinds.get(playerUuid);
+
+        // QUEUE and RETURN have different element trees — force remove+recreate on kind change.
+        boolean kindChanged = existing != null && existingKind != null && existingKind != nextState.kind();
 
         try {
-            if (existing == null) {
+            if (existing == null || kindChanged) {
+                if (existing != null) {
+                    existing.remove();
+                }
                 HyUIHud shownHud = builder.show(playerRef);
                 activeHuds.put(playerUuid, shownHud);
+                activeHudKinds.put(playerUuid, nextState.kind());
             } else {
                 existing.update(builder);
             }
@@ -118,6 +164,10 @@ public final class NexoriStatusHudService {
             logger.atWarning().withCause(exception).log("Failed to update Nexori status HUD for " + playerUuid + ".");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // State resolution
+    // -------------------------------------------------------------------------
 
     @Nonnull
     private Optional<HudRenderState> resolveState(@Nonnull UUID playerUuid, long nowEpochMs) {
@@ -136,44 +186,43 @@ public final class NexoriStatusHudService {
 
     @Nonnull
     private HudRenderState buildQueueState(@Nonnull QueueCoordinatorService.QueueHudState queueState, long nowEpochMs) {
-        String titleText;
         String accentColor;
         String statusText;
 
         switch (queueState.phase()) {
             case COUNTDOWN -> {
-                titleText = "QUEUE READY";
                 accentColor = QUEUE_COUNTDOWN_COLOR;
                 statusText = "Starting in " + secondsRemaining(queueState.countdownEndsAtEpochMs(), nowEpochMs) + "s";
             }
             case READY -> {
-                titleText = "LAUNCHING";
                 accentColor = QUEUE_READY_COLOR;
                 statusText = "Sending players now";
             }
             case WAITING -> {
-                int neededPlayers = Math.max(0, queueState.minPlayers() - queueState.queuedPlayers());
-                titleText = "IN QUEUE";
+                int needed = Math.max(0, queueState.minPlayers() - queueState.queuedPlayers());
                 accentColor = QUEUE_WAITING_COLOR;
-                statusText = neededPlayers > 0
-                    ? "Need " + neededPlayers + " more player" + (neededPlayers == 1 ? "" : "s")
+                statusText = needed > 0
+                    ? "Need " + needed + " more player" + (needed == 1 ? "" : "s")
                     : "Waiting for players";
             }
             default -> throw new IllegalStateException("Unexpected queue phase: " + queueState.phase());
         }
 
         return new HudRenderState(
-            titleText,
-            queueState.displayName(),
-            queueState.queuedPlayers() + " / " + queueState.maxPlayers() + " players",
-            statusText,
+            HudRenderKind.QUEUE,
+            "",                          // titleText — not shown in queue HUD
+            queueState.displayName(),    // mainText — game display name shown as queue title
+            queueState.queuedPlayers() + " / " + queueState.maxPlayers() + " players", // detailText — player count
+            statusText,                  // statusText — phase status
             accentColor
         );
     }
 
     @Nonnull
     private HudRenderState buildReturnState(@Nonnull ArenaMatchService.ReturnHudState returnHudState, long nowEpochMs) {
-        String normalizedOutcome = returnHudState.outcomeLabel() == null ? "" : returnHudState.outcomeLabel().trim().toLowerCase();
+        String normalizedOutcome = returnHudState.outcomeLabel() == null
+            ? ""
+            : returnHudState.outcomeLabel().trim().toLowerCase();
         String titleText;
         String accentColor;
         if ("victory".equals(normalizedOutcome)) {
@@ -195,6 +244,7 @@ public final class NexoriStatusHudService {
             : returnHudState.arenaDisplayName();
 
         return new HudRenderState(
+            HudRenderKind.RETURN,
             titleText,
             "Returning to Origin Server",
             detailText,
@@ -203,8 +253,127 @@ public final class NexoriStatusHudService {
         );
     }
 
+    // -------------------------------------------------------------------------
+    // HUD construction dispatch
+    // -------------------------------------------------------------------------
+
     @Nonnull
     private HudBuilder buildHud(@Nonnull PlayerRef playerRef, @Nonnull HudRenderState state) {
+        return state.kind() == HudRenderKind.QUEUE
+            ? buildQueueHud(playerRef, state)
+            : buildReturnHud(playerRef, state);
+    }
+
+    // -------------------------------------------------------------------------
+    // Queue HUD — card design translated from .ui spec
+    //
+    // All coordinates below are relative to the card panel (top=114, left=475
+    // on a 1920×1080 screen), unless noted.
+    // -------------------------------------------------------------------------
+
+    @Nonnull
+    private HudBuilder buildQueueHud(@Nonnull PlayerRef playerRef, @Nonnull HudRenderState state) {
+        HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
+
+        // ── Main card ────────────────────────────────────────────────────────
+        PanelBuilder card = PanelBuilder.panel()
+            .withId("nexori-queue-card")
+            .withAnchor(new HyUIAnchor().setLeft(475).setTop(114).setWidth(970).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(QUEUE_CARD_BG))
+            .withOutlineColor(QUEUE_CARD_OUTLINE)
+            .withOutlineSize(2f)
+            .withHitTestVisible(false);
+
+        // ── Left logo section ────────────────────────────────────────────────
+        PanelBuilder logoSection = PanelBuilder.panel()
+            .withId("nexori-queue-logo-section")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(QUEUE_LEFT_BG))
+            .withOutlineColor(QUEUE_LEFT_OUTLINE)
+            .withOutlineSize(1f)
+            .withHitTestVisible(false);
+
+        // ── Nexori logo image ────────────────────────────────────────────────
+        // Centered within the 235×205 left section:
+        //   horizontal: (235 - 160) / 2 = 37  → left=37
+        //   vertical:   (205 - 160) / 2 = 22  → top=22
+        // ImageBuilder prepends "UI/Custom/" automatically, so
+        // "HUD/Nexori_logo_fondo_transparente.png" resolves to
+        // "UI/Custom/HUD/Nexori_logo_fondo_transparente.png" on the client.
+        ImageBuilder logo = ImageBuilder.image()
+            .withId("nexori-queue-logo")
+            .withImage("HUD/Nexori_logo_fondo_transparente.png")
+            .withAnchor(new HyUIAnchor().setLeft(37).setTop(22).setWidth(160).setHeight(160))
+            .withHitTestVisible(false);
+
+        // ── Queue title (game display name) ──────────────────────────────────
+        // Width extended to 620px (left=320 → x=940) so that the framework
+        // has enough room and does not clip/add ellipsis for typical names.
+        LabelBuilder title = LabelBuilder.label()
+            .withId("nexori-queue-title")
+            .withText(state.mainText())
+            .withAnchor(new HyUIAnchor().setLeft(320).setTop(30).setWidth(620).setHeight(80))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(42)
+                .setRenderBold(true)
+                .setTextColor(QUEUE_TITLE_COLOR)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Start));
+
+        // ── Multiplayer icon ─────────────────────────────────────────────────
+        ImageBuilder playerIcon = ImageBuilder.image()
+            .withId("nexori-queue-player-icon")
+            .withImage("HUD/multiplayer.png")
+            .withAnchor(new HyUIAnchor().setLeft(320).setTop(130).setWidth(30).setHeight(30))
+            .withHitTestVisible(false);
+
+        // ── Player count label ───────────────────────────────────────────────
+        LabelBuilder playerCount = LabelBuilder.label()
+            .withId("nexori-queue-player-count")
+            .withText(state.detailText())
+            .withAnchor(new HyUIAnchor().setLeft(360).setTop(130).setWidth(190).setHeight(40))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(25)
+                .setTextColor(QUEUE_COUNT_COLOR)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Start));
+
+        // ── Queue detail label (phase status) ────────────────────────────────
+        String detailColor = (state.accentColor() != null && !state.accentColor().isBlank())
+            ? state.accentColor()
+            : QUEUE_DETAIL_FALLBACK;
+        LabelBuilder queueDetail = LabelBuilder.label()
+            .withId("nexori-queue-detail")
+            .withText(state.statusText())
+            .withAnchor(new HyUIAnchor().setLeft(560).setTop(130).setWidth(300).setHeight(40))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(25)
+                .setRenderBold(true)
+                .setTextColor(detailColor)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Start));
+
+        // ── Assemble card children ────────────────────────────────────────────
+        card.addChild(logoSection);
+        card.addChild(logo);
+        card.addChild(title);
+        card.addChild(playerIcon);
+        card.addChild(playerCount);
+        card.addChild(queueDetail);
+
+        hud.addElement(card);
+        return hud;
+    }
+
+    // -------------------------------------------------------------------------
+    // Return HUD — legacy layout, unchanged
+    // -------------------------------------------------------------------------
+
+    @Nonnull
+    private HudBuilder buildReturnHud(@Nonnull PlayerRef playerRef, @Nonnull HudRenderState state) {
         HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
 
         PanelBuilder root = PanelBuilder.panel()
@@ -288,12 +457,17 @@ public final class NexoriStatusHudService {
         return hud;
     }
 
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
     private static int secondsRemaining(long targetEpochMs, long nowEpochMs) {
         long remainingMs = Math.max(0L, targetEpochMs - nowEpochMs);
         return (int) Math.max(0L, (remainingMs + 999L) / 1000L);
     }
 
     private record HudRenderState(
+        HudRenderKind kind,
         String titleText,
         String mainText,
         String detailText,
