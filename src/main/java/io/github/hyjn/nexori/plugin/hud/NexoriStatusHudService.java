@@ -12,8 +12,11 @@ import au.ellie.hyui.builders.PanelBuilder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.protocol.SoundCategory;
+import com.hypixel.hytale.server.core.asset.type.soundevent.config.SoundEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.SoundUtil;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import io.github.hyjn.nexori.plugin.minigame.AfkActivityService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
@@ -98,6 +101,7 @@ public final class NexoriStatusHudService {
     private static final String QUEUE_CARD_OUTLINE     = "#5FDEFFD2";
     private static final String QUEUE_LEFT_BG          = "#081E2669";
     private static final String QUEUE_LEFT_OUTLINE     = "#4BCDF546";
+    private static final String QUEUE_LOGO_TINT        = "#5AF0FF50";
     private static final String QUEUE_TITLE_COLOR      = "#F5FCFF";
     private static final String QUEUE_COUNT_COLOR      = "#E1ECF2";
     private static final String QUEUE_DETAIL_FALLBACK  = "#5AEBFF";
@@ -158,6 +162,15 @@ public final class NexoriStatusHudService {
     private final ConcurrentMap<UUID, AfkRenderState>    renderedAfkStates = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, AfkHudKind>        activeAfkKinds    = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, HudAnimationState> afkAnimations     = new ConcurrentHashMap<>();
+    /** Last secondsRemaining value for which the AFK countdown blip was played. */
+    private final ConcurrentMap<UUID, Integer>           lastAfkBlipSecond = new ConcurrentHashMap<>();
+
+    // -------------------------------------------------------------------------
+    // Sound event IDs (path relative to Server/Audio/SoundEvents/, no extension)
+    // -------------------------------------------------------------------------
+    private static final String SOUND_QUEUE_HUD    = "SFX_Creative_Play_Brush_Shape";
+    private static final String SOUND_AFK_DETECTED = "SFX_Avatar_Powers_Disable";
+    private static final String SOUND_AFK_BLIP     = "SFX_Test_Blip_C";
 
     public NexoriStatusHudService(
         @Nonnull QueueCoordinatorService queueCoordinatorService,
@@ -238,10 +251,14 @@ public final class NexoriStatusHudService {
                 }
                 // Return HUD skips exit animation — players are teleported to lobby
                 // before it would finish, so there is no point playing it.
+                // Play the exit sound at the moment of removal (equivalent to "animation start").
                 if (activeHudKinds.get(playerUuid) == HudRenderKind.RETURN) {
+                    playSound(playerRef, SOUND_QUEUE_HUD);
                     removeImmediately(playerUuid);
                     return;
                 }
+                // Play exit sound at the START of the exit animation, not when it completes.
+                playSound(playerRef, SOUND_QUEUE_HUD);
                 activeAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.EXITING, nowEpochMs));
             }
 
@@ -285,9 +302,25 @@ public final class NexoriStatusHudService {
             // If we registered after show(), resolveFrame() would see no animation
             // and return steady() → p=1 → one-frame flash at the final position.
             activeAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.ENTERING, nowEpochMs));
+            // Play enter sound for the QUEUE HUD (WAITING is always the first phase seen).
+            // No sound for the RETURN HUD — that card is "launching back to lobby".
+            if (nextState.kind() == HudRenderKind.QUEUE) {
+                playSound(playerRef, SOUND_QUEUE_HUD);
+            }
         }
 
         HudAnimationFrame frame = resolveFrame(playerUuid, nowEpochMs);
+
+        // ── Countdown blips — once per second when "Starting in Xs" / "Lobby in Xs" changes ──
+        if (nextState.kind() == HudRenderKind.RETURN
+                || QUEUE_COUNTDOWN_COLOR.equals(nextState.accentColor())) {
+            boolean firstShow = previousState == null
+                || !previousState.accentColor().equals(nextState.accentColor());
+            boolean secondChanged = !firstShow && !nextState.statusText().equals(previousState.statusText());
+            if (firstShow || secondChanged) {
+                playSound(playerRef, SOUND_AFK_BLIP);
+            }
+        }
 
         // Skip only when animation is done AND state hasn't changed.
         if (frame.complete() && nextState.equals(previousState)) {
@@ -527,6 +560,13 @@ public final class NexoriStatusHudService {
             .withAnchor(new HyUIAnchor().setLeft(37).setTop(22).setWidth(160).setHeight(160))
             .withHitTestVisible(false);
 
+        // ── Cyan tint over the full logo section ─────────────────────────────
+        PanelBuilder logoTint = PanelBuilder.panel()
+            .withId("nexori-queue-logo-tint")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_LOGO_TINT, alpha)))
+            .withHitTestVisible(false);
+
         // ── Queue title (game display name) ───────────────────────────────────
         LabelBuilder title = LabelBuilder.label()
             .withId("nexori-queue-title")
@@ -599,6 +639,7 @@ public final class NexoriStatusHudService {
         // ── Assemble ──────────────────────────────────────────────────────────
         card.addChild(logoSection);
         card.addChild(logo);
+        card.addChild(logoTint);
         card.addChild(title);
         card.addChild(scanBase);
         card.addChild(scanGlow);
@@ -645,21 +686,31 @@ public final class NexoriStatusHudService {
             slideOffset = Math.round(30f * p);
         }
 
+        // ── No-contest (AFK cancellation) uses the AFK DETECTED red palette ─────
+        boolean isNoContest = RETURN_NO_CONTEST_COLOR.equals(state.accentColor());
+        String cardBg      = isNoContest ? AFK_DETECTED_BG           : QUEUE_CARD_BG;
+        String cardOutline = isNoContest ? AFK_DETECTED_OUTLINE       : QUEUE_CARD_OUTLINE;
+        String leftBg      = isNoContest ? AFK_DETECTED_LEFT_BG       : QUEUE_LEFT_BG;
+        String leftOutline = isNoContest ? AFK_DETECTED_LEFT_OUTLINE  : QUEUE_LEFT_OUTLINE;
+        String logoTint    = isNoContest ? AFK_DETECTED_LOGO_TINT     : "#00000000";
+        String mainColor   = isNoContest ? AFK_DETECTED_TEXT          : MAIN_TEXT_COLOR;
+        String accentColor = isNoContest ? AFK_DETECTED_TITLE         : state.accentColor();
+
         // ── Main card ─────────────────────────────────────────────────────────
         PanelBuilder card = PanelBuilder.panel()
             .withId("nexori-return-card")
             .withAnchor(new HyUIAnchor().setLeft(475).setTop(114 + slideOffset).setWidth(970).setHeight(205))
-            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_CARD_BG, alpha)))
-            .withOutlineColor(lerpAlpha(QUEUE_CARD_OUTLINE, alpha))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(cardBg, alpha)))
+            .withOutlineColor(lerpAlpha(cardOutline, alpha))
             .withOutlineSize(2f)
             .withHitTestVisible(false);
 
-        // ── Left logo section (same as queue HUD) ────────────────────────────
+        // ── Left logo section ─────────────────────────────────────────────────
         PanelBuilder logoSection = PanelBuilder.panel()
             .withId("nexori-return-logo-section")
             .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
-            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(QUEUE_LEFT_BG, alpha)))
-            .withOutlineColor(lerpAlpha(QUEUE_LEFT_OUTLINE, alpha))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(leftBg, alpha)))
+            .withOutlineColor(lerpAlpha(leftOutline, alpha))
             .withOutlineSize(1f)
             .withHitTestVisible(false);
 
@@ -667,6 +718,13 @@ public final class NexoriStatusHudService {
             .withId("nexori-return-logo")
             .withImage("HUD/Nexori_logo_fondo_transparente.png")
             .withAnchor(new HyUIAnchor().setLeft(37).setTop(22).setWidth(160).setHeight(160))
+            .withHitTestVisible(false);
+
+        // Logo tint — full section height. Transparent for non-no-contest variants.
+        PanelBuilder logoTintPanel = PanelBuilder.panel()
+            .withId("nexori-return-logo-tint")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(235).setHeight(205))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(logoTint, alpha)))
             .withHitTestVisible(false);
 
         // ── "Returning to Origin Server" — centered in the right section ──────
@@ -678,7 +736,7 @@ public final class NexoriStatusHudService {
             .withStyle(new HyUIStyle()
                 .setFontSize(28)
                 .setRenderBold(true)
-                .setTextColor(MAIN_TEXT_COLOR)
+                .setTextColor(mainColor)
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Center));
 
@@ -691,7 +749,7 @@ public final class NexoriStatusHudService {
             .withStyle(new HyUIStyle()
                 .setFontSize(24)
                 .setRenderBold(true)
-                .setTextColor(state.accentColor())
+                .setTextColor(accentColor)
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Center));
 
@@ -704,13 +762,14 @@ public final class NexoriStatusHudService {
             .withStyle(new HyUIStyle()
                 .setFontSize(26)
                 .setRenderBold(true)
-                .setTextColor(state.accentColor())
+                .setTextColor(accentColor)
                 .setOutlineColor("#000000")
                 .setAlignment(Alignment.Center));
 
         // ── Assemble ──────────────────────────────────────────────────────────
         card.addChild(logoSection);
         card.addChild(logo);
+        card.addChild(logoTintPanel);
         card.addChild(mainLabel);
         card.addChild(outcomeLabel);
         card.addChild(countdownLabel);
@@ -722,6 +781,17 @@ public final class NexoriStatusHudService {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Plays a 2D UI sound to a specific player.
+     * Silently no-ops if the sound event is not found in the asset map.
+     */
+    private static void playSound(@Nonnull PlayerRef playerRef, @Nonnull String soundEventId) {
+        int id = SoundEvent.getAssetMap().getIndex(soundEventId);
+        if (id != 0) {
+            SoundUtil.playSoundEvent2dToPlayer(playerRef, id, SoundCategory.UI);
+        }
+    }
 
     /**
      * Interpolates the alpha channel of a {@code #RRGGBBAA} hex color.
@@ -838,6 +908,16 @@ public final class NexoriStatusHudService {
             } else {
                 // DETECTED appears at full opacity immediately — no entry animation.
                 afkAnimations.remove(playerUuid);
+                playSound(playerRef, SOUND_AFK_DETECTED);
+            }
+        }
+
+        // ── AFK countdown blip — plays once per second as secondsRemaining changes ──
+        if (nextKind == AfkHudKind.WARNING && nextState.secondsRemaining() > 0) {
+            Integer lastBlip = lastAfkBlipSecond.get(playerUuid);
+            if (lastBlip == null || lastBlip != nextState.secondsRemaining()) {
+                lastAfkBlipSecond.put(playerUuid, nextState.secondsRemaining());
+                playSound(playerRef, SOUND_AFK_BLIP);
             }
         }
 
@@ -874,6 +954,7 @@ public final class NexoriStatusHudService {
         renderedAfkStates.remove(playerUuid);
         activeAfkKinds.remove(playerUuid);
         afkAnimations.remove(playerUuid);
+        lastAfkBlipSecond.remove(playerUuid);
         HyUIHud hud = activeAfkHuds.remove(playerUuid);
         if (hud == null) {
             return;
