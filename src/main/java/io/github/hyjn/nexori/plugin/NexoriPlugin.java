@@ -462,6 +462,7 @@ public class NexoriPlugin extends JavaPlugin {
                 this.getLogger(),
                 backendMatchmakingConfig,
                 this.localIdentity,
+                this.localConnectionAddressService::getConnectionAddressOrBlank,
                 this.arenaMatchService
             );
             this.arenaMatchService.setBackendMatchAdmissionStateReportingService(this.backendMatchAdmissionStateReportingService);

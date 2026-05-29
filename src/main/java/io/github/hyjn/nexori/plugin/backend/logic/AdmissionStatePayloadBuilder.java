@@ -32,6 +32,7 @@ public final class AdmissionStatePayloadBuilder {
         long sentAtEpochMs,
         long expiresAtEpochMs,
         @Nonnull String reportingServerId,
+        @Nonnull String reportingServerConnectionAddress,
         @Nonnull ArenaActiveMatch match,
         @Nonnull AdmissionStateEvaluation evaluation,
         String primaryChangeReason,
@@ -55,6 +56,8 @@ public final class AdmissionStatePayloadBuilder {
                 : normalizedCoalescedReasons.get(normalizedCoalescedReasons.size() - 1);
         }
 
+        String normalizedConnectionAddress = normalizeOptional(reportingServerConnectionAddress);
+
         BackendMatchAdmissionStatePayload payloadWithoutHash = new BackendMatchAdmissionStatePayload(
             schemaVersion,
             stateUpdateId,
@@ -63,6 +66,7 @@ public final class AdmissionStatePayloadBuilder {
             sentAtEpochMs,
             expiresAtEpochMs,
             reportingServerId,
+            normalizedConnectionAddress,
             match.matchId(),
             match.externalMatchId(),
             match.queueId(),
@@ -94,6 +98,7 @@ public final class AdmissionStatePayloadBuilder {
             payloadWithoutHash.sentAtEpochMs(),
             payloadWithoutHash.stateExpiresAtEpochMs(),
             payloadWithoutHash.reportingServerId(),
+            payloadWithoutHash.reportingServerConnectionAddress(),
             payloadWithoutHash.matchId(),
             payloadWithoutHash.externalMatchId(),
             payloadWithoutHash.queueId(),

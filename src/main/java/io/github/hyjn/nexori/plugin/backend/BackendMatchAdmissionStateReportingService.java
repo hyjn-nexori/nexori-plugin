@@ -33,6 +33,7 @@ import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Supplier;
 
 public final class BackendMatchAdmissionStateReportingService {
 
@@ -49,6 +50,7 @@ public final class BackendMatchAdmissionStateReportingService {
     private final HytaleLogger logger;
     private BackendMatchmakingConfig config;
     private final ServerIdentity localIdentity;
+    private final Supplier<String> connectionAddressSupplier;
     private final ArenaMatchService arenaMatchService;
     private BackendHttpTransport transport;
     private final boolean useDefaultTransport;
@@ -68,10 +70,12 @@ public final class BackendMatchAdmissionStateReportingService {
         @Nonnull HytaleLogger logger,
         @Nonnull BackendMatchmakingConfig config,
         @Nonnull ServerIdentity localIdentity,
+        @Nonnull Supplier<String> connectionAddressSupplier,
         @Nonnull ArenaMatchService arenaMatchService
     ) {
         this.logger = logger;
         this.localIdentity = localIdentity;
+        this.connectionAddressSupplier = connectionAddressSupplier;
         this.arenaMatchService = arenaMatchService;
         this.config = config.normalized();
         logConfigNormalizationWarning(config, this.config);
@@ -88,6 +92,7 @@ public final class BackendMatchAdmissionStateReportingService {
     ) {
         this.logger = logger;
         this.localIdentity = localIdentity;
+        this.connectionAddressSupplier = () -> "";
         this.arenaMatchService = arenaMatchService;
         this.config = config.normalized();
         this.transport = transport;
@@ -575,6 +580,7 @@ public final class BackendMatchAdmissionStateReportingService {
         long sequence = ++state.lastAllocatedSequence;
         long sentAtEpochMs = nowEpochMs;
         long expiresAtEpochMs = nowEpochMs + config.matchStateStaleAfterMs();
+        String connectionAddress = connectionAddressSupplier.get();
         return admissionStatePayloadBuilder.build(
             SCHEMA_VERSION,
             UUID.randomUUID().toString().toLowerCase(),
@@ -582,6 +588,7 @@ public final class BackendMatchAdmissionStateReportingService {
             sentAtEpochMs,
             expiresAtEpochMs,
             localIdentity.serverId().toString(),
+            connectionAddress != null ? connectionAddress : "",
             context.match(),
             view,
             state.primaryChangeReason,

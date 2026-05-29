@@ -163,7 +163,7 @@ final class BackendPayloadContractsTest {
     void admissionStatePayloadPreservesAllContractFields() {
         BackendMatchAdmissionStatePayload payload = new BackendMatchAdmissionStatePayload(
             1, "state-update-1", 7L, "hash-abc", 1_000_000L, 2_000_000L,
-            "srv-1", "match-1", "ext-match-1", "queue-1", "arena-1",
+            "srv-1", "game-server-1.example.com:7777", "match-1", "ext-match-1", "queue-1", "arena-1",
             true, "OPPORTUNISTIC", 60, "ACTIVE",
             true, 3_000_000L, 8, 5, 3,
             10, 5, 5,
