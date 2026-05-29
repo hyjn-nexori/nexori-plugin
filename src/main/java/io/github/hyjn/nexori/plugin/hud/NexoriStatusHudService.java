@@ -15,6 +15,7 @@ import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import io.github.hyjn.nexori.plugin.minigame.AfkActivityService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.QueueCoordinatorService;
 
@@ -31,6 +32,11 @@ public final class NexoriStatusHudService {
     // remove+recreate whenever the kind changes.
     // -------------------------------------------------------------------------
     private enum HudRenderKind { QUEUE, RETURN }
+
+    // -------------------------------------------------------------------------
+    // AFK HUD kind — independent lifecycle from queue/return.
+    // -------------------------------------------------------------------------
+    private enum AfkHudKind { WARNING, DETECTED }
 
     // -------------------------------------------------------------------------
     // Animation phase
@@ -112,10 +118,30 @@ public final class NexoriStatusHudService {
     private static final String RETURN_NO_CONTEST_COLOR = "#FFD36E";
 
     // -------------------------------------------------------------------------
+    // AFK HUD colors  (#RRGGBBAA for backgrounds/outlines; #RRGGBB for text)
+    // -------------------------------------------------------------------------
+    private static final String AFK_WARNING_BG            = "#1C1205CD";
+    private static final String AFK_WARNING_OUTLINE       = "#FFBE4BE6";
+    private static final String AFK_WARNING_LEFT_BG       = "#2A1A0869";
+    private static final String AFK_WARNING_LEFT_OUTLINE  = "#FFBE4B46";
+    private static final String AFK_WARNING_LOGO_TINT     = "#FFBE4B50";
+    private static final String AFK_WARNING_TITLE         = "#FFBE4B";
+    private static final String AFK_WARNING_TEXT          = "#EDD9B8";
+
+    private static final String AFK_DETECTED_BG           = "#240808D2";
+    private static final String AFK_DETECTED_OUTLINE      = "#FF695FE6";
+    private static final String AFK_DETECTED_LEFT_BG      = "#350A0A69";
+    private static final String AFK_DETECTED_LEFT_OUTLINE = "#FF695F46";
+    private static final String AFK_DETECTED_LOGO_TINT    = "#FF695F50";
+    private static final String AFK_DETECTED_TITLE        = "#FF695F";
+    private static final String AFK_DETECTED_TEXT         = "#F0C8C8";
+
+    // -------------------------------------------------------------------------
     // Per-player state
     // -------------------------------------------------------------------------
     private final QueueCoordinatorService queueCoordinatorService;
     private final ArenaMatchService arenaMatchService;
+    private final AfkActivityService afkActivityService;
     private final HytaleLogger logger;
     private final ConcurrentMap<UUID, HyUIHud>           activeHuds       = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, HudRenderState>    renderedStates   = new ConcurrentHashMap<>();
@@ -127,13 +153,21 @@ public final class NexoriStatusHudService {
      */
     private final ConcurrentMap<UUID, HudAnimationState> activeAnimations = new ConcurrentHashMap<>();
 
+    // ── AFK HUD (independent lifecycle from queue/return) ────────────────────
+    private final ConcurrentMap<UUID, HyUIHud>           activeAfkHuds     = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, AfkRenderState>    renderedAfkStates = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, AfkHudKind>        activeAfkKinds    = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, HudAnimationState> afkAnimations     = new ConcurrentHashMap<>();
+
     public NexoriStatusHudService(
         @Nonnull QueueCoordinatorService queueCoordinatorService,
         @Nonnull ArenaMatchService arenaMatchService,
+        @Nonnull AfkActivityService afkActivityService,
         @Nonnull HytaleLogger logger
     ) {
         this.queueCoordinatorService = queueCoordinatorService;
         this.arenaMatchService = arenaMatchService;
+        this.afkActivityService = afkActivityService;
         this.logger = logger;
     }
 
@@ -151,10 +185,13 @@ public final class NexoriStatusHudService {
             return;
         }
         refresh(playerRef, nowEpochMs);
+        refreshAfkHud(playerRef, nowEpochMs);
     }
 
     public void refresh(@Nonnull PlayerRef playerRef) {
-        refresh(playerRef, System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        refresh(playerRef, now);
+        refreshAfkHud(playerRef, now);
     }
 
     /**
@@ -168,6 +205,7 @@ public final class NexoriStatusHudService {
             return;
         }
         removeImmediately(playerUuid);
+        removeAfkImmediately(playerUuid);
     }
 
     // -------------------------------------------------------------------------
@@ -426,8 +464,8 @@ public final class NexoriStatusHudService {
     // -------------------------------------------------------------------------
     // Queue HUD — card design with enter/exit animation
     //
-    // Coordinates are relative to the card panel (top=114, left=475 on 1920×1080)
-    // unless noted.
+    // setHorizontal(0) centers the card on screen at any resolution.
+    // Coordinates of children are relative to the card panel unless noted.
     //
     // ENTERING (ease-out-quad):
     //   alpha = easedProgress          (0→1, fades in)
@@ -711,4 +749,362 @@ public final class NexoriStatusHudService {
         String accentColor,
         long scanMs   // nowEpochMs % 9000 during WAITING (changes every tick → no dedup); -1 otherwise
     ) {}
+
+    private record AfkRenderState(AfkHudKind kind, int secondsRemaining) {}
+
+    // =========================================================================
+    // AFK HUD — independent lifecycle, separate maps, no overlap with queue/return
+    //
+    // WARNING (AfkHudState.afk=false, secondsRemaining 1-5):
+    //   Entry: 600ms ease-out-quad fade + 20px slide from below.
+    //   Exit: immediate removal when player moves (no exit animation).
+    //
+    // DETECTED (AfkHudState.afk=true):
+    //   Entry: shown immediately at p=1.0 (no animation).
+    //   Exit: 375ms ease-in-quad fade + 20px slide when player moves.
+    //
+    // WARNING → DETECTED: WARNING removed immediately, DETECTED appears at full opacity.
+    // =========================================================================
+
+    private void refreshAfkHud(@Nonnull PlayerRef playerRef, long nowEpochMs) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
+
+        AfkActivityService.AfkHudState afkHudState = afkActivityService.findAfkHudState(playerUuid, nowEpochMs).orElse(null);
+
+        // ── No AFK state → drive or start exit animation (DETECTED only) ─────
+        if (afkHudState == null) {
+            HyUIHud existing = activeAfkHuds.get(playerUuid);
+            if (existing == null) {
+                return;
+            }
+
+            AfkHudKind currentKind = activeAfkKinds.get(playerUuid);
+            if (currentKind == AfkHudKind.WARNING) {
+                // WARNING dismissed immediately when player moves.
+                removeAfkImmediately(playerUuid);
+                return;
+            }
+
+            // DETECTED: play exit animation.
+            HudAnimationState currentAnim = afkAnimations.get(playerUuid);
+            if (currentAnim == null || currentAnim.phase() != HudAnimationPhase.EXITING) {
+                if (renderedAfkStates.get(playerUuid) == null) {
+                    removeAfkImmediately(playerUuid);
+                    return;
+                }
+                afkAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.EXITING, nowEpochMs));
+            }
+
+            HudAnimationFrame frame = resolveAfkFrame(playerUuid, nowEpochMs);
+            if (frame.complete()) {
+                removeAfkImmediately(playerUuid);
+                return;
+            }
+
+            AfkRenderState lastState = renderedAfkStates.get(playerUuid);
+            if (lastState == null) {
+                removeAfkImmediately(playerUuid);
+                return;
+            }
+
+            HudBuilder builder = buildAfkHud(playerRef, lastState, frame);
+            try {
+                existing.update(builder);
+            } catch (Exception exception) {
+                logger.atWarning().withCause(exception).log("Failed to update Nexori AFK HUD exit for " + playerUuid + ".");
+                removeAfkImmediately(playerUuid);
+            }
+            return;
+        }
+
+        // ── AFK state present → enter or update ──────────────────────────────
+        AfkHudKind nextKind = afkHudState.afk() ? AfkHudKind.DETECTED : AfkHudKind.WARNING;
+        AfkRenderState nextState = new AfkRenderState(nextKind, afkHudState.secondsRemaining());
+        AfkRenderState previousState = renderedAfkStates.get(playerUuid);
+
+        HyUIHud existing = activeAfkHuds.get(playerUuid);
+        AfkHudKind existingKind = activeAfkKinds.get(playerUuid);
+
+        boolean kindChanged = existing != null && existingKind != null && existingKind != nextKind;
+        boolean isNewHud = existing == null || kindChanged;
+
+        if (isNewHud) {
+            if (nextKind == AfkHudKind.WARNING) {
+                // WARNING always enters with an animation.
+                afkAnimations.put(playerUuid, new HudAnimationState(HudAnimationPhase.ENTERING, nowEpochMs));
+            } else {
+                // DETECTED appears at full opacity immediately — no entry animation.
+                afkAnimations.remove(playerUuid);
+            }
+        }
+
+        HudAnimationFrame frame = resolveAfkFrame(playerUuid, nowEpochMs);
+
+        if (frame.complete() && nextState.equals(previousState)) {
+            return;
+        }
+
+        HudBuilder builder = buildAfkHud(playerRef, nextState, frame);
+
+        try {
+            if (isNewHud) {
+                if (existing != null) {
+                    existing.remove();
+                }
+                HyUIHud shownHud = builder.show(playerRef);
+                activeAfkHuds.put(playerUuid, shownHud);
+                activeAfkKinds.put(playerUuid, nextKind);
+            } else {
+                existing.update(builder);
+            }
+            renderedAfkStates.put(playerUuid, nextState);
+
+            if (frame.complete()) {
+                afkAnimations.remove(playerUuid);
+            }
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log("Failed to update Nexori AFK HUD for " + playerUuid + ".");
+        }
+    }
+
+    private void removeAfkImmediately(@Nonnull UUID playerUuid) {
+        renderedAfkStates.remove(playerUuid);
+        activeAfkKinds.remove(playerUuid);
+        afkAnimations.remove(playerUuid);
+        HyUIHud hud = activeAfkHuds.remove(playerUuid);
+        if (hud == null) {
+            return;
+        }
+        try {
+            hud.remove();
+        } catch (Exception exception) {
+            logger.atWarning().withCause(exception).log("Failed to remove Nexori AFK HUD for " + playerUuid + ".");
+        }
+    }
+
+    @Nonnull
+    private HudAnimationFrame resolveAfkFrame(@Nonnull UUID playerUuid, long nowEpochMs) {
+        HudAnimationState state = afkAnimations.get(playerUuid);
+        if (state == null) {
+            return HudAnimationFrame.steady();
+        }
+        return HudAnimationFrame.compute(state, nowEpochMs);
+    }
+
+    @Nonnull
+    private HudBuilder buildAfkHud(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull AfkRenderState state,
+        @Nonnull HudAnimationFrame frame
+    ) {
+        return state.kind() == AfkHudKind.WARNING
+            ? buildAfkWarningCard(playerRef, state, frame)
+            : buildAfkDetectedCard(playerRef, state, frame);
+    }
+
+    // -------------------------------------------------------------------------
+    // AFK Warning card — amber/orange theme, 550×145
+    //
+    // setHorizontal(0) centers horizontally at any resolution.
+    // setVertical(slideOffset) centers vertically; slideOffset drives the entry animation.
+    // Left section (155px): Nexori logo (110×110) + full-height tint overlay.
+    // Right section (395px): "AFK WARNING", "Active in Xs", "Move to stay active" — centered.
+    //
+    // ENTERING (ease-out-quad): alpha 0→1, card rises 20px from vertical center.
+    // No EXITING — removed immediately when player moves.
+    // -------------------------------------------------------------------------
+
+    @Nonnull
+    private HudBuilder buildAfkWarningCard(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull AfkRenderState state,
+        @Nonnull HudAnimationFrame frame
+    ) {
+        HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
+
+        float p = frame.easedProgress();
+        float alpha;
+        int slideOffset;
+
+        if (frame.phase() == HudAnimationPhase.ENTERING) {
+            alpha = p;
+            slideOffset = Math.round(20f * (1f - p));
+        } else {
+            alpha = Math.max(0f, 1f - p);
+            slideOffset = Math.round(20f * p);
+        }
+
+        PanelBuilder card = PanelBuilder.panel()
+            .withId("nexori-afk-warning-card")
+            .withAnchor(new HyUIAnchor().setLeft(585).setTop(467 + slideOffset).setWidth(750).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_WARNING_BG, alpha)))
+            .withOutlineColor(lerpAlpha(AFK_WARNING_OUTLINE, alpha))
+            .withOutlineSize(2f)
+            .withHitTestVisible(false);
+
+        // Left section (155×145) — background + full-height tint covers the whole section.
+        PanelBuilder logoSection = PanelBuilder.panel()
+            .withId("nexori-afk-warning-logo-section")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(155).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_WARNING_LEFT_BG, alpha)))
+            .withOutlineColor(lerpAlpha(AFK_WARNING_LEFT_OUTLINE, alpha))
+            .withOutlineSize(1f)
+            .withHitTestVisible(false);
+
+        // Logo centered in the 155×145 section: left=(155-110)/2=22, top=(145-110)/2=17
+        ImageBuilder logo = ImageBuilder.image()
+            .withId("nexori-afk-warning-logo")
+            .withImage("HUD/Nexori_logo_fondo_transparente.png")
+            .withAnchor(new HyUIAnchor().setLeft(22).setTop(17).setWidth(110).setHeight(110))
+            .withHitTestVisible(false);
+
+        // Amber tint spanning the full logo section height (0 to 145).
+        PanelBuilder logoTint = PanelBuilder.panel()
+            .withId("nexori-afk-warning-logo-tint")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(155).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_WARNING_LOGO_TINT, alpha)))
+            .withHitTestVisible(false);
+
+        LabelBuilder title = LabelBuilder.label()
+            .withId("nexori-afk-warning-title")
+            .withText("AFK WARNING")
+            .withAnchor(new HyUIAnchor().setLeft(155).setRight(0).setTop(14).setHeight(40))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(26)
+                .setRenderBold(true)
+                .setTextColor(AFK_WARNING_TITLE)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
+
+        LabelBuilder countdown = LabelBuilder.label()
+            .withId("nexori-afk-warning-countdown")
+            .withText("Active in " + state.secondsRemaining() + "s")
+            .withAnchor(new HyUIAnchor().setLeft(155).setRight(0).setTop(60).setHeight(32))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(20)
+                .setRenderBold(true)
+                .setTextColor(AFK_WARNING_TITLE)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
+
+        LabelBuilder hint = LabelBuilder.label()
+            .withId("nexori-afk-warning-hint")
+            .withText("Move to stay active")
+            .withAnchor(new HyUIAnchor().setLeft(155).setRight(0).setTop(102).setHeight(28))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(16)
+                .setTextColor(AFK_WARNING_TEXT)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
+
+        card.addChild(logoSection);
+        card.addChild(logo);
+        card.addChild(logoTint);
+        card.addChild(title);
+        card.addChild(countdown);
+        card.addChild(hint);
+
+        hud.addElement(card);
+        return hud;
+    }
+
+    // -------------------------------------------------------------------------
+    // AFK Detected card — red theme, 550×145
+    //
+    // setHorizontal(0).setVertical(slideOffset) — centered on screen at any resolution.
+    // Left section (155px): Nexori logo (110×110) + full-height red tint overlay.
+    // Right section (395px): "AFK DETECTED", "Move to return to active play" — centered.
+    //
+    // No ENTERING animation — shown at p=1.0 immediately (steady()).
+    // EXITING (ease-in-quad): alpha 1→0, card drifts 20px downward from center.
+    // -------------------------------------------------------------------------
+
+    @Nonnull
+    private HudBuilder buildAfkDetectedCard(
+        @Nonnull PlayerRef playerRef,
+        @Nonnull AfkRenderState state,
+        @Nonnull HudAnimationFrame frame
+    ) {
+        HudBuilder hud = HudBuilder.hudForPlayer(playerRef);
+
+        float p = frame.easedProgress();
+        float alpha;
+        int slideOffset;
+
+        if (frame.phase() == HudAnimationPhase.ENTERING) {
+            // steady() delivers phase=ENTERING, p=1.0 → fully visible, slideOffset=0.
+            alpha = p;
+            slideOffset = Math.round(20f * (1f - p));
+        } else {
+            alpha = Math.max(0f, 1f - p);
+            slideOffset = Math.round(20f * p);
+        }
+
+        PanelBuilder card = PanelBuilder.panel()
+            .withId("nexori-afk-detected-card")
+            .withAnchor(new HyUIAnchor().setLeft(585).setTop(467 + slideOffset).setWidth(750).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_DETECTED_BG, alpha)))
+            .withOutlineColor(lerpAlpha(AFK_DETECTED_OUTLINE, alpha))
+            .withOutlineSize(2f)
+            .withHitTestVisible(false);
+
+        PanelBuilder logoSection = PanelBuilder.panel()
+            .withId("nexori-afk-detected-logo-section")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(155).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_DETECTED_LEFT_BG, alpha)))
+            .withOutlineColor(lerpAlpha(AFK_DETECTED_LEFT_OUTLINE, alpha))
+            .withOutlineSize(1f)
+            .withHitTestVisible(false);
+
+        ImageBuilder logo = ImageBuilder.image()
+            .withId("nexori-afk-detected-logo")
+            .withImage("HUD/Nexori_logo_fondo_transparente.png")
+            .withAnchor(new HyUIAnchor().setLeft(22).setTop(17).setWidth(110).setHeight(110))
+            .withHitTestVisible(false);
+
+        // Red tint spanning the full logo section height (0 to 145).
+        PanelBuilder logoTint = PanelBuilder.panel()
+            .withId("nexori-afk-detected-logo-tint")
+            .withAnchor(new HyUIAnchor().setLeft(0).setTop(0).setWidth(155).setHeight(145))
+            .withBackground(new HyUIPatchStyle().setColor(lerpAlpha(AFK_DETECTED_LOGO_TINT, alpha)))
+            .withHitTestVisible(false);
+
+        LabelBuilder title = LabelBuilder.label()
+            .withId("nexori-afk-detected-title")
+            .withText("AFK DETECTED")
+            .withAnchor(new HyUIAnchor().setLeft(155).setRight(0).setTop(32).setHeight(42))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(26)
+                .setRenderBold(true)
+                .setTextColor(AFK_DETECTED_TITLE)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
+
+        LabelBuilder hint = LabelBuilder.label()
+            .withId("nexori-afk-detected-hint")
+            .withText("Move to return to active play")
+            .withAnchor(new HyUIAnchor().setLeft(155).setRight(0).setTop(88).setHeight(36))
+            .withHitTestVisible(false)
+            .withStyle(new HyUIStyle()
+                .setFontSize(18)
+                .setTextColor(AFK_DETECTED_TEXT)
+                .setOutlineColor("#000000")
+                .setAlignment(Alignment.Center));
+
+        card.addChild(logoSection);
+        card.addChild(logo);
+        card.addChild(logoTint);
+        card.addChild(title);
+        card.addChild(hint);
+
+        hud.addElement(card);
+        return hud;
+    }
 }

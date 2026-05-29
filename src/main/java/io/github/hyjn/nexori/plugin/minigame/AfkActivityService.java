@@ -160,6 +160,40 @@ public final class AfkActivityService {
         statesByPlayerUuid.entrySet().removeIf(entry -> entry.getValue().matchId().equals(normalizedMatchId));
     }
 
+    /**
+     * Read-only snapshot for the AFK HUD. Returns:
+     * <ul>
+     *   <li>{@link Optional#empty()} — player not tracked, detection disabled, or idle
+     *       time is well below the threshold. No AFK HUD should be shown.</li>
+     *   <li>{@code AfkHudState(afk=true, 0)} — player is already AFK.</li>
+     *   <li>{@code AfkHudState(afk=false, N)} — player is within the 5-second
+     *       warning window before being marked AFK; N is seconds remaining.</li>
+     * </ul>
+     */
+    public synchronized Optional<AfkHudState> findAfkHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
+        PlayerActivityState state = statesByPlayerUuid.get(playerUuid);
+        if (state == null) {
+            return Optional.empty();
+        }
+        if (state.afk()) {
+            return Optional.of(new AfkHudState(true, 0));
+        }
+        Optional<EffectiveAfkDetectionPolicy> policyOpt = findEffectivePolicy(playerUuid);
+        if (policyOpt.isEmpty() || !policyOpt.get().policy().enabled()) {
+            return Optional.empty();
+        }
+        long timeoutMs = policyOpt.get().policy().inactivityTimeoutMs();
+        long idleMs = Math.max(0L, nowEpochMs - state.lastActivityEpochMs());
+        long remainingMs = Math.max(0L, timeoutMs - idleMs);
+        int remainingSeconds = (int) Math.max(0L, (remainingMs + 999L) / 1000L);
+        if (remainingSeconds <= 5 && remainingSeconds > 0) {
+            return Optional.of(new AfkHudState(false, remainingSeconds));
+        }
+        return Optional.empty();
+    }
+
+    public record AfkHudState(boolean afk, int secondsRemaining) {}
+
     @Nonnull
     public synchronized List<UUID> afkPlayerUuids(@Nonnull String matchId) {
         String normalizedMatchId = matchId == null ? "" : matchId.trim();

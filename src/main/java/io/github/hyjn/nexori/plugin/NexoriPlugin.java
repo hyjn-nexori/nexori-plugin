@@ -479,6 +479,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.nexoriStatusHudService = new NexoriStatusHudService(
                 this.queueCoordinatorService,
                 this.arenaMatchService,
+                this.afkActivityService,
                 this.getLogger()
             );
             this.worldLabelService = new WorldLabelService(
