@@ -206,6 +206,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             validation.username(),
             context,
             request.afk(),
+            request.showHud(),
             System.currentTimeMillis()
         );
         NexoriSetPlayerAfkStatus status = changed

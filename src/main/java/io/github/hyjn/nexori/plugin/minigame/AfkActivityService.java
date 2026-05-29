@@ -176,7 +176,7 @@ public final class AfkActivityService {
             return Optional.empty();
         }
         if (state.afk()) {
-            return Optional.of(new AfkHudState(true, 0));
+            return state.showHud() ? Optional.of(new AfkHudState(true, 0)) : Optional.empty();
         }
         Optional<EffectiveAfkDetectionPolicy> policyOpt = findEffectivePolicy(playerUuid);
         if (policyOpt.isEmpty() || !policyOpt.get().policy().enabled()) {
@@ -229,6 +229,7 @@ public final class AfkActivityService {
         @Nonnull String usernameHint,
         @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
         boolean afk,
+        boolean showHud,
         long nowEpochMs
     ) {
         AfkActivityTransition transition;
@@ -244,7 +245,7 @@ public final class AfkActivityService {
             if (afk) {
                 long lastActivity = current != null ? current.lastActivityEpochMs() : nowEpochMs;
                 statesByPlayerUuid.put(playerUuid, new PlayerActivityState(
-                    effectivePolicy.matchId(), username, lastActivity, true
+                    effectivePolicy.matchId(), username, lastActivity, true, showHud
                 ));
                 if (logger != null) {
                     logger.atInfo().log(
@@ -289,11 +290,21 @@ public final class AfkActivityService {
 
     public boolean setExternalAfk(
         @Nonnull UUID playerUuid,
+        @Nonnull String usernameHint,
         @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
         boolean afk,
         long nowEpochMs
     ) {
-        return setExternalAfk(playerUuid, "", effectivePolicy, afk, nowEpochMs);
+        return setExternalAfk(playerUuid, usernameHint, effectivePolicy, afk, true, nowEpochMs);
+    }
+
+    public boolean setExternalAfk(
+        @Nonnull UUID playerUuid,
+        @Nonnull EffectiveAfkDetectionPolicy effectivePolicy,
+        boolean afk,
+        long nowEpochMs
+    ) {
+        return setExternalAfk(playerUuid, "", effectivePolicy, afk, true, nowEpochMs);
     }
 
     // Removes automatic-tracking state when the policy is disabled or the player is not in a match,
@@ -422,7 +433,11 @@ public final class AfkActivityService {
         @Nonnull String matchId,
         @Nonnull String username,
         long lastActivityEpochMs,
-        boolean afk
+        boolean afk,
+        boolean showHud
     ) {
+        PlayerActivityState(@Nonnull String matchId, @Nonnull String username, long lastActivityEpochMs, boolean afk) {
+            this(matchId, username, lastActivityEpochMs, afk, true);
+        }
     }
 }
