@@ -337,10 +337,13 @@ final class MatchResultValidatorTest {
 
     @Test
     void rejectsFinalResultUnexpectedPlayerOutcome() {
+        // PLAYER_THREE is not in expectedPlayerUuids, arrivedPlayerUuids, activePlayerUuids, or
+        // eliminatedPlayerUuids (NO_CONTEST does not add to eliminated), so it is genuinely unknown
+        // to the match and its outcome should be rejected.
         ArenaActiveMatch match = baseMatchWithOutcomes(
             outcome(PLAYER_ONE, ArenaPlayerResolutionOutcome.WIN, ""),
             outcome(PLAYER_TWO, ArenaPlayerResolutionOutcome.LOSS, ""),
-            outcome(PLAYER_THREE, ArenaPlayerResolutionOutcome.LOSS, "")
+            outcome(PLAYER_THREE, ArenaPlayerResolutionOutcome.NO_CONTEST, "")
         );
 
         MatchResultValidationResult result = validator.validateFinalResult(match, "", Map.of(), new JsonObject());

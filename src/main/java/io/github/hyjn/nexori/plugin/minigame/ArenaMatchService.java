@@ -1248,10 +1248,8 @@ public class ArenaMatchService {
 
     @Nonnull
     private List<UUID> buildRequiredResultPlayerUuids(@Nonnull ArenaActiveMatch match) {
-        if (!match.expectedPlayerUuids().isEmpty()) {
-            return match.expectedPlayerUuids();
-        }
         LinkedHashSet<UUID> required = new LinkedHashSet<>();
+        required.addAll(match.expectedPlayerUuids());
         required.addAll(match.arrivedPlayerUuids());
         required.addAll(match.activePlayerUuids());
         required.addAll(match.eliminatedPlayerUuids());
