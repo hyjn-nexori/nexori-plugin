@@ -90,8 +90,8 @@ public class NexoriCommand extends CommandBase {
         ctx.sendMessage(Message.raw("- /nexoriportallocalbind <portalId> <targetId>"));
         ctx.sendMessage(Message.raw("- /nexoriportalqueuebind <portalId> <queueId> [--mode=<join|leave>]"));
         ctx.sendMessage(Message.raw("- /nexoriportalunbind <portalId>"));
-        ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"] [--instanceTemplateId=<name|none>] [--resolutionTriggerId=<id|none>]"));
-        ctx.sendMessage(Message.raw("  Arena resolution trigger defaults to none. Use last_player_alive to enable the built-in auto winner flow."));
+        ctx.sendMessage(Message.raw("- /nexoriarenaupsert <arenaId> <host:port> <targetId> <maxPlayers> [--displayName=\"...\"] [--instanceTemplateId=<name|none>] [--rulesEngineId=<id>]"));
+        ctx.sendMessage(Message.raw("  Rules engine id identifies the external minigame that receives Nexori lifecycle events."));
         ctx.sendMessage(Message.raw("- /nexoriarenalist"));
         ctx.sendMessage(Message.raw("- /nexoriinstancelist"));
         ctx.sendMessage(Message.raw("- /nexoriqueueupsert <queueId> <arenaIdsCsv> <minPlayers> <maxPlayers> <countdownSeconds> <travelProfile> [--displayName=\"...\"]"));

@@ -91,7 +91,7 @@ final class BackendPayloadContractsTest {
         BackendSyncRequestPayload.ArenaSnapshot arena =
             new BackendSyncRequestPayload.ArenaSnapshot(
                 "arena-1", "Arena One", "remote.srv:25565", "target-1",
-                "template-1", "trigger-1", 8, true
+                "template-1", 8, true
             );
         assertEquals("arena-1", arena.arenaId());
         assertEquals(8, arena.maxSupportedPlayers());

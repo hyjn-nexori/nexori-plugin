@@ -50,7 +50,6 @@ public final class BackendSyncRequestPayloadBuilder {
                 arena.destinationConnectionAddress(),
                 arena.destinationTargetId(),
                 arena.instanceTemplateId(),
-                arena.matchResolutionTriggerId(),
                 arena.maxSupportedPlayers(),
                 arena.enabled()
             ));

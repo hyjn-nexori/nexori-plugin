@@ -81,7 +81,6 @@ final class BackendMatchAdmissionStateReportingServiceMockitoTest {
             "",                              // launchTravelProfileId
             "",                              // instanceTemplateId
             "",                              // instanceWorldName
-            "",                              // matchResolutionTriggerId
             "assign-1",                      // assignmentId
             "ext-match-1",                   // externalMatchId (non-blank — required for reporting)
             "BACKEND_DRIVEN",                // matchSource (required: effectiveMatchSource == BACKEND_DRIVEN)

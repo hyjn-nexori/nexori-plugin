@@ -38,9 +38,6 @@ public final class NexoriArenaListCommand extends CommandBase {
                     + " destination=" + arena.destinationConnectionAddress()
                     + " -> " + arena.destinationTargetId()
                     + " instance=" + (arena.usesInstanceTemplate() ? arena.instanceTemplateId() : "direct")
-                    + " trigger=" + (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(arena.matchResolutionTriggerId())
-                        ? "manual"
-                        : arena.matchResolutionTriggerId())
                     + " rulesEngineId=" + (arena.rulesEngineId().isBlank() ? "<blank>" : arena.rulesEngineId())
                     + " maxPlayers=" + arena.maxSupportedPlayers()
                     + " enabled=" + arena.enabled()

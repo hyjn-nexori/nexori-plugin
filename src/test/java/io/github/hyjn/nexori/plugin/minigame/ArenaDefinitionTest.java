@@ -12,7 +12,7 @@ final class ArenaDefinitionTest {
     private static ArenaDefinition arena(String arenaId) {
         return new ArenaDefinition(
             arenaId, "My Arena", "srv.example.com:25565", "hub-1",
-            "none", "none", "", 16, true
+            "none", "", 16, true
         );
     }
 
@@ -32,7 +32,7 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedNullArenaIdThrows() {
         assertThrows(IllegalArgumentException.class,
-            () -> new ArenaDefinition(null, "Arena", "addr:1", "hub", "none", "none", "", 4, true).normalized());
+            () -> new ArenaDefinition(null, "Arena", "addr:1", "hub", "none", "", 4, true).normalized());
     }
 
     // ── normalized: displayName ───────────────────────────────────────────────
@@ -40,21 +40,21 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedPreservesDisplayNameCase() {
         ArenaDefinition a = new ArenaDefinition(
-            "arena-1", "  My Arena  ", "addr:1", "hub", "none", "none", "", 4, true).normalized();
+            "arena-1", "  My Arena  ", "addr:1", "hub", "none", "", 4, true).normalized();
         assertEquals("My Arena", a.displayName());
     }
 
     @Test
     void normalizedBlankDisplayNameDefaultsToArenaId() {
         ArenaDefinition a = new ArenaDefinition(
-            "arena-1", "   ", "addr:1", "hub", "none", "none", "", 4, true).normalized();
+            "arena-1", "   ", "addr:1", "hub", "none", "", 4, true).normalized();
         assertEquals("arena-1", a.displayName());
     }
 
     @Test
     void normalizedNullDisplayNameDefaultsToArenaId() {
         ArenaDefinition a = new ArenaDefinition(
-            "arena-1", null, "addr:1", "hub", "none", "none", "", 4, true).normalized();
+            "arena-1", null, "addr:1", "hub", "none", "", 4, true).normalized();
         assertEquals("arena-1", a.displayName());
     }
 
@@ -63,14 +63,14 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedTrimsAndLowercasesDestinationAddress() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "  SRV.EXAMPLE.COM:25565  ", "hub", "none", "none", "", 4, true).normalized();
+            "a", "A", "  SRV.EXAMPLE.COM:25565  ", "hub", "none", "", 4, true).normalized();
         assertEquals("srv.example.com:25565", a.destinationConnectionAddress());
     }
 
     @Test
     void normalizedNullAddressBecomesEmpty() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", null, "hub", "none", "none", "", 4, true).normalized();
+            "a", "A", null, "hub", "none", "", 4, true).normalized();
         assertEquals("", a.destinationConnectionAddress());
     }
 
@@ -79,52 +79,29 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedNullInstanceTemplateIdBecomesNone() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", null, "none", "", 4, true).normalized();
+            "a", "A", "addr:1", "hub", null, "", 4, true).normalized();
         assertEquals(ArenaDefinition.NO_INSTANCE_TEMPLATE_ID, a.instanceTemplateId());
     }
 
     @Test
     void normalizedBlankInstanceTemplateIdBecomesNone() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "  ", "none", "", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "  ", "", 4, true).normalized();
         assertEquals(ArenaDefinition.NO_INSTANCE_TEMPLATE_ID, a.instanceTemplateId());
     }
 
     @Test
     void normalizedNoneStringInstanceTemplateIdStaysNone() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "NONE", "none", "", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "NONE", "", 4, true).normalized();
         assertEquals(ArenaDefinition.NO_INSTANCE_TEMPLATE_ID, a.instanceTemplateId());
     }
 
     @Test
     void normalizedRealInstanceTemplateIdPreserved() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "  MyTemplate  ", "none", "", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "  MyTemplate  ", "", 4, true).normalized();
         assertEquals("MyTemplate", a.instanceTemplateId());
-    }
-
-    // ── normalized: matchResolutionTriggerId ──────────────────────────────────
-
-    @Test
-    void normalizedNullTriggerIdBecomesNone() {
-        ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", null, "", 4, true).normalized();
-        assertEquals(ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID, a.matchResolutionTriggerId());
-    }
-
-    @Test
-    void normalizedBlankTriggerIdBecomesNone() {
-        ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "  ", "", 4, true).normalized();
-        assertEquals(ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID, a.matchResolutionTriggerId());
-    }
-
-    @Test
-    void normalizedRealTriggerIdLowercased() {
-        ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "  LAST_ALIVE  ", "", 4, true).normalized();
-        assertEquals("last_alive", a.matchResolutionTriggerId());
     }
 
     // ── normalized: rulesEngineId ─────────────────────────────────────────────
@@ -132,14 +109,14 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedNullRulesEngineIdBecomesEmpty() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "none", null, 4, true).normalized();
+            "a", "A", "addr:1", "hub", "none", null, 4, true).normalized();
         assertEquals("", a.rulesEngineId());
     }
 
     @Test
     void oldArenaDefinitionsDefaultAfkDetectionDisabledWithThirtySecondTimeout() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "none", "", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "none", "", 4, true).normalized();
 
         assertFalse(a.afkDetectionPolicy().enabled());
         assertEquals(30, a.afkDetectionPolicy().inactivityTimeoutSeconds());
@@ -148,15 +125,15 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedAfkPolicyProtectsOutOfRangeTimeouts() {
         ArenaDefinition belowMin = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "none", "", 4, true,
+            "a", "A", "addr:1", "hub", "none", "", 4, true,
             new AfkDetectionPolicy(true, 1)
         ).normalized();
         ArenaDefinition aboveMax = new ArenaDefinition(
-            "b", "B", "addr:1", "hub", "none", "none", "", 4, true,
+            "b", "B", "addr:1", "hub", "none", "", 4, true,
             new AfkDetectionPolicy(true, 99999)
         ).normalized();
         ArenaDefinition missingTimeout = new ArenaDefinition(
-            "c", "C", "addr:1", "hub", "none", "none", "", 4, true,
+            "c", "C", "addr:1", "hub", "none", "", 4, true,
             new AfkDetectionPolicy(true, 0)
         ).normalized();
 
@@ -168,14 +145,14 @@ final class ArenaDefinitionTest {
     @Test
     void normalizedBlankRulesEngineIdBecomesEmpty() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "none", "  ", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "none", "  ", 4, true).normalized();
         assertEquals("", a.rulesEngineId());
     }
 
     @Test
     void normalizedRulesEngineIdPreservesCase() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "none", "none", "  MyRules_v1  ", 4, true).normalized();
+            "a", "A", "addr:1", "hub", "none", "  MyRules_v1  ", 4, true).normalized();
         assertEquals("MyRules_v1", a.rulesEngineId());
     }
 
@@ -183,13 +160,13 @@ final class ArenaDefinitionTest {
     void normalizedRulesEngineIdTooLongThrows() {
         String tooLong = "a".repeat(ArenaDefinition.MAX_RULES_ENGINE_ID_LENGTH + 1);
         assertThrows(IllegalArgumentException.class,
-            () -> new ArenaDefinition("a", "A", "addr:1", "hub", "none", "none", tooLong, 4, true).normalized());
+            () -> new ArenaDefinition("a", "A", "addr:1", "hub", "none", tooLong, 4, true).normalized());
     }
 
     @Test
     void normalizedRulesEngineIdInvalidCharactersThrows() {
         assertThrows(IllegalArgumentException.class,
-            () -> new ArenaDefinition("a", "A", "addr:1", "hub", "none", "none", "rules@invalid!", 4, true).normalized());
+            () -> new ArenaDefinition("a", "A", "addr:1", "hub", "none", "rules@invalid!", 4, true).normalized());
     }
 
     // ── usesInstanceTemplate ─────────────────────────────────────────────────
@@ -202,14 +179,14 @@ final class ArenaDefinitionTest {
     @Test
     void usesInstanceTemplateTrueWhenSet() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "template-x", "none", "", 4, true);
+            "a", "A", "addr:1", "hub", "template-x", "", 4, true);
         assertTrue(a.usesInstanceTemplate());
     }
 
     @Test
     void usesInstanceTemplateCaseInsensitiveNone() {
         ArenaDefinition a = new ArenaDefinition(
-            "a", "A", "addr:1", "hub", "NONE", "none", "", 4, true);
+            "a", "A", "addr:1", "hub", "NONE", "", 4, true);
         assertFalse(a.usesInstanceTemplate());
     }
 
@@ -242,3 +219,4 @@ final class ArenaDefinitionTest {
         assertEquals("myRules_v1.0-a", ArenaDefinition.normalizeRulesEngineId("myRules_v1.0-a"));
     }
 }
+

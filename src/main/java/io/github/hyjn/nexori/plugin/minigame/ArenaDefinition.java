@@ -10,7 +10,6 @@ public record ArenaDefinition(
     String destinationConnectionAddress,
     String destinationTargetId,
     String instanceTemplateId,
-    String matchResolutionTriggerId,
     String rulesEngineId,
     int maxSupportedPlayers,
     boolean enabled,
@@ -18,7 +17,6 @@ public record ArenaDefinition(
 ) {
 
     public static final String NO_INSTANCE_TEMPLATE_ID = "none";
-    public static final String NO_MATCH_RESOLUTION_TRIGGER_ID = "none";
     public static final int MAX_RULES_ENGINE_ID_LENGTH = 64;
     private static final Pattern RULES_ENGINE_ID_PATTERN = Pattern.compile("[a-zA-Z0-9_.-]*");
 
@@ -28,7 +26,6 @@ public record ArenaDefinition(
         String destinationConnectionAddress,
         String destinationTargetId,
         String instanceTemplateId,
-        String matchResolutionTriggerId,
         int maxSupportedPlayers,
         boolean enabled
     ) {
@@ -38,7 +35,6 @@ public record ArenaDefinition(
             destinationConnectionAddress,
             destinationTargetId,
             instanceTemplateId,
-            matchResolutionTriggerId,
             "",
             maxSupportedPlayers,
             enabled,
@@ -52,7 +48,6 @@ public record ArenaDefinition(
         String destinationConnectionAddress,
         String destinationTargetId,
         String instanceTemplateId,
-        String matchResolutionTriggerId,
         String rulesEngineId,
         int maxSupportedPlayers,
         boolean enabled
@@ -63,7 +58,6 @@ public record ArenaDefinition(
             destinationConnectionAddress,
             destinationTargetId,
             instanceTemplateId,
-            matchResolutionTriggerId,
             rulesEngineId,
             maxSupportedPlayers,
             enabled,
@@ -83,7 +77,6 @@ public record ArenaDefinition(
             normalizedDestinationAddress,
             normalizedTargetId,
             normalizeInstanceTemplateId(instanceTemplateId),
-            normalizeTriggerId(matchResolutionTriggerId),
             normalizeRulesEngineId(rulesEngineId),
             maxSupportedPlayers,
             enabled,
@@ -125,15 +118,6 @@ public record ArenaDefinition(
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? defaultValue : normalized;
-    }
-
-    @Nonnull
-    private static String normalizeTriggerId(String rawValue) {
-        String normalized = normalizeOptional(rawValue, "");
-        if (normalized.isBlank()) {
-            return NO_MATCH_RESOLUTION_TRIGGER_ID;
-        }
-        return normalized;
     }
 
     @Nonnull

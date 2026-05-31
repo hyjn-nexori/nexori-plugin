@@ -83,7 +83,7 @@ public record NexoriMenuV2State(
             pendingDestinationConnectionAddress == null ? "" : pendingDestinationConnectionAddress.trim().toLowerCase(),
             pendingDestinationTargetId == null ? "" : pendingDestinationTargetId.trim().toLowerCase(),
             pendingDestinationInstanceTemplateId == null ? "" : pendingDestinationInstanceTemplateId.trim(),
-            pendingDestinationTriggerId == null || pendingDestinationTriggerId.isBlank() ? "last_player_alive" : pendingDestinationTriggerId.trim().toLowerCase(),
+            pendingDestinationTriggerId == null || pendingDestinationTriggerId.isBlank() ? "" : pendingDestinationTriggerId.trim().toLowerCase(),
             pendingDestinationRulesEngineId == null ? "" : pendingDestinationRulesEngineId.trim(),
             pendingDestinationMaxPlayers == null || pendingDestinationMaxPlayers.isBlank() ? "8" : pendingDestinationMaxPlayers.trim(),
             editingQueueId == null ? "" : editingQueueId.trim().toLowerCase(),
@@ -133,7 +133,7 @@ public record NexoriMenuV2State(
             "",
             "",
             "",
-            "last_player_alive",
+            "",
             "",
             "8",
             "",
@@ -459,13 +459,13 @@ public record NexoriMenuV2State(
     }
 
     @Nonnull
-    public NexoriMenuV2State withDestinationDraft(@Nonnull String displayName, @Nonnull String connectionAddress, @Nonnull String targetId, @Nonnull String instanceTemplateId, @Nonnull String triggerId, @Nonnull String maxPlayers) {
-        return withDestinationDraft(displayName, connectionAddress, targetId, instanceTemplateId, triggerId, pendingDestinationRulesEngineId, maxPlayers);
+    public NexoriMenuV2State withDestinationDraft(@Nonnull String displayName, @Nonnull String connectionAddress, @Nonnull String targetId, @Nonnull String instanceTemplateId, @Nonnull String rulesEngineId, @Nonnull String maxPlayers) {
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, editingDestinationId, displayName, connectionAddress, targetId, instanceTemplateId, "", rulesEngineId, maxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
     }
 
     @Nonnull
-    public NexoriMenuV2State withDestinationDraft(@Nonnull String displayName, @Nonnull String connectionAddress, @Nonnull String targetId, @Nonnull String instanceTemplateId, @Nonnull String triggerId, @Nonnull String rulesEngineId, @Nonnull String maxPlayers) {
-        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, editingDestinationId, displayName, connectionAddress, targetId, instanceTemplateId, triggerId, rulesEngineId, maxPlayers, editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
+    public NexoriMenuV2State withDestinationDraft(@Nonnull String displayName, @Nonnull String connectionAddress, @Nonnull String targetId, @Nonnull String instanceTemplateId, @Nonnull String ignoredTriggerId, @Nonnull String rulesEngineId, @Nonnull String maxPlayers) {
+        return withDestinationDraft(displayName, connectionAddress, targetId, instanceTemplateId, rulesEngineId, maxPlayers);
     }
 
     @Nonnull
@@ -475,7 +475,7 @@ public record NexoriMenuV2State(
 
     @Nonnull
     public NexoriMenuV2State clearedDestinationDraft() {
-        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, "", "", "", "", "", "last_player_alive", "", "8", editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
+        return copy(selectedView, selectedPortalTab, selectedMinigameTab, selectedTravelProfileId, statusText, pendingServerDisplayName, pendingServerAddress, editingServerAddress, selectedTravelInConnectionAddress, selectedTravelInPortalId, selectedTravelInTargetId, selectedTravelInDisplayName, selectedTravelOutConnectionAddress, selectedTravelOutPortalId, selectedTravelOutTargetId, selectedTravelOutDisplayName, selectedQueuePortalConnectionAddress, selectedQueuePortalId, selectedQueuePortalDisplayName, selectedQueueBindingQueueId, selectedQueueBindingQueueDisplayName, "", "", "", "", "", "", "", "8", editingQueueId, pendingQueueDisplayName, pendingQueueDestinationId, pendingQueueMinPlayers, pendingQueueMaxPlayers, pendingQueueCountdownSeconds);
     }
 
     @Nonnull

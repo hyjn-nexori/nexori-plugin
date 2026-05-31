@@ -64,7 +64,6 @@ public record BackendSyncRequestPayload(
         String destinationConnectionAddress,
         String destinationTargetId,
         String instanceTemplateId,
-        String matchResolutionTriggerId,
         int maxSupportedPlayers,
         boolean enabled
     ) {

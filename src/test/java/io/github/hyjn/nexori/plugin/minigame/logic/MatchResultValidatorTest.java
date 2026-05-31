@@ -6,7 +6,6 @@ import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
 import io.github.hyjn.nexori.plugin.minigame.ArenaPlayerResolutionOutcome;
-import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 
 import org.junit.jupiter.api.Test;
@@ -496,7 +495,6 @@ final class MatchResultValidatorTest {
             "keep_inventory",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
             "",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-default",
             "assignment-1",
             "INITIAL_MATCH",

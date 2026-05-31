@@ -5,18 +5,14 @@ import com.google.gson.JsonObject;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
-import com.hypixel.hytale.protocol.packets.interface_.CustomPage;
-import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBinding;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
-import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
-import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -55,7 +51,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -76,7 +71,6 @@ public class ArenaMatchService {
     private static final long WINNER_RETURN_DELAY_MS = 10_000L;
     private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 10_000L;
     private static final long RETURN_RETRY_DELAY_MS = 5_000L;
-    private static final String RESPAWN_PAGE_CLASS_NAME = "com.hypixel.hytale.server.core.entity.entities.player.pages.RespawnPage";
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
     private static final String CLOSE_REASON_MATCH_RUNTIME_ENDED = "MATCH_RUNTIME_ENDED";
@@ -113,7 +107,6 @@ public class ArenaMatchService {
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
     private final Map<String, AfkDetectionPolicy> matchAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
     private final Map<String, Map<UUID, AfkDetectionPolicy>> playerAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
-    private final Set<UUID> patchedRespawnPagePlayers = new HashSet<>();
 
     /**
      * Creates the arena match runtime service used by queue launch, match resolution, and return HUDs.
@@ -358,7 +351,6 @@ public class ArenaMatchService {
             return lifecycleDispatches;
         }
 
-        patchedRespawnPagePlayers.remove(playerRef.getUuid());
         if (minigameTransferService != null) {
             minigameTransferService.onPlayerDisconnect(playerRef.getUuid(), System.currentTimeMillis());
         }
@@ -377,7 +369,7 @@ public class ArenaMatchService {
         long now = System.currentTimeMillis();
         ArenaActiveMatch updated = match.withoutReturnedPlayer(playerRef.getUuid(), now)
             .withLastError("Player disconnected: " + event.getDisconnectReason(), now);
-        updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
+        updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now);
 
         storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
         return lifecycleDispatches;
@@ -413,7 +405,6 @@ public class ArenaMatchService {
         }
 
         secureTravelService.removePendingArrival(event.getUuid());
-        patchedRespawnPagePlayers.remove(event.getUuid());
         if (minigameTransferService != null) {
             minigameTransferService.onPlayerDisconnect(event.getUuid(), System.currentTimeMillis());
         }
@@ -438,7 +429,7 @@ public class ArenaMatchService {
                 if (match != null) {
                     ArenaActiveMatch updated = match.withExpectedPlayerCount(match.expectedPlayerCount() - 1, now)
                         .withLastError(reason, now);
-                    updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, now), now);
+                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now);
                     storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
                 }
                 return lifecycleDispatches;
@@ -508,26 +499,7 @@ public class ArenaMatchService {
         }
 
         ArenaActiveMatch updated = match;
-        boolean useBuiltInDeathElimination =
-            LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(updated.matchResolutionTriggerId());
-        DeathComponent deathComponent = store.getComponent(ref, DeathComponent.getComponentType());
-        if (useBuiltInDeathElimination && deathComponent != null) {
-            patchActiveRespawnPageForLastPlayerAlive(ref, store, player, playerRef);
-        } else {
-            patchedRespawnPagePlayers.remove(playerRef.getUuid());
-        }
-        if (useBuiltInDeathElimination
-            && !updated.isPlayerEliminated(playerRef.getUuid())
-            && deathComponent != null) {
-            updated = updated.withEliminatedPlayer(
-                playerRef.getUuid(),
-                nowEpochMs + ELIMINATED_RETURN_DELAY_MS,
-                nowEpochMs
-            );
-            playerRef.sendMessage(Message.raw("You were eliminated. Returning to the lobby in 5 seconds."));
-        }
-
-        ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+        ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
         updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
         collectMatchPlacementCompletedTransition(
             beforeLifecycleReconcile,
@@ -946,15 +918,6 @@ public class ArenaMatchService {
             evaluation.placedInitialPlayers(),
             evaluation.placementComplete()
         ));
-    }
-
-    /**
-     * Returns the configured resolution trigger id for an active match.
-     */
-    @Nonnull
-    public synchronized Optional<String> findMatchResolutionTriggerId(@Nonnull String rawMatchId) {
-        return find(rawMatchId)
-            .map(ArenaActiveMatch::matchResolutionTriggerId);
     }
 
     @Nonnull
@@ -1445,7 +1408,6 @@ public class ArenaMatchService {
             match.assignmentId(),
             match.externalMatchId(),
             match.rulesEngineId(),
-            match.matchResolutionTriggerId(),
             match.expectedPlayerUuids(),
             match.arrivedPlayerUuids(),
             match.activePlayerUuids(),
@@ -1550,7 +1512,6 @@ public class ArenaMatchService {
                 launch.launchTravelProfileId(),
                 launch.instanceTemplateId(),
                 instanceWorldName,
-                launch.matchResolutionTriggerId(),
                 launch.rulesEngineId(),
                 launch.assignmentId(),
                 launch.assignmentType(),
@@ -1611,7 +1572,7 @@ public class ArenaMatchService {
             }
         }
 
-        ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, now);
+        ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, now);
         updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, now);
         matchesById.put(updated.matchId(), updated);
         refreshRuntimeSpectatorVisibility(updated);
@@ -1710,7 +1671,7 @@ public class ArenaMatchService {
             match.assignmentId(),
             match.externalMatchId(),
             match.rulesEngineId(),
-            match.matchResolutionTriggerId(),
+            "",
             match.expectedPlayerUuids(),
             match.arrivedPlayerUuids(),
             match.activePlayerUuids(),
@@ -1899,10 +1860,10 @@ public class ArenaMatchService {
     }
 
     /**
-     * Applies Nexori-owned automatic resolution rules to a match runtime.
+     * Schedules lobby return for an already reported winner.
      */
     @Nonnull
-    private ArenaActiveMatch applyAutomaticResolutionTrigger(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
+    private ArenaActiveMatch scheduleWinnerReturnIfNeeded(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
         if (match.hasWinner()) {
             UUID winnerUuid = parseWinnerUuid(match.winnerPlayerUuid());
             if (winnerUuid != null && !match.hasPendingReturn(winnerUuid) && match.hasPlayer(winnerUuid)) {
@@ -1910,24 +1871,7 @@ public class ArenaMatchService {
             }
             return match;
         }
-
-        if (match.matchResolutionTriggerId().isBlank()
-            || ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(match.matchResolutionTriggerId())) {
-            return match;
-        }
-
-        if (match.placementCompletedAtEpochMs() <= 0L) {
-            return match;
-        }
-
-        if (LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(match.matchResolutionTriggerId())) {
-            return LastPlayerAliveArenaMatchResolutionTrigger.evaluate(this, match, nowEpochMs);
-        }
-
-        return match.withLastError(
-            "Unknown arena match resolution trigger '" + match.matchResolutionTriggerId() + "'.",
-            nowEpochMs
-        );
+        return match;
     }
 
     /**
@@ -1972,9 +1916,7 @@ public class ArenaMatchService {
         @Nonnull Store<EntityStore> store,
         long nowEpochMs
     ) {
-        boolean builtInLastPlayerAlive =
-            LastPlayerAliveArenaMatchResolutionTrigger.ID.equalsIgnoreCase(match.matchResolutionTriggerId());
-        if (!builtInLastPlayerAlive && store.getComponent(ref, DeathComponent.getComponentType()) != null) {
+        if (store.getComponent(ref, DeathComponent.getComponentType()) != null) {
             tryRespawn(store, ref, playerRef);
             return match.withPendingReturn(playerRef.getUuid(), nowEpochMs + RETURN_RETRY_DELAY_MS, nowEpochMs);
         }
@@ -2035,47 +1977,11 @@ public class ArenaMatchService {
     private void tryRespawn(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref, @Nonnull PlayerRef playerRef) {
         try {
             DeathComponent.respawn(store, ref);
-            patchedRespawnPagePlayers.remove(playerRef.getUuid());
         } catch (Exception exception) {
             logger.atWarning().withCause(exception).log(
                 "Failed to request respawn for eliminated Nexori player " + playerRef.getUuid() + "."
             );
         }
-    }
-
-    private void patchActiveRespawnPageForLastPlayerAlive(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull Player player,
-        @Nonnull PlayerRef playerRef
-    ) {
-        if (patchedRespawnPagePlayers.contains(playerRef.getUuid())) {
-            return;
-        }
-
-        PageManager pageManager = player.getPageManager();
-        if (pageManager == null || pageManager.getCustomPage() == null) {
-            return;
-        }
-        if (!RESPAWN_PAGE_CLASS_NAME.equals(pageManager.getCustomPage().getClass().getName())) {
-            return;
-        }
-
-        UICommandBuilder commands = new UICommandBuilder();
-        commands.set("#RespawnButton.Visible", false);
-        commands.set("#RespawnButton.Disabled", true);
-        commands.set("#DeathData.Visible", false);
-
-        CustomPage patch = new CustomPage(
-            RESPAWN_PAGE_CLASS_NAME,
-            false,
-            false,
-            pageManager.getCustomPage().getLifetime(),
-            commands.getCommands(),
-            new CustomUIEventBinding[0]
-        );
-        pageManager.updateCustomPage(patch);
-        patchedRespawnPagePlayers.add(playerRef.getUuid());
     }
 
     private UUID parseWinnerUuid(@Nonnull String rawWinnerPlayerUuid) {
@@ -2094,7 +2000,6 @@ public class ArenaMatchService {
 
     private void removeMatchPlayers(@Nonnull String matchId, @Nonnull List<UUID> playerUuids) {
         for (UUID playerUuid : playerUuids) {
-            patchedRespawnPagePlayers.remove(playerUuid);
             restoreRuntimeSpectator(playerUuid, SpectatorRuntimeReason.MATCH_CLEANUP);
             String currentMatchId = matchIdByPlayerUuid.get(playerUuid);
             if (matchId.equals(currentMatchId)) {
@@ -2996,7 +2901,6 @@ public class ArenaMatchService {
         String assignmentId,
         String externalMatchId,
         String rulesEngineId,
-        String matchResolutionTriggerId,
         List<UUID> expectedPlayerUuids,
         List<UUID> arrivedPlayerUuids,
         List<UUID> activePlayerUuids,
@@ -3082,7 +2986,6 @@ public class ArenaMatchService {
                     launch.launchTravelProfileId(),
                     launch.instanceTemplateId(),
                     instanceWorldName,
-                    launch.matchResolutionTriggerId(),
                     launch.rulesEngineId(),
                     launch.assignmentId(),
                     launch.assignmentType(),
@@ -3147,7 +3050,7 @@ public class ArenaMatchService {
                 }
             }
 
-            ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+            ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
             updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
             matchesById.put(updated.matchId(), updated);
             refreshRuntimeSpectatorVisibility(updated);
@@ -3234,7 +3137,7 @@ public class ArenaMatchService {
 
             ArenaActiveMatch before = match;
             ArenaActiveMatch updated = match.withPlayerPlacementConfirmed(playerUuid, nowEpochMs);
-            ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+            ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
             updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
             matchesById.put(updated.matchId(), updated);
 
@@ -3306,7 +3209,7 @@ public class ArenaMatchService {
                 if (match != null && match.hasPlayer(playerUuid)) {
                     ArenaActiveMatch updated = match.withoutReturnedPlayer(playerUuid, nowEpochMs)
                         .withLastError("Transfer placement failed: " + reason, nowEpochMs);
-                    updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, nowEpochMs), nowEpochMs);
+                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, nowEpochMs), nowEpochMs);
                     storeUpdatedMatchOrCloseEmptyRuntime(match, updated, nowEpochMs, "TRANSFER_FAILED", lifecycleDispatches);
                 } else if (match == null) {
                     // nothing to clean up in match

@@ -253,7 +253,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 info.assignmentId(),
                 info.externalMatchId(),
                 info.rulesEngineId(),
-                info.matchResolutionTriggerId(),
+                "",
                 info.expectedPlayerUuids(),
                 info.arrivedPlayerUuids(),
                 info.activePlayerUuids(),
@@ -613,6 +613,6 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
     @Nonnull
     @Override
     public Optional<String> findMatchResolutionTriggerId(@Nonnull String matchId) {
-        return arenaMatchService.findMatchResolutionTriggerId(matchId);
+        return Optional.empty();
     }
 }

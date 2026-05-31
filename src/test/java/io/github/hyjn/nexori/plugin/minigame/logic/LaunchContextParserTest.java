@@ -37,7 +37,6 @@ final class LaunchContextParserTest {
         assertEquals("lobby-one.natural_spawn", context.returnFallbackTargetId());
         assertEquals("keep_inventory", context.launchTravelProfileId());
         assertEquals("template-one", context.instanceTemplateId());
-        assertEquals("last-player-alive", context.matchResolutionTriggerId());
         assertEquals("rules.Engine-1", context.rulesEngineId());
         assertEquals("assignment-one", context.assignmentId());
         assertEquals("INITIAL_MATCH", context.assignmentType());
@@ -141,7 +140,6 @@ final class LaunchContextParserTest {
         LaunchContextData context = parser.parse(minimalContext());
 
         assertEquals(ArenaDefinition.NO_INSTANCE_TEMPLATE_ID, context.instanceTemplateId());
-        assertEquals(ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID, context.matchResolutionTriggerId());
         assertEquals("", context.rulesEngineId());
         assertEquals("", context.assignmentId());
         assertEquals("INITIAL_MATCH", context.assignmentType());
@@ -166,7 +164,6 @@ final class LaunchContextParserTest {
     void optionalBlankFieldsFallBackToDefaults() {
         JsonObject root = validInitialContext();
         root.addProperty("instanceTemplateId", " ");
-        root.addProperty("matchResolutionTriggerId", " ");
         root.addProperty("assignmentId", " ");
         root.addProperty("assignmentType", " ");
         root.addProperty("externalMatchId", " ");
@@ -178,7 +175,6 @@ final class LaunchContextParserTest {
         LaunchContextData context = parser.parse(root);
 
         assertEquals(ArenaDefinition.NO_INSTANCE_TEMPLATE_ID, context.instanceTemplateId());
-        assertEquals(ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID, context.matchResolutionTriggerId());
         assertEquals("", context.assignmentId());
         assertEquals("INITIAL_MATCH", context.assignmentType());
         assertEquals("", context.externalMatchId());
@@ -317,7 +313,6 @@ final class LaunchContextParserTest {
     private static JsonObject validInitialContext() {
         JsonObject root = minimalContext();
         root.addProperty("instanceTemplateId", "template-one");
-        root.addProperty("matchResolutionTriggerId", "Last-Player-Alive");
         root.addProperty("rulesEngineId", "rules.Engine-1");
         root.addProperty("assignmentId", "assignment-one");
         root.addProperty("assignmentType", "INITIAL_MATCH");

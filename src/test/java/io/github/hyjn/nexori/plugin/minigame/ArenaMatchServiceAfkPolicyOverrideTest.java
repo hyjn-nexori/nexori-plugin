@@ -116,7 +116,6 @@ final class ArenaMatchServiceAfkPolicyOverrideTest {
             "keep_inventory",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
             "",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-default",
             "assignment-1",
             "INITIAL_MATCH",

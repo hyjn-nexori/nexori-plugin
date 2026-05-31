@@ -19,7 +19,6 @@ public record LaunchContextData(
     String returnFallbackTargetId,
     String launchTravelProfileId,
     String instanceTemplateId,
-    String matchResolutionTriggerId,
     String rulesEngineId,
     String assignmentId,
     String assignmentType,

@@ -763,7 +763,7 @@ final class MinigameTransferServiceTest {
         return new ArenaActiveMatch(
             matchId, "q1", "arena1", "lobby1", "lobby:25565", "lobby1.natural_spawn",
             "nexori_launch", "none", "",
-            "none", "", "assign-1", "INITIAL_MATCH",
+            "", "assign-1", "INITIAL_MATCH",
             "", ArenaMatchSource.BACKEND_DRIVEN.id(),        // required for backfill admission
             0, expectedCount + 2, true,                       // admissionCapacity > roster, backfillEnabled
             QueueBackfillMode.PLACEMENT_ONLY.id(), 0,        // PLACEMENT_ONLY: open while placement not complete
@@ -781,7 +781,7 @@ final class MinigameTransferServiceTest {
         return new ArenaActiveMatch(
             matchId, "q1", "arena1", "lobby1", "lobby:25565", "lobby1.natural_spawn",
             "nexori_launch", "my_template", matchId + "_nexori_world",
-            "none", "", "assign-1", "INITIAL_MATCH",
+            "", "assign-1", "INITIAL_MATCH",
             "", ArenaMatchSource.BACKEND_DRIVEN.id(),
             0, expectedCount + 2, true,
             QueueBackfillMode.PLACEMENT_ONLY.id(), 0,

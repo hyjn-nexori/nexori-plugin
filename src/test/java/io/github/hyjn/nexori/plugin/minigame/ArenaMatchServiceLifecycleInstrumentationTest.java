@@ -120,52 +120,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
     }
 
     @Test
-    void lastPlayerAliveDoesNotResolveBeforePlacementCompleted() {
-        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
-        ArenaActiveMatch match = lastPlayerAliveMatch(
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE),
-            0L
-        );
-
-        ArenaActiveMatch updated = applyAutomaticResolutionTrigger(service, match, 2_000L);
-
-        assertEquals("", updated.winnerPlayerUuid());
-        assertEquals(false, updated.hasPendingReturn(PLAYER_ONE));
-    }
-
-    @Test
-    void arrivedOnlyPlayerDoesNotAllowWinnerBeforePlacementCompleted() {
-        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
-        ArenaActiveMatch match = lastPlayerAliveMatch(
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE),
-            0L
-        );
-
-        assertEquals(List.of(PLAYER_ONE), match.alivePlayerUuids());
-        assertEquals("", applyAutomaticResolutionTrigger(service, match, 2_000L).winnerPlayerUuid());
-    }
-
-    @Test
-    void lastPlayerAliveResolvesAfterPlacementCompletedForNoInstanceArena() {
-        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
-        ArenaActiveMatch match = lastPlayerAliveMatch(
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE, PLAYER_TWO),
-            List.of(PLAYER_ONE),
-            1_500L
-        );
-
-        ArenaActiveMatch updated = applyAutomaticResolutionTrigger(service, match, 2_000L);
-
-        assertEquals(PLAYER_ONE.toString(), updated.winnerPlayerUuid());
-        assertEquals(true, updated.hasPendingReturn(PLAYER_ONE));
-    }
-
-    @Test
     void duplicateArrivalDoesNotReemitPlayerArrived() {
         NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
         ArenaMatchService service = service(dispatcher);
@@ -1112,33 +1066,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
         }
     }
 
-    private static ArenaActiveMatch applyAutomaticResolutionTrigger(
-        ArenaMatchService service,
-        ArenaActiveMatch match,
-        long nowEpochMs
-    ) {
-        try {
-            Method method = ArenaMatchService.class.getDeclaredMethod(
-                "applyAutomaticResolutionTrigger",
-                ArenaActiveMatch.class,
-                long.class
-            );
-            method.setAccessible(true);
-            return (ArenaActiveMatch) method.invoke(service, match, nowEpochMs);
-        } catch (NoSuchMethodException | IllegalAccessException exception) {
-            throw new AssertionError(exception);
-        } catch (InvocationTargetException exception) {
-            Throwable cause = exception.getCause();
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            if (cause instanceof Error error) {
-                throw error;
-            }
-            throw new AssertionError(cause);
-        }
-    }
-
     private static void storeUpdatedMatchOrCloseEmptyRuntime(
         ArenaMatchService service,
         ArenaActiveMatch previous,
@@ -1217,7 +1144,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
             "default",
             "",
             "",
-            "none",
             "capture_the_zone",
             "assignment-1",
             "INITIAL_MATCH",
@@ -1272,7 +1198,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
             "default",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
             "",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "capture_the_zone",
             "assignment-1",
             "INITIAL_MATCH",
@@ -1322,7 +1247,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
             "default",
             "",
             "",
-            "none",
             "capture_the_zone",
             "assignment-1",
             "INITIAL_MATCH",
@@ -1372,7 +1296,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
             "default",
             "",
             "",
-            "none",
             "capture_the_zone",
             "assignment-1",
             "INITIAL_MATCH",
@@ -1411,3 +1334,5 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
         ).normalized();
     }
 }
+
+

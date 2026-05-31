@@ -5,7 +5,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
-import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode;
@@ -62,7 +61,6 @@ final class MinigameLaunchContextFactoryTest {
             "arena.example:19132",
             "target-1",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-1",
             4,
             true,
@@ -297,7 +295,6 @@ final class MinigameLaunchContextFactoryTest {
             "arena.example:19132",
             "",
             "template-1",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-1",
             4,
             true
@@ -425,7 +422,6 @@ final class MinigameLaunchContextFactoryTest {
             "arena.example:19132",
             destinationTargetId,
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-1",
             maxSupportedPlayers,
             true

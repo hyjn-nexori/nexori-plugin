@@ -51,7 +51,6 @@ import io.github.hyjn.nexori.plugin.discovery.DiscoveredDestinationTargetSummary
 import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
-import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode;

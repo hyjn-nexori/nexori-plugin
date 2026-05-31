@@ -104,7 +104,6 @@ final class CatalogSyncRequestBuilderTest {
             " Destination.EXAMPLE:25565 ",
             " Target-One ",
             " Template-One ",
-            " Trigger-One ",
             "rules.Engine-1",
             8,
             true
@@ -171,7 +170,6 @@ final class CatalogSyncRequestBuilderTest {
             "destination.example:25565",
             "target-one",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             "rules.Engine-1",
             8,
             true
@@ -221,7 +219,6 @@ final class CatalogSyncRequestBuilderTest {
             "destination.example:25565",
             "target-one",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             "rules.Engine-1",
             8,
             true

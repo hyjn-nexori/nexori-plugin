@@ -38,9 +38,6 @@ public final class LaunchContextParser {
             root.has("instanceTemplateId")
                 ? normalizeOptional(root.get("instanceTemplateId").getAsString(), ArenaDefinition.NO_INSTANCE_TEMPLATE_ID)
                 : ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            root.has("matchResolutionTriggerId")
-                ? normalizeOptional(root.get("matchResolutionTriggerId").getAsString(), ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID).toLowerCase()
-                : ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             root.has("rulesEngineId")
                 ? ArenaDefinition.normalizeRulesEngineId(root.get("rulesEngineId").getAsString())
                 : "",

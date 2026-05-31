@@ -44,7 +44,6 @@ final class MinigameLaunchContextFactoryBackfillTest {
             "localhost:25565",
             "skywars_arena.spawn",
             "skywars_nexori_template",
-            "last_player_alive",
             "skywars_rules",
             2,
             true,
@@ -84,7 +83,6 @@ final class MinigameLaunchContextFactoryBackfillTest {
         assertEquals("BACKFILL", context.get("assignmentType").getAsString());
         assertEquals("skywars_nexori_template", context.get("instanceTemplateId").getAsString());
         assertEquals("default_world_natural_spawn", context.get("serverEntryMode").getAsString());
-        assertEquals("last_player_alive", context.get("matchResolutionTriggerId").getAsString());
         assertEquals("skywars_rules", context.get("rulesEngineId").getAsString());
         assertTrue(context.has("backfillEnabled"));
         assertTrue(context.has("backfillMode"));

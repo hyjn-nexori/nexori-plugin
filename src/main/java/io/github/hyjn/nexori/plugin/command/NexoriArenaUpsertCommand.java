@@ -24,7 +24,6 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
     private final RequiredArg<Integer> maxPlayersArg;
     private final OptionalArg<String> displayNameArg;
     private final OptionalArg<String> instanceTemplateIdArg;
-    private final OptionalArg<String> resolutionTriggerIdArg;
     private final OptionalArg<String> rulesEngineIdArg;
 
     public NexoriArenaUpsertCommand(@Nonnull NexoriPlugin plugin, @Nonnull ArenaService arenaService) {
@@ -41,14 +40,9 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
             "Optional built-in instance template id. Defaults to 'none'.",
             ArgTypes.STRING
         );
-        this.resolutionTriggerIdArg = withOptionalArg(
-            "resolutionTriggerId",
-            "Optional automatic arena resolution trigger id. Defaults to 'none'; use 'last_player_alive' to enable built-in auto resolution.",
-            ArgTypes.STRING
-        );
         this.rulesEngineIdArg = withOptionalArg(
             "rulesEngineId",
-            "Optional external rules engine id for manual/custom matches.",
+            "Optional external rules engine id for lifecycle events and public API resolution.",
             ArgTypes.STRING
         );
         setPermissionGroups("OP");
@@ -70,13 +64,6 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                     instanceTemplateId = ArenaDefinition.NO_INSTANCE_TEMPLATE_ID;
                 }
             }
-            String resolutionTriggerId = "";
-            if (context.provided(resolutionTriggerIdArg)) {
-                resolutionTriggerId = context.get(resolutionTriggerIdArg);
-                if (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(resolutionTriggerId)) {
-                    resolutionTriggerId = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID;
-                }
-            }
             String rulesEngineId = context.provided(rulesEngineIdArg) ? context.get(rulesEngineIdArg) : "";
             ArenaDefinition saved = arenaService.upsert(new ArenaDefinition(
                 arenaId,
@@ -84,7 +71,6 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                 context.get(destinationArg),
                 context.get(targetIdArg),
                 instanceTemplateId,
-                resolutionTriggerId,
                 rulesEngineId,
                 context.get(maxPlayersArg),
                 true
@@ -94,9 +80,6 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
                     + " destination=" + saved.destinationConnectionAddress()
                     + " -> " + saved.destinationTargetId()
                     + " instance=" + (saved.usesInstanceTemplate() ? saved.instanceTemplateId() : "direct")
-                    + " trigger=" + (ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(saved.matchResolutionTriggerId())
-                        ? "manual"
-                        : saved.matchResolutionTriggerId())
                     + " rulesEngineId=" + (saved.rulesEngineId().isBlank() ? "<blank>" : saved.rulesEngineId())
                     + " maxPlayers=" + saved.maxSupportedPlayers()
                     + "."

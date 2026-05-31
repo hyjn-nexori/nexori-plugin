@@ -108,7 +108,6 @@ public final class MinigameLaunchContextFactory {
         // MinigameTransferService can handle BACKFILL using the same code path.
         if (arena != null) {
             root.addProperty("instanceTemplateId", arena.instanceTemplateId());
-            root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
             root.addProperty("rulesEngineId", arena.rulesEngineId());
             QueueBackfillMode backfillMode = queue.effectiveBackfillMode();
             int admissionCapacity = Math.max(queue.maxPlayers(), 0);
@@ -220,7 +219,6 @@ public final class MinigameLaunchContextFactory {
         root.addProperty("returnFallbackTargetId", originReturnTargetId);
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
         root.addProperty("instanceTemplateId", arena.instanceTemplateId());
-        root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
         root.addProperty("rulesEngineId", arena.rulesEngineId());
         root.addProperty("expectedPlayerCount", expectedPlayerUuids.size());
         root.addProperty("admissionPolicySchemaVersion", admissionPolicySchemaVersion);

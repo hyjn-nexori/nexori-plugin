@@ -17,7 +17,7 @@ final class ArenaStoreTest {
 
     private static ArenaDefinition arena(String id) {
         return new ArenaDefinition(id, "Arena " + id, "srv.example.com:25565", "hub-1",
-            "none", "none", "", 16, true);
+            "none", "", 16, true);
     }
 
     @Test
@@ -107,3 +107,4 @@ final class ArenaStoreTest {
             "Corrupt JSON propagates as JsonSyntaxException (RuntimeException)");
     }
 }
+

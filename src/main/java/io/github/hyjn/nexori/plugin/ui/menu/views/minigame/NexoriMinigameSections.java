@@ -52,7 +52,6 @@ import io.github.hyjn.nexori.plugin.discovery.UiResumeAction;
 import io.github.hyjn.nexori.plugin.minigame.AfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
-import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode;
@@ -197,8 +196,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         List<String> instanceIds = buildInstanceTemplateIds();
         List<InstanceSpawnSlotDefinition> slots = plugin.getInstanceSpawnSlotService().list();
 
-        boolean manualResolution = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(state.pendingDestinationTriggerId());
-        int setupHeight = manualResolution ? 228 : 156;
+        int setupHeight = 228;
         int selectorViewportHeight = 300;
         int selectorHeight = 72 + 12 + selectorViewportHeight + 24;
         int savedViewportHeight = 300;
@@ -287,7 +285,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                     state.pendingDestinationConnectionAddress(),
                                     state.pendingDestinationTargetId(),
                                     saved.instanceTemplateId(),
-                                    state.pendingDestinationTriggerId(),
+                                    state.pendingDestinationRulesEngineId(),
                                     state.pendingDestinationMaxPlayers()
                                 )
                                 .withStatusText((editing == null ? "Saved" : "Updated") + " spawn slot for " + saved.instanceTemplateId() + ".")
@@ -382,7 +380,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                     state.pendingDestinationConnectionAddress(),
                                     state.pendingDestinationTargetId(),
                                     instanceId,
-                                    state.pendingDestinationTriggerId(),
+                                    state.pendingDestinationRulesEngineId(),
                                     state.pendingDestinationMaxPlayers()
                                 )
                                 .withStatusText("Selected instance template " + instanceId + ".")
@@ -493,7 +491,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             state.pendingDestinationConnectionAddress(),
                             state.pendingDestinationTargetId(),
                             slot.instanceTemplateId(),
-                            state.pendingDestinationTriggerId(),
+                            state.pendingDestinationRulesEngineId(),
                             state.pendingDestinationMaxPlayers()
                         )
                         .withStatusText("Move to the new position and save again for " + slot.instanceTemplateId() + ".")
@@ -574,10 +572,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         String selectedInstance = state.pendingDestinationInstanceTemplateId().isBlank()
                 ? (editing == null ? "Select an instance template below." : editing.instanceTemplateId())
                 : state.pendingDestinationInstanceTemplateId();
-        String selectedTrigger = "last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
-                ? "Last Player Alive"
-                : "Manual";
-        boolean manualResolution = ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equalsIgnoreCase(state.pendingDestinationTriggerId());
         String rulesEngineValue = state.pendingDestinationRulesEngineId().isBlank()
             ? (editing == null ? "" : editing.rulesEngineId())
             : state.pendingDestinationRulesEngineId();
@@ -589,16 +583,14 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         GroupBuilder card = card(width, height, PANEL_BG);
         card.addChild(label("Games", TITLE, width - 32));
         card.addChild(spacerY(8));
-        card.addChild(label("Choose the server where the arena instance will be created, the instance template to launch, and the trigger that returns players to the lobby. Nexori includes a built-in trigger called Last Player Alive, where eliminated players return as losses and the final surviving player is resolved as the winner. The Manual option is intended for third-party mods that manage their own rule engine and use the Nexori API to decide when a player should be returned.", MUTED, width - 32));
+        card.addChild(label("Choose the server where the arena instance will be created, the instance template to launch, and the rules engine id that receives Nexori lifecycle events. The external minigame resolves winners, losses, and returns through the public API.", MUTED, width - 32));
         card.addChild(spacerY(12));
 
         GroupBuilder topRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
         topRow.addChild(inputField("Display Name", DESTINATION_DISPLAY_NAME_INPUT_ID, displayValue, "New Game", 280));
         topRow.addChild(spacerX(12));
-        if (manualResolution) {
-            topRow.addChild(inputField("Rules Engine ID", DESTINATION_RULES_ENGINE_INPUT_ID, rulesEngineValue, "skywars", 260));
-            topRow.addChild(spacerX(12));
-        }
+        topRow.addChild(inputField("Rules Engine ID", DESTINATION_RULES_ENGINE_INPUT_ID, rulesEngineValue, "skywars", 260));
+        topRow.addChild(spacerX(12));
         GroupBuilder actions = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_BLOCK_H));
         actions.addChild(spacerY(HOME_ACTION_BUTTON_TOP));
         GroupBuilder actionRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(614).setHeight(HOME_INPUT_FIELD_H));
@@ -609,12 +601,10 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         .withAnchor(new HyUIAnchor().setWidth(190).setHeight(HOME_INPUT_FIELD_H))
                         .onClick((ignored, ctx) -> {
                             String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
-                            String rulesEngineId = manualResolution
-                                ? ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim()
-                                : "";
+                            String rulesEngineId = ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim();
                             AfkDetectionPolicyDraft currentAfkDraft = arenaAfkPolicyDraft(playerRef, editing)
                                 .withInactivityTimeoutSeconds(ctx.getValue(DESTINATION_AFK_TIMEOUT_INPUT_ID, String.class).orElse(afkDraft.inactivityTimeoutSeconds()).trim());
-                            if (manualResolution && rulesEngineId.isBlank()) {
+                            if (rulesEngineId.isBlank()) {
                                 ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), currentAfkDraft);
                                 open(
                                     ref,
@@ -627,10 +617,9 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                         state.pendingDestinationConnectionAddress(),
                                         "",
                                         state.pendingDestinationInstanceTemplateId(),
-                                        state.pendingDestinationTriggerId(),
                                         rulesEngineId,
                                         state.pendingDestinationMaxPlayers()
-                                    ).withStatusText("Rules Engine ID is required for Manual games. Example: skywars, bedwars, capture_the_zone.")
+                                    ).withStatusText("Rules Engine ID is required. Example: skywars, bedwars, capture_the_zone.")
                                 );
                                 return;
                             }
@@ -643,7 +632,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                         state.pendingDestinationConnectionAddress(),
                                         "",
                                         state.pendingDestinationInstanceTemplateId(),
-                                        state.pendingDestinationTriggerId(),
                                         rulesEngineId,
                                         DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
                                         true,
@@ -653,7 +641,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                 open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
                             } catch (IOException | IllegalArgumentException exception) {
                                 ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), currentAfkDraft);
-                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), state.pendingDestinationTriggerId(), rulesEngineId, state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
+                                open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), rulesEngineId, state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
                             }
                         })
         );
@@ -701,9 +689,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                 .onClick((ignored, ctx) -> {
                     String timeout = ctx.getValue(DESTINATION_AFK_TIMEOUT_INPUT_ID, String.class).orElse(afkDraft.inactivityTimeoutSeconds()).trim();
                     String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
-                    String rulesEngineId = manualResolution
-                        ? ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim()
-                        : rulesEngineValue;
+                    String rulesEngineId = ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim();
                     ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), new AfkDetectionPolicyDraft(!afkDraft.enabled(), timeout));
                     open(
                         ref,
@@ -716,7 +702,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             state.pendingDestinationConnectionAddress(),
                             state.pendingDestinationTargetId(),
                             state.pendingDestinationInstanceTemplateId(),
-                            state.pendingDestinationTriggerId(),
                             rulesEngineId,
                             state.pendingDestinationMaxPlayers()
                         ).withStatusText("")
@@ -819,13 +804,10 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         String selectedInstance = state.pendingDestinationInstanceTemplateId().isBlank()
                 ? "Select an instance template below."
                 : state.pendingDestinationInstanceTemplateId();
-        String selectedTrigger = "last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
-                ? "Last Player Alive"
-                : "Manual";
 
         int availableWidth = width - 32;
         int columnGap = 12;
-        int columnWidth = (availableWidth - (columnGap * 2)) / 3;
+        int columnWidth = (availableWidth - columnGap) / 2;
         int outerGap = 12;
         GroupBuilder card = card(width, height, PANEL_BG);
 
@@ -834,8 +816,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         headerRow.addChild(selectionSummaryCard("SERVER", selectedServer, columnWidth, !state.pendingDestinationConnectionAddress().isBlank()));
         headerRow.addChild(spacerX(columnGap));
         headerRow.addChild(selectionSummaryCard("INSTANCE", selectedInstance, columnWidth, !state.pendingDestinationInstanceTemplateId().isBlank()));
-        headerRow.addChild(spacerX(columnGap));
-        headerRow.addChild(selectionSummaryCard("RETURN TO LOBBY TRIGGER", selectedTrigger, columnWidth, true));
         card.addChild(headerRow);
         card.addChild(spacerY(12));
 
@@ -843,8 +823,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         columnsRow.addChild(destinationServerColumnScroll(ref, store, playerRef, player, plugin, state, remoteServers, columnWidth, selectorsViewportHeight, scrollId + "-games-server"));
         columnsRow.addChild(spacerX(columnGap));
         columnsRow.addChild(destinationInstanceColumnScroll(ref, store, playerRef, player, plugin, state, instanceIds, columnWidth, selectorsViewportHeight, scrollId + "-games-instance"));
-        columnsRow.addChild(spacerX(columnGap));
-        columnsRow.addChild(destinationTriggerColumnScroll(ref, store, playerRef, player, plugin, state, columnWidth, selectorsViewportHeight, scrollId + "-games-trigger"));
         card.addChild(columnsRow);
         return card;
     }
@@ -892,7 +870,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             option.connectionAddress(),
                             "",
                             state.pendingDestinationInstanceTemplateId(),
-                            state.pendingDestinationTriggerId(),
+                            state.pendingDestinationRulesEngineId(),
                             state.pendingDestinationMaxPlayers()
                         ).withStatusText("Selected game server " + option.displayName() + ".")
                     )
@@ -948,7 +926,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             state.pendingDestinationConnectionAddress(),
                             option.targetId(),
                             state.pendingDestinationInstanceTemplateId(),
-                            state.pendingDestinationTriggerId(),
+                            state.pendingDestinationRulesEngineId(),
                             state.pendingDestinationMaxPlayers()
                         ).withStatusText("Selected remote target " + option.displayName() + ".")
                     )
@@ -1004,67 +982,13 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             state.pendingDestinationConnectionAddress(),
                             state.pendingDestinationTargetId(),
                             instanceId,
-                            state.pendingDestinationTriggerId(),
+                            state.pendingDestinationRulesEngineId(),
                             state.pendingDestinationMaxPlayers()
                         ).withStatusText("Selected instance template " + instanceId + ".")
                     )
                 )
             );
             if (index + 1 < instanceIds.size()) {
-                scroll.addChild(spacerY(8));
-            }
-        }
-        return scroll;
-    }
-
-    @Nonnull
-    static ReorderableListBuilder destinationTriggerColumnScroll(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef,
-        @Nonnull Player player,
-        @Nonnull NexoriPlugin plugin,
-        @Nonnull NexoriMenuV2State state,
-        int width,
-        int height,
-        @Nonnull String scrollId
-    ) {
-        int rowHeight = 64;
-        List<TriggerOption> triggerOptions = List.of(
-            new TriggerOption("Manual", "Return only when your minigame resolves it.", ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID),
-            new TriggerOption("Last Player Alive", "Return when one player remains alive.", LastPlayerAliveArenaMatchResolutionTrigger.ID)
-        );
-        int contentHeight = 8 + triggerOptions.size() * rowHeight + (triggerOptions.size() - 1) * 8 + 8;
-        ReorderableListBuilder scroll = scrollList(width, height, Math.max(height, contentHeight), scrollId, true);
-        scroll.addChild(spacerY(8));
-        for (int index = 0; index < triggerOptions.size(); index++) {
-            TriggerOption option = triggerOptions.get(index);
-            boolean selected = state.pendingDestinationTriggerId().equalsIgnoreCase(option.triggerId());
-            scroll.addChild(
-                selectorRowCard(
-                    option.displayName(),
-                    option.detail(),
-                    selected,
-                    width - 16,
-                    rowHeight,
-                    () -> open(
-                        ref,
-                        store,
-                        playerRef,
-                        player,
-                        plugin,
-                        state.withDestinationDraft(
-                            state.pendingDestinationDisplayName().isBlank() ? "New Game" : state.pendingDestinationDisplayName(),
-                            state.pendingDestinationConnectionAddress(),
-                            state.pendingDestinationTargetId(),
-                            state.pendingDestinationInstanceTemplateId(),
-                            option.triggerId(),
-                            state.pendingDestinationMaxPlayers()
-                        ).withStatusText("Set return trigger to " + option.displayName() + ".")
-                    )
-                )
-            );
-            if (index + 1 < triggerOptions.size()) {
                 scroll.addChild(spacerY(8));
             }
         }
@@ -1176,7 +1100,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         option.connectionAddress(),
                         "",
                         state.pendingDestinationInstanceTemplateId(),
-                        state.pendingDestinationTriggerId(),
+                        state.pendingDestinationRulesEngineId(),
                         state.pendingDestinationMaxPlayers()
                     ).withStatusText("Selected game server " + option.displayName() + ".")
                 ))
@@ -1253,7 +1177,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         state.pendingDestinationConnectionAddress(),
                         option.targetId(),
                         state.pendingDestinationInstanceTemplateId(),
-                        state.pendingDestinationTriggerId(),
+                        state.pendingDestinationRulesEngineId(),
                         state.pendingDestinationMaxPlayers()
                     ).withStatusText("Selected remote target " + option.displayName() + ".")
                 ))
@@ -1326,7 +1250,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         state.pendingDestinationConnectionAddress(),
                         state.pendingDestinationTargetId(),
                         instanceId,
-                        state.pendingDestinationTriggerId(),
+                        state.pendingDestinationRulesEngineId(),
                         state.pendingDestinationMaxPlayers()
                     ).withStatusText("Selected instance template " + instanceId + ".")
                 ))
@@ -1439,7 +1363,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                     open(
                         ref, store, playerRef, player, plugin,
                         state.withEditingDestinationId(destination.arenaId())
-                            .withDestinationDraft(destination.displayName(), destination.destinationConnectionAddress(), destination.destinationTargetId(), destination.instanceTemplateId(), destination.matchResolutionTriggerId(), destination.rulesEngineId(), Integer.toString(DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS))
+                            .withDestinationDraft(destination.displayName(), destination.destinationConnectionAddress(), destination.destinationTargetId(), destination.instanceTemplateId(), destination.rulesEngineId(), Integer.toString(DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS))
                             .withStatusText("Editing game " + destination.displayName() + ".")
                     );
                 })
@@ -2062,7 +1986,6 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                 || !state.pendingDestinationTargetId().isBlank()
                 || !state.pendingDestinationInstanceTemplateId().isBlank()
                 || !state.pendingDestinationRulesEngineId().isBlank()
-                || !"last_player_alive".equalsIgnoreCase(state.pendingDestinationTriggerId())
                 || !"8".equals(state.pendingDestinationMaxPlayers());
         boolean queueDraftDirty =
             !state.editingQueueId().isBlank()

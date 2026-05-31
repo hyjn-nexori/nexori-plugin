@@ -626,7 +626,6 @@ final class NexoriMinigameApiBridgeAfkTest {
             "assignment-1",
             "external-1",
             "rules-1",
-            "none",
             List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO),

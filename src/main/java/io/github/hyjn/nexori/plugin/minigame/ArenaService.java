@@ -83,7 +83,6 @@ public class ArenaService {
             peer.connectionAddress(),
             normalized.destinationTargetId(),
             normalized.instanceTemplateId(),
-            normalized.matchResolutionTriggerId(),
             normalized.rulesEngineId(),
             normalized.maxSupportedPlayers(),
             normalized.enabled(),

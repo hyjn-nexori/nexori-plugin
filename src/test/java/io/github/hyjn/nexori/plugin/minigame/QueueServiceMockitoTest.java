@@ -60,7 +60,6 @@ final class QueueServiceMockitoTest {
             "127.0.0.2:25566",  // destination address — must be parseable by ConfiguredPeer
             "target-alpha",     // destination target id
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             10,
             true
         );

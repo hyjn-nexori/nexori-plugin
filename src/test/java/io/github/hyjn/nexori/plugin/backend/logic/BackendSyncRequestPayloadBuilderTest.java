@@ -5,7 +5,6 @@ import io.github.hyjn.nexori.plugin.backend.payload.BackendSyncRequestPayload;
 import io.github.hyjn.nexori.plugin.minigame.ArenaActiveMatch;
 import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchSource;
-import io.github.hyjn.nexori.plugin.minigame.LastPlayerAliveArenaMatchResolutionTrigger;
 import io.github.hyjn.nexori.plugin.minigame.QueueBackfillMode;
 import io.github.hyjn.nexori.plugin.minigame.QueueDefinition;
 import io.github.hyjn.nexori.plugin.minigame.QueueMatchmakingMode;
@@ -131,7 +130,6 @@ final class BackendSyncRequestPayloadBuilderTest {
         assertEquals("arena.example:19132", arena.destinationConnectionAddress());
         assertEquals("arena-one.spawn", arena.destinationTargetId());
         assertEquals("template-one", arena.instanceTemplateId());
-        assertEquals(LastPlayerAliveArenaMatchResolutionTrigger.ID, arena.matchResolutionTriggerId());
         assertEquals(8, arena.maxSupportedPlayers());
         assertEquals(true, arena.enabled());
     }
@@ -255,7 +253,6 @@ final class BackendSyncRequestPayloadBuilderTest {
             "arena.example:19132",
             "arena-one.spawn",
             "template-one",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             8,
             true
         );
@@ -268,7 +265,6 @@ final class BackendSyncRequestPayloadBuilderTest {
             "arena-two.example:19132",
             "arena-two.spawn",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             4,
             false
         );
@@ -285,7 +281,6 @@ final class BackendSyncRequestPayloadBuilderTest {
             "keep_inventory",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
             "",
-            LastPlayerAliveArenaMatchResolutionTrigger.ID,
             "rules-default",
             "assignment-1",
             "INITIAL_MATCH",

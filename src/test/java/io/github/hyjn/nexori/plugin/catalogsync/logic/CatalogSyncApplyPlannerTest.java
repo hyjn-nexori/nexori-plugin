@@ -325,7 +325,6 @@ final class CatalogSyncApplyPlannerTest {
             " Destination.EXAMPLE:25565 ",
             " Target-One ",
             " none ",
-            " none ",
             "rules.Engine-1",
             8,
             true
@@ -481,7 +480,6 @@ final class CatalogSyncApplyPlannerTest {
             "destination.example:25565",
             "target-one",
             ArenaDefinition.NO_INSTANCE_TEMPLATE_ID,
-            ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID,
             "rules.Engine-1",
             8,
             true
