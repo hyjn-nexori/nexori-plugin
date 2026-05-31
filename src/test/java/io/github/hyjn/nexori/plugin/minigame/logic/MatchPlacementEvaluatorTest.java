@@ -64,10 +64,26 @@ final class MatchPlacementEvaluatorTest {
     }
 
     @Test
-    void placedInitialPlayersCountsArrivedExpectedPlayersWithoutPendingPlacement() {
+    void arrivedOnlyExpectedPlayerDoesNotCountAsPlaced() {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
+            List.of()
+        );
+
+        MatchPlacementEvaluation evaluation = evaluator.evaluate(match, Set.of());
+
+        assertEquals(0, evaluation.placedInitialPlayers());
+        assertFalse(evaluation.placementComplete());
+    }
+
+    @Test
+    void activeExpectedPlayerCountsAsPlaced() {
+        ArenaActiveMatch match = match(
+            List.of(PLAYER_ONE, PLAYER_TWO),
+            2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         );
 
@@ -77,11 +93,12 @@ final class MatchPlacementEvaluatorTest {
     }
 
     @Test
-    void placedInitialPlayersExcludesPendingUnconfirmedPlayers() {
+    void pendingUnconfirmedSetDoesNotMakeArrivedOnlyPlayerPlaced() {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
-            List.of(PLAYER_ONE, PLAYER_TWO)
+            List.of(PLAYER_ONE, PLAYER_TWO),
+            List.of(PLAYER_ONE)
         );
 
         MatchPlacementEvaluation evaluation = evaluator.evaluate(match, Set.of(PLAYER_TWO));
@@ -94,6 +111,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO, BACKFILL_PLAYER),
             List.of(PLAYER_ONE, PLAYER_TWO, BACKFILL_PLAYER)
         );
 
@@ -108,6 +126,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         );
 
@@ -124,6 +143,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE),
             List.of(PLAYER_ONE)
         );
 
@@ -137,6 +157,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             3,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         );
 
@@ -149,16 +170,20 @@ final class MatchPlacementEvaluatorTest {
     }
 
     @Test
-    void placementCompleteFalseWhenExpectedPlayersArrivedButNotPlaced() {
+    void failedPlacementForInitialPlayerDoesNotMarkPlacementComplete() {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
-            List.of(PLAYER_ONE, PLAYER_TWO)
+            List.of(PLAYER_ONE, PLAYER_TWO),
+            List.of(PLAYER_ONE)
         );
 
-        MatchPlacementEvaluation evaluation = evaluator.evaluate(match, Set.of(PLAYER_TWO));
+        MatchPlacementEvaluation evaluation = evaluator.evaluate(match, Set.of());
 
+        assertEquals(2, evaluation.arrivedInitialPlayers());
+        assertEquals(1, evaluation.placedInitialPlayers());
         assertFalse(evaluation.placementComplete());
+        assertFalse(evaluation.shouldMarkPlacementCompleted());
     }
 
     @Test
@@ -166,6 +191,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO, BACKFILL_PLAYER),
             List.of(PLAYER_ONE, PLAYER_TWO, BACKFILL_PLAYER)
         );
 
@@ -179,6 +205,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         );
 
@@ -192,6 +219,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         ).withPlacementCompleted(NOW, NOW);
 
@@ -206,6 +234,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         ).withWinner(PLAYER_ONE, NOW + 1_000L, NOW);
 
@@ -219,6 +248,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         ).withSubmittedResult(NOW, NOW, "payload-hash");
 
@@ -232,6 +262,7 @@ final class MatchPlacementEvaluatorTest {
         ArenaActiveMatch match = match(
             List.of(PLAYER_ONE, PLAYER_TWO),
             2,
+            List.of(PLAYER_ONE, PLAYER_TWO),
             List.of(PLAYER_ONE, PLAYER_TWO)
         );
 
@@ -244,6 +275,15 @@ final class MatchPlacementEvaluatorTest {
         List<UUID> expectedPlayerUuids,
         int expectedPlayerCount,
         List<UUID> arrivedPlayerUuids
+    ) {
+        return match(expectedPlayerUuids, expectedPlayerCount, arrivedPlayerUuids, arrivedPlayerUuids);
+    }
+
+    private static ArenaActiveMatch match(
+        List<UUID> expectedPlayerUuids,
+        int expectedPlayerCount,
+        List<UUID> arrivedPlayerUuids,
+        List<UUID> activePlayerUuids
     ) {
         return new ArenaActiveMatch(
             "match-1",
@@ -269,7 +309,7 @@ final class MatchPlacementEvaluatorTest {
             expectedPlayerUuids,
             expectedPlayerCount,
             arrivedPlayerUuids,
-            arrivedPlayerUuids,
+            activePlayerUuids,
             List.of(),
             List.of(),
             Map.of(),

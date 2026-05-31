@@ -350,8 +350,7 @@ public class NexoriPlugin extends JavaPlugin {
                     this.destinationTargetService,
                     this.secureReferralService,
                     this.inventoryTransferService,
-                    this.diagnosticsService,
-                    this.instanceSpawnSlotService
+                    this.diagnosticsService
             );
             // Queue, lobby, and arena services form the runtime minigame orchestration layer.
             this.queueCoordinatorService = new QueueCoordinatorService(
@@ -410,6 +409,12 @@ public class NexoriPlugin extends JavaPlugin {
                 this.spectatorRuntimeService,
                 this.matchLifecycleDispatcher
             );
+            io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferService minigameTransferService =
+                new io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferService(
+                    this.getLogger(),
+                    this.instanceSpawnSlotService
+                );
+            this.arenaMatchService.setMinigameTransferService(minigameTransferService);
             this.afkActivityService = new AfkActivityService(
                 this.getLogger(),
                 this.arenaMatchService::findEffectiveAfkDetectionPolicy,
@@ -602,13 +607,15 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.secureTravelService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
                 io.github.hyjn.nexori.plugin.ui.menu.state.NexoriMenuV2State resumeState = null;
-                com.hypixel.hytale.server.core.universe.PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-                    event.getPlayerRef(),
-                    com.hypixel.hytale.server.core.universe.Universe.get().getPlayerRefComponentType()
-                );
-                if (playerRef == null) {
+                io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot menuSnapshot =
+                    new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+                if (!menuSnapshot.safe()) {
                     return;
                 }
+                if (menuSnapshot.world() == null) {
+                    return;
+                }
+                com.hypixel.hytale.server.core.universe.PlayerRef playerRef = menuSnapshot.playerRef();
 
                 String resumeStatus = this.bootstrapCoordinator.consumePendingMenuResumeStatus(playerRef.getUuid());
                 if (resumeStatus.isBlank()) {
@@ -617,16 +624,14 @@ public class NexoriPlugin extends JavaPlugin {
 
                 playerRef.sendMessage(Message.raw(resumeStatus));
                 resumeState = NexoriMenuV2State.initial().withStatusText(resumeStatus);
-                NexoriMenuV2Page.open(event.getPlayerRef(), event.getPlayerRef().getStore(), playerRef, event.getPlayer(), this, resumeState);
+                NexoriMenuV2Page.open(menuSnapshot.entityRef(), menuSnapshot.store(), playerRef, menuSnapshot.player(), this, resumeState);
             });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.arenaMatchService::handlePlayerReady);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
-                com.hypixel.hytale.server.core.universe.PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-                    event.getPlayerRef(),
-                    com.hypixel.hytale.server.core.universe.Universe.get().getPlayerRefComponentType()
-                );
-                if (playerRef != null) {
-                    this.nexoriStatusHudService.refresh(playerRef);
+                io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot hudSnapshot =
+                    new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+                if (hudSnapshot.safe() && hudSnapshot.world() != null) {
+                    this.nexoriStatusHudService.refresh(hudSnapshot.playerRef());
                 }
             });
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, this.destinationTargetDiscoveryService::handlePlayerReady);

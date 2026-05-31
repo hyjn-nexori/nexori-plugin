@@ -2,11 +2,8 @@ package io.github.hyjn.nexori.plugin.minigame;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
-import com.hypixel.hytale.math.vector.Transform;
-import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.protocol.packets.interface_.CustomPage;
 import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBinding;
@@ -16,7 +13,6 @@ import com.hypixel.hytale.server.core.entity.entities.player.pages.PageManager;
 import com.hypixel.hytale.server.core.event.events.player.PlayerDisconnectEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerSetupDisconnectEvent;
-import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
@@ -43,8 +39,11 @@ import io.github.hyjn.nexori.plugin.minigame.spectator.NoopSpectatorRuntimeContr
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeController;
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeReason;
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeResult;
+import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
+import io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot;
+import io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver;
 import io.github.hyjn.nexori.plugin.travel.SecureTravelService;
 
 import javax.annotation.Nonnull;
@@ -64,7 +63,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
@@ -78,10 +76,6 @@ public class ArenaMatchService {
     private static final long WINNER_RETURN_DELAY_MS = 10_000L;
     private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 10_000L;
     private static final long RETURN_RETRY_DELAY_MS = 5_000L;
-    private static final double INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED = 1.0D;
-    private static final int INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS = 2;
-    private static final long INITIAL_PLACEMENT_TIMEOUT_MS = 7_500L;
-    private static final long INITIAL_PLACEMENT_POST_READY_GRACE_MS = 750L;
     private static final String RESPAWN_PAGE_CLASS_NAME = "com.hypixel.hytale.server.core.entity.entities.player.pages.RespawnPage";
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
@@ -109,12 +103,13 @@ public class ArenaMatchService {
     private final LaunchContextParser launchContextParser = new LaunchContextParser();
     private final MatchPlacementEvaluator matchPlacementEvaluator = new MatchPlacementEvaluator();
     private final MatchResultValidator matchResultValidator = new MatchResultValidator();
+    private final ReadyPlayerSnapshotResolver snapshotResolver = new ReadyPlayerSnapshotResolver();
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private Consumer<String> matchRuntimeClosedCallback = ignored -> {
     };
+    private MinigameTransferService minigameTransferService;
     private final Map<String, ArenaActiveMatch> matchesById = new LinkedHashMap<>();
     private final Map<UUID, String> matchIdByPlayerUuid = new LinkedHashMap<>();
-    private final Map<UUID, PendingInstanceSpawnTeleport> pendingInstanceSpawnTeleportsByPlayerUuid = new LinkedHashMap<>();
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
     private final Map<String, AfkDetectionPolicy> matchAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
     private final Map<String, Map<UUID, AfkDetectionPolicy>> playerAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
@@ -189,6 +184,51 @@ public class ArenaMatchService {
         } : matchRuntimeClosedCallback;
     }
 
+    public synchronized void setMinigameTransferService(MinigameTransferService service) {
+        this.minigameTransferService = service;
+        if (service != null) {
+            service.setMatchGateway(new TransferMatchGateway());
+        }
+    }
+
+    /**
+     * Returns a read-only view of all active match ids (for diagnostics / admin commands).
+     */
+    @Nonnull
+    public synchronized Optional<ArenaActiveMatch> findMatchRaw(@Nonnull String matchId) {
+        if (matchId == null || matchId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(matchesById.get(matchId.trim().toLowerCase()));
+    }
+
+    /**
+     * Package-private — used only by lifecycle instrumentation tests.
+     * Triggers the same placement-confirmed lifecycle dispatch as the MinigameTransferService
+     * callback without needing the full transfer state machine.
+     */
+    synchronized List<Runnable> collectConfirmTransferPlacementForTest(
+        @Nonnull UUID playerUuid,
+        long nowEpochMs
+    ) {
+        return new TransferMatchGateway().confirmTransferPlacement(playerUuid, nowEpochMs);
+    }
+
+    /**
+     * Package-private — used only by lifecycle instrumentation tests.
+     * Triggers the same placement-fallback lifecycle dispatch as confirmTransferPlacement
+     * but via the failTransferPlacement path, recording a FALLBACK outcome.
+     * Callers must ensure the player is in the match before calling this.
+     */
+    synchronized List<Runnable> collectFallbackTransferPlacementForTest(
+        @Nonnull UUID playerUuid,
+        long nowEpochMs
+    ) {
+        return new TransferMatchGateway().failTransferPlacement(
+            playerUuid, "PLACEMENT_FALLBACK", "", "", "", "", "", nowEpochMs
+        );
+    }
+
     /**
      * Observes player-ready events and consumes Nexori launch or return arrivals for that player.
      */
@@ -203,17 +243,33 @@ public class ArenaMatchService {
     @Nonnull
     private List<Runnable> handlePlayerReadyLocked(@Nonnull PlayerReadyEvent event) {
         List<Runnable> lifecycleDispatches = new ArrayList<>();
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+
+        ReadyPlayerSnapshot snapshot = snapshotResolver.resolve(event);
+        if (!snapshot.safe()) {
+            logger.atInfo().log(
+                "NEXORI_TRANSFER_UNSAFE_READY reason=" + snapshot.unsafeReason()
+            );
             return lifecycleDispatches;
         }
 
-        refreshRuntimeSpectatorForReadyPlayer(playerRef);
+        PlayerRef playerRef = snapshot.playerRef();
 
-        PendingArrival arrival = secureTravelService.consumeRecentArrival(playerRef.getUuid()).orElse(null);
+        // Notify the transfer service that the player is ready in a world — this advances
+        // TELEPORT_ISSUED / WAITING_FOR_INSTANCE_READY → POST_READY_GRACE when the player
+        // arrives in the expected instance world.  Called regardless of arrival presence
+        // because the instance-world PlayerReadyEvent typically has no new arrival attached.
+        if (snapshot.world() != null) {
+            refreshRuntimeSpectatorForReadyPlayer(playerRef);
+            if (minigameTransferService != null) {
+                minigameTransferService.onPlayerReadyObserved(
+                    playerRef.getUuid(),
+                    snapshot.world().getName(),
+                    System.currentTimeMillis()
+                );
+            }
+        }
+
+        PendingArrival arrival = secureTravelService.peekRecentArrival(playerRef.getUuid()).orElse(null);
         if (arrival == null) {
             return lifecycleDispatches;
         }
@@ -224,11 +280,60 @@ public class ArenaMatchService {
         }
 
         String flowType = context.get("flowType").getAsString();
+
         if ("minigame.launch".equalsIgnoreCase(flowType)) {
-            handleLaunchArrival(event, playerRef, context, lifecycleDispatches);
+            if (snapshot.world() == null) {
+                // Engine fired PlayerReadyEvent before the player had a valid world.
+                // Do NOT consume the arrival; the transfer service cannot safely place
+                // the player yet.  The arrival will be acknowledged on the next safe ready.
+                logger.atInfo().log(
+                    "NEXORI_TRANSFER_UNSAFE_READY player=" + playerRef.getUuid()
+                        + " username=" + snapshot.username()
+                        + " reason=NULL_WORLD matchId="
+                        + (context.has("matchId") ? context.get("matchId").getAsString() : "<unknown>")
+                );
+                return lifecycleDispatches;
+            }
+            logger.atInfo().log(
+                "NEXORI_TRANSFER_SAFE_READY player=" + playerRef.getUuid()
+                    + " username=" + snapshot.username()
+                    + " world=" + snapshot.world().getName()
+            );
+
+            if (minigameTransferService != null) {
+                // Do NOT acknowledge the arrival before onMinigameLaunchSafeReady returns.
+                // The result indicates whether the transfer service took ownership or reached
+                // a terminal decision; ACKED arrivals are removed from recentArrivals so they
+                // cannot be reprocessed.
+                io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferOnReadyResult transferResult =
+                    minigameTransferService.onMinigameLaunchSafeReady(
+                        snapshot,
+                        arrival,
+                        System.currentTimeMillis()
+                    );
+                if (transferResult.arrivalAcknowledged()) {
+                    secureTravelService.acknowledgeRecentArrival(playerRef.getUuid(), arrival);
+                }
+                lifecycleDispatches.addAll(transferResult.lifecycleDispatches());
+            } else {
+                // Fallback: legacy path if transfer service is not wired
+                secureTravelService.acknowledgeRecentArrival(playerRef.getUuid(), arrival);
+                handleLaunchArrival(event, playerRef, context, lifecycleDispatches);
+            }
             return lifecycleDispatches;
         }
+
         if ("minigame.return".equalsIgnoreCase(flowType)) {
+            if (snapshot.world() == null) {
+                logger.atInfo().log(
+                    "NEXORI_TRANSFER_UNSAFE_READY player=" + playerRef.getUuid()
+                        + " username=" + snapshot.username()
+                        + " reason=NULL_WORLD flowType=minigame.return matchId="
+                        + (context.has("matchId") ? context.get("matchId").getAsString() : "<unknown>")
+                );
+                return lifecycleDispatches;
+            }
+            secureTravelService.acknowledgeRecentArrival(playerRef.getUuid(), arrival);
             handleReturnArrival(playerRef, context);
         }
         return lifecycleDispatches;
@@ -254,7 +359,9 @@ public class ArenaMatchService {
         }
 
         patchedRespawnPagePlayers.remove(playerRef.getUuid());
-        pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerRef.getUuid());
+        if (minigameTransferService != null) {
+            minigameTransferService.onPlayerDisconnect(playerRef.getUuid(), System.currentTimeMillis());
+        }
         restoreRuntimeSpectator(playerRef.getUuid(), SpectatorRuntimeReason.PLAYER_DISCONNECT);
         String matchId = matchIdByPlayerUuid.remove(playerRef.getUuid());
         if (matchId == null) {
@@ -307,6 +414,9 @@ public class ArenaMatchService {
 
         secureTravelService.removePendingArrival(event.getUuid());
         patchedRespawnPagePlayers.remove(event.getUuid());
+        if (minigameTransferService != null) {
+            minigameTransferService.onPlayerDisconnect(event.getUuid(), System.currentTimeMillis());
+        }
         restoreRuntimeSpectator(event.getUuid(), SpectatorRuntimeReason.PLAYER_DISCONNECT);
         long now = System.currentTimeMillis();
         String reason = "Player setup disconnect before ready: " + event.getDisconnectReason();
@@ -361,6 +471,12 @@ public class ArenaMatchService {
         long nowEpochMs
     ) {
         List<Runnable> lifecycleDispatches = new ArrayList<>();
+        if (minigameTransferService != null) {
+            // Pending backfill retries are owned by MinigameTransferService and may belong to
+            // players that are not associated with a match yet. Tick them before match lookup.
+            lifecycleDispatches.addAll(minigameTransferService.tickPendingBackfillRetries(nowEpochMs));
+        }
+
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
             return lifecycleDispatches;
@@ -381,8 +497,15 @@ public class ArenaMatchService {
             return lifecycleDispatches;
         }
 
-        observePendingPlacementReady(ref, store, playerRef);
-        applyPendingInstanceSpawnTeleport(ref, store, playerRef, lifecycleDispatches);
+        if (minigameTransferService != null) {
+            List<Runnable> transferDispatches = minigameTransferService.tickTransfer(ref, store, playerRef, nowEpochMs);
+            lifecycleDispatches.addAll(transferDispatches);
+            // confirmTransferPlacement inside tickTransfer may have updated matchesById; refetch.
+            match = matchesById.get(matchId);
+            if (match == null || !match.hasPlayer(playerRef.getUuid())) {
+                return lifecycleDispatches;
+            }
+        }
 
         ArenaActiveMatch updated = match;
         boolean useBuiltInDeathElimination =
@@ -1496,7 +1619,6 @@ public class ArenaMatchService {
             enterRuntimeSpectator(updated, playerRef, null);
         }
         maybeScheduleAdmissionReporting(existing, updated, now, backfillArrival ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED");
-        rememberPendingInstanceSpawnTeleport(event.getPlayerRef(), playerRef.getUuid(), launch, updated);
         collectLaunchArrivalLifecycleEvents(
             matchCreated,
             playerAlreadyAssociated,
@@ -1520,9 +1642,6 @@ public class ArenaMatchService {
             now,
             lifecycleDispatches
         );
-        if (backfillArrival) {
-            issueBackfillInstancePlacement(event.getPlayerRef(), playerRef);
-        }
         playerRef.sendMessage(Message.raw(
             "Joined Nexori match " + updated.matchId() + " on arena " + updated.arenaId() + "."
         ));
@@ -1615,50 +1734,6 @@ public class ArenaMatchService {
         }
     }
 
-    private void collectPlayerPlacementTerminalTransition(
-        @Nonnull PlayerRef playerRef,
-        @Nonnull PendingInstanceSpawnTeleport previous,
-        @Nonnull PendingInstanceSpawnTeleport updated,
-        @Nonnull NexoriPlayerPlacementOutcome outcome,
-        @Nonnull String reason,
-        long eventAtEpochMs,
-        @Nonnull List<Runnable> lifecycleDispatches
-    ) {
-        if (isTerminalPlacementPhase(previous.phase()) || !isTerminalPlacementPhase(updated.phase())) {
-            return;
-        }
-        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
-        if (matchId == null) {
-            return;
-        }
-        ArenaActiveMatch match = matchesById.get(matchId);
-        if (match == null || !match.hasPlayer(playerRef.getUuid())) {
-            return;
-        }
-
-        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(match, reason, eventAtEpochMs);
-        NexoriPlayerMatchLifecycleEvent playerEvent = buildPlayerMatchLifecycleEvent(
-            matchEvent,
-            match,
-            playerRef,
-            reason,
-            eventAtEpochMs
-        );
-        NexoriPlayerPlacementLifecycleEvent placementEvent = new NexoriPlayerPlacementLifecycleEvent(
-            playerEvent,
-            outcome,
-            matchEvent.placementState(),
-            updated.expectedWorldName(),
-            updated.instanceTemplateId(),
-            eventAtEpochMs
-        );
-        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerPlacementConfirmed(placementEvent));
-    }
-
-    private boolean isTerminalPlacementPhase(@Nonnull PlacementPhase phase) {
-        return phase == PlacementPhase.CONFIRMED || phase == PlacementPhase.FALLBACK;
-    }
-
     private void collectMatchPlacementCompletedTransition(
         @Nonnull ArenaActiveMatch previous,
         @Nonnull ArenaActiveMatch updated,
@@ -1707,7 +1782,7 @@ public class ArenaMatchService {
         long eventAtEpochMs,
         @Nonnull List<Runnable> lifecycleDispatches
     ) {
-        if (previous.isEmpty() || !updated.isEmpty()) {
+        if (previous.isEmpty() || !isRuntimeEmptyAfterPlacement(updated)) {
             return;
         }
         NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
@@ -1784,377 +1859,6 @@ public class ArenaMatchService {
         );
     }
 
-    private void rememberPendingInstanceSpawnTeleport(
-        @Nonnull Ref<EntityStore> playerEntityRef,
-        @Nonnull UUID playerUuid,
-        @Nonnull LaunchContextData launch,
-        @Nonnull ArenaActiveMatch match
-    ) {
-        pendingInstanceSpawnTeleportsByPlayerUuid.remove(playerUuid);
-        if (!ASSIGNMENT_TYPE_BACKFILL.equalsIgnoreCase(launch.assignmentType())) {
-            return;
-        }
-        if (match.instanceTemplateId().isBlank()
-            || ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(match.instanceTemplateId())) {
-            return;
-        }
-        if (match.instanceWorldName().isBlank()) {
-            logger.atWarning().log(
-                "Cannot queue Nexori BACKFILL instance placement for player "
-                    + playerUuid
-                    + " on match "
-                    + match.matchId()
-                    + ": match has no instance world name."
-            );
-            return;
-        }
-
-        List<InstanceSpawnSlotDefinition> slots = instanceSpawnSlotService.listByInstanceTemplateId(match.instanceTemplateId());
-        Transform transform;
-        int initialRosterSize = Math.max(match.expectedPlayerCount(), match.expectedPlayerUuids().size());
-        int launchIndex = Math.max(0, initialRosterSize + match.consumedBackfillAdmissionCount() - 1);
-        if (slots.isEmpty()) {
-            transform = resolveCurrentPlayerTransform(playerEntityRef).orElse(null);
-            if (transform == null) {
-                logger.atWarning().log(
-                    "Cannot queue Nexori BACKFILL instance placement for player "
-                        + playerUuid
-                        + " on match "
-                        + match.matchId()
-                        + ": no spawn slots for template "
-                        + match.instanceTemplateId()
-                        + " and current player transform is unavailable."
-                );
-                return;
-            }
-            logger.atWarning().log(
-                "Queued Nexori BACKFILL instance placement fallback for player "
-                    + playerUuid
-                    + " on match "
-                    + match.matchId()
-                    + ": no spawn slots for template "
-                    + match.instanceTemplateId()
-                    + "; using current arrival transform."
-                    + "."
-            );
-        } else {
-            InstanceSpawnSlotDefinition slot = slots.get(launchIndex % slots.size());
-            transform = new Transform(
-                slot.x(),
-                slot.y(),
-                slot.z(),
-                slot.pitch(),
-                slot.yaw(),
-                slot.roll()
-            );
-        }
-
-        pendingInstanceSpawnTeleportsByPlayerUuid.put(
-            playerUuid,
-            new PendingInstanceSpawnTeleport(
-                match.instanceWorldName(),
-                match.instanceTemplateId(),
-                transform,
-                PlacementPhase.PENDING_ISSUE,
-                false,
-                0L,
-                0L,
-                0
-            )
-        );
-        logger.atInfo().log(
-            "Queued Nexori BACKFILL instance placement for player "
-                + playerUuid
-                + " matchId="
-                + match.matchId()
-                + " templateId="
-                + match.instanceTemplateId()
-                + " world="
-                + match.instanceWorldName()
-                + " launchIndex="
-                + launchIndex
-                + " spawnSlotSource="
-                + (slots.isEmpty() ? "arrival_transform" : "configured_slot")
-                + "."
-        );
-    }
-
-    @Nonnull
-    private Optional<Transform> resolveCurrentPlayerTransform(@Nonnull Ref<EntityStore> playerEntityRef) {
-        Store<EntityStore> store = playerEntityRef.getStore();
-        TransformComponent transformComponent = store.getComponent(playerEntityRef, TransformComponent.getComponentType());
-        if (transformComponent == null) {
-            return Optional.empty();
-        }
-
-        Rotation3f rotation = transformComponent.getRotation();
-        HeadRotation headRotation = store.getComponent(playerEntityRef, HeadRotation.getComponentType());
-        if (headRotation != null) {
-            rotation = headRotation.getRotation();
-        }
-        return Optional.of(new Transform(transformComponent.getPosition(), rotation));
-    }
-
-    private void applyPendingInstanceSpawnTeleport(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef,
-        @Nonnull List<Runnable> lifecycleDispatches
-    ) {
-        PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerRef.getUuid());
-        if (pending == null) {
-            return;
-        }
-
-        Player player = store.getComponent(ref, Player.getComponentType());
-        TransformComponent transformComponent = store.getComponent(ref, TransformComponent.getComponentType());
-        if (player == null || player.getWorld() == null || transformComponent == null) {
-            return;
-        }
-
-        World currentWorld = player.getWorld();
-
-        long nowEpochMs = System.currentTimeMillis();
-        double distanceSquared = transformComponent.getPosition().distanceSquared(pending.transform().getPosition());
-        boolean withinTolerance = distanceSquared <= INITIAL_PLACEMENT_POSITION_EPSILON_SQUARED;
-        boolean teleportPending = store.getComponent(ref, Teleport.getComponentType()) != null;
-        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
-
-        if (pending.phase() == PlacementPhase.CONFIRMED || pending.phase() == PlacementPhase.FALLBACK) {
-            return;
-        }
-
-        if (pending.phase() == PlacementPhase.PENDING_ISSUE) {
-            if (teleportPending) {
-                logger.atInfo().log(
-                    "NEXORI_PLACEMENT_REPLACING_PENDING_TELEPORT player=" + playerRef.getUsername()
-                        + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                        + " templateId=" + pending.instanceTemplateId()
-                        + " world=" + pending.expectedWorldName()
-                );
-            }
-            World targetWorld = Universe.get().getWorld(pending.expectedWorldName());
-            if (targetWorld == null) {
-                PendingInstanceSpawnTeleport fallback = pending.withPhase(PlacementPhase.FALLBACK);
-                pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), fallback);
-                collectPlayerPlacementTerminalTransition(
-                    playerRef,
-                    pending,
-                    fallback,
-                    NexoriPlayerPlacementOutcome.FALLBACK,
-                    "PLACEMENT_FALLBACK_MISSING_WORLD",
-                    nowEpochMs,
-                    lifecycleDispatches
-                );
-                logger.atWarning().log(
-                    "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
-                        + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                        + " templateId=" + pending.instanceTemplateId()
-                        + " world=" + pending.expectedWorldName()
-                        + " reason=missing_world"
-                );
-                return;
-            }
-            PendingInstanceSpawnTeleport issued = pending
-                .withPhase(PlacementPhase.WAITING_FOR_POST_READY)
-                .withTeleportIssued(true, nowEpochMs)
-                .withStableTicks(0);
-            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), issued);
-            PendingInstanceSpawnTeleport issuedFinal = issued;
-            Teleport teleport = Teleport.createForPlayer(targetWorld, pending.transform().clone());
-            targetWorld.execute(() -> {
-                store.addComponent(ref, Teleport.getComponentType(), teleport);
-                logger.atInfo().log(
-                    "NEXORI_PLACEMENT_ISSUED player=" + playerRef.getUsername()
-                        + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                        + " templateId=" + issuedFinal.instanceTemplateId()
-                        + " world=" + targetWorld.getName()
-                        + " target=" + issuedFinal.transform().getPosition()
-                        + " current=" + transformComponent.getPosition()
-                );
-            });
-            return;
-        }
-
-        if (!currentWorld.getName().equalsIgnoreCase(pending.expectedWorldName())) {
-            return;
-        }
-
-        if (pending.phase() == PlacementPhase.WAITING_FOR_POST_READY) {
-            if (pending.readyObservedAtEpochMs() <= 0L) {
-                return;
-            }
-            if (nowEpochMs - pending.readyObservedAtEpochMs() < INITIAL_PLACEMENT_POST_READY_GRACE_MS) {
-                return;
-            }
-            if (teleportPending) {
-                return;
-            }
-
-            pending = pending.withPhase(PlacementPhase.VALIDATING_SLOT).withStableTicks(0);
-            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), pending);
-        }
-
-        if (pending.phase() == PlacementPhase.VALIDATING_SLOT && !teleportPending && withinTolerance) {
-            PendingInstanceSpawnTeleport stabilized = pending.withStableTicks(pending.stableTicks() + 1);
-            if (stabilized.stableTicks() >= INITIAL_PLACEMENT_REQUIRED_STABLE_TICKS) {
-                PendingInstanceSpawnTeleport confirmed = stabilized.withPhase(PlacementPhase.CONFIRMED);
-                pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), confirmed);
-                collectPlayerPlacementTerminalTransition(
-                    playerRef,
-                    pending,
-                    confirmed,
-                    NexoriPlayerPlacementOutcome.CONFIRMED,
-                    "PLACEMENT_CONFIRMED",
-                    nowEpochMs,
-                    lifecycleDispatches
-                );
-                logPlacementConfirmed(playerRef, matchId, currentWorld, transformComponent, confirmed, distanceSquared);
-                return;
-            }
-            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), stabilized);
-            return;
-        }
-
-        PendingInstanceSpawnTeleport updatedPending = pending.stableTicks() == 0
-            ? pending
-            : pending.withStableTicks(0);
-        pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), updatedPending);
-
-        if (pending.issuedAtEpochMs() > 0L && nowEpochMs - pending.issuedAtEpochMs() >= INITIAL_PLACEMENT_TIMEOUT_MS) {
-            PendingInstanceSpawnTeleport fallback = pending.withPhase(PlacementPhase.FALLBACK);
-            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), fallback);
-            collectPlayerPlacementTerminalTransition(
-                playerRef,
-                pending,
-                fallback,
-                NexoriPlayerPlacementOutcome.FALLBACK,
-                "PLACEMENT_FALLBACK_TIMEOUT",
-                nowEpochMs,
-                lifecycleDispatches
-            );
-            logger.atWarning().log(
-                "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
-                    + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                    + " templateId=" + pending.instanceTemplateId()
-                    + " world=" + currentWorld.getName()
-                    + " target=" + pending.transform().getPosition()
-                    + " current=" + transformComponent.getPosition()
-                    + " teleportPending=" + teleportPending
-                    + " distanceSquared=" + distanceSquared
-            );
-        }
-    }
-
-    private void issueBackfillInstancePlacement(
-        @Nonnull Ref<EntityStore> playerEntityRef,
-        @Nonnull PlayerRef playerRef
-    ) {
-        PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerRef.getUuid());
-        if (pending == null
-            || pending.phase() == PlacementPhase.CONFIRMED
-            || pending.phase() == PlacementPhase.FALLBACK) {
-            return;
-        }
-
-        String matchId = matchIdByPlayerUuid.get(playerRef.getUuid());
-        World targetWorld = Universe.get().getWorld(pending.expectedWorldName());
-        if (targetWorld == null) {
-            logger.atWarning().log(
-                "NEXORI_PLACEMENT_FALLBACK player=" + playerRef.getUsername()
-                    + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                    + " templateId=" + pending.instanceTemplateId()
-                    + " world=" + pending.expectedWorldName()
-                    + " reason=missing_world"
-            );
-            pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), pending.withPhase(PlacementPhase.FALLBACK));
-            return;
-        }
-
-        long nowEpochMs = System.currentTimeMillis();
-        PendingInstanceSpawnTeleport issued = pending
-            .withPhase(PlacementPhase.WAITING_FOR_POST_READY)
-            .withTeleportIssued(true, nowEpochMs)
-            .withStableTicks(0);
-        pendingInstanceSpawnTeleportsByPlayerUuid.put(playerRef.getUuid(), issued);
-        InstancesPlugin.teleportPlayerToLoadingInstance(
-            playerEntityRef,
-            playerEntityRef.getStore(),
-            CompletableFuture.completedFuture(targetWorld),
-            issued.transform().clone()
-        );
-        logger.atInfo().log(
-            "NEXORI_BACKFILL_INSTANCE_TELEPORT_ISSUED player=" + playerRef.getUsername()
-                + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                + " templateId=" + issued.instanceTemplateId()
-                + " world=" + targetWorld.getName()
-                + " target=" + issued.transform().getPosition()
-        );
-    }
-
-    private void observePendingPlacementReady(
-        @Nonnull Ref<EntityStore> ref,
-        @Nonnull Store<EntityStore> store,
-        @Nonnull PlayerRef playerRef
-    ) {
-        PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerRef.getUuid());
-        if (pending == null || pending.readyObservedAtEpochMs() > 0L) {
-            return;
-        }
-
-        Player player = store.getComponent(ref, Player.getComponentType());
-        if (player == null || player.getWorld() == null) {
-            return;
-        }
-        if (!player.getWorld().getName().equalsIgnoreCase(pending.expectedWorldName())) {
-            return;
-        }
-
-        long nowEpochMs = System.currentTimeMillis();
-        pendingInstanceSpawnTeleportsByPlayerUuid.put(
-            playerRef.getUuid(),
-            pending.withReadyObservedAtEpochMs(nowEpochMs)
-        );
-        logger.atInfo().log(
-            "NEXORI_PLACEMENT_READY_OBSERVED player=" + playerRef.getUsername()
-                + " matchId=" + normalizeOptional(matchIdByPlayerUuid.get(playerRef.getUuid()), "<unknown>")
-                + " world=" + player.getWorld().getName()
-                + " readyObservedAtEpochMs=" + nowEpochMs
-        );
-    }
-
-    @Nonnull
-    private Optional<Transform> resolveLaunchSpawnSlotTransform(
-        @Nonnull LaunchContextData launch,
-        @Nonnull JsonObject context
-    ) {
-        if (!launch.usesInstanceTemplate()) {
-            return Optional.empty();
-        }
-
-        int launchIndex = context.has("launchIndex")
-            ? Math.max(context.get("launchIndex").getAsInt(), 0)
-            : -1;
-        if (launchIndex < 0) {
-            return Optional.empty();
-        }
-
-        List<InstanceSpawnSlotDefinition> slots = instanceSpawnSlotService.listByInstanceTemplateId(launch.instanceTemplateId());
-        if (slots.isEmpty()) {
-            return Optional.empty();
-        }
-
-        InstanceSpawnSlotDefinition slot = slots.get(launchIndex % slots.size());
-        return Optional.of(new Transform(
-            slot.x(),
-            slot.y(),
-            slot.z(),
-            slot.pitch(),
-            slot.yaw(),
-            slot.roll()
-        ));
-    }
-
     private void handleReturnArrival(@Nonnull PlayerRef playerRef, @Nonnull JsonObject context) {
         String matchId = readRequired(context, "matchId");
         String queueId = readRequired(context, "queueId");
@@ -2209,6 +1913,10 @@ public class ArenaMatchService {
 
         if (match.matchResolutionTriggerId().isBlank()
             || ArenaDefinition.NO_MATCH_RESOLUTION_TRIGGER_ID.equals(match.matchResolutionTriggerId())) {
+            return match;
+        }
+
+        if (match.placementCompletedAtEpochMs() <= 0L) {
             return match;
         }
 
@@ -2608,16 +2316,16 @@ public class ArenaMatchService {
         if (match.expectedPlayerUuids().isEmpty() || match.arrivedPlayerUuids().isEmpty()) {
             return Set.of();
         }
+        if (minigameTransferService == null) {
+            return Set.of();
+        }
         LinkedHashSet<UUID> pendingUnconfirmed = new LinkedHashSet<>();
         LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
         for (UUID playerUuid : match.arrivedPlayerUuids()) {
             if (!expected.contains(playerUuid)) {
                 continue;
             }
-            PendingInstanceSpawnTeleport pending = pendingInstanceSpawnTeleportsByPlayerUuid.get(playerUuid);
-            if (pending != null
-                && pending.phase() != PlacementPhase.CONFIRMED
-                && pending.phase() != PlacementPhase.FALLBACK) {
+            if (minigameTransferService.hasPendingPlacementSession(playerUuid)) {
                 pendingUnconfirmed.add(playerUuid);
             }
         }
@@ -2641,7 +2349,7 @@ public class ArenaMatchService {
         );
         ArenaActiveMatch stored = updated;
         String reason = primaryReason;
-        if (updated.isEmpty()) {
+        if (isRuntimeEmptyAfterPlacement(updated)) {
             if (!shouldReportEmptyRuntimeAdmissionClosure(updated)) {
                 matchesById.remove(updated.matchId());
                 clearAfkPolicyOverrides(updated.matchId());
@@ -2669,6 +2377,15 @@ public class ArenaMatchService {
         } else {
             maybeScheduleAdmissionReporting(previous, stored, nowEpochMs, reason);
         }
+    }
+
+    private boolean isRuntimeEmptyAfterPlacement(@Nonnull ArenaActiveMatch match) {
+        return match.isEmpty() && !hasPendingInitialPlacement(match);
+    }
+
+    private boolean hasPendingInitialPlacement(@Nonnull ArenaActiveMatch match) {
+        return match.placementCompletedAtEpochMs() <= 0L
+            && !pendingUnconfirmedPlacementPlayerUuids(match).isEmpty();
     }
 
     private void restoreRuntimeForPlayersRemovedFromMatch(
@@ -2717,26 +2434,6 @@ public class ArenaMatchService {
             backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), "PLACEMENT_COMPLETED", nowEpochMs);
             backendMatchAdmissionStateReportingService.markMatchDirty(updated.matchId(), "MATCH_STARTED", nowEpochMs);
         }
-    }
-
-    private void logPlacementConfirmed(
-        @Nonnull PlayerRef playerRef,
-        String matchId,
-        @Nonnull World world,
-        @Nonnull TransformComponent transformComponent,
-        @Nonnull PendingInstanceSpawnTeleport pending,
-        double distanceSquared
-    ) {
-        logger.atInfo().log(
-            "NEXORI_PLACEMENT_CONFIRMED player=" + playerRef.getUsername()
-                + " matchId=" + normalizeOptional(matchId, "<unknown>")
-                + " templateId=" + pending.instanceTemplateId()
-                + " world=" + world.getName()
-                + " current=" + transformComponent.getPosition()
-                + " target=" + pending.transform().getPosition()
-                + " stableTicks=" + pending.stableTicks()
-                + " distanceSquared=" + distanceSquared
-        );
     }
 
     public enum EndMatchOutcome {
@@ -3340,78 +3037,353 @@ public class ArenaMatchService {
     ) {
     }
 
-    private record PendingInstanceSpawnTeleport(
-        @Nonnull String expectedWorldName,
-        @Nonnull String instanceTemplateId,
-        @Nonnull Transform transform,
-        @Nonnull PlacementPhase phase,
-        boolean teleportIssued,
-        long issuedAtEpochMs,
-        long readyObservedAtEpochMs,
-        int stableTicks
-    ) {
+    /**
+     * Implements the MinigameTransferService.MatchGateway so MinigameTransferService can drive
+     * match mutations without a circular constructor dependency.
+     *
+     * All methods on this gateway must be called from within ArenaMatchService's synchronized block.
+     */
+    private final class TransferMatchGateway implements MinigameTransferService.MatchGateway {
+
+        @Override
         @Nonnull
-        private PendingInstanceSpawnTeleport withTeleportIssued(boolean rawTeleportIssued, long rawIssuedAtEpochMs) {
-            return new PendingInstanceSpawnTeleport(
-                expectedWorldName,
-                instanceTemplateId,
-                transform,
-                phase,
-                rawTeleportIssued,
-                rawIssuedAtEpochMs,
-                readyObservedAtEpochMs,
-                stableTicks
+        public Optional<ArenaActiveMatch> findMatchRaw(@Nonnull String matchId) {
+            return Optional.ofNullable(matchesById.get(matchId));
+        }
+
+        @Override
+        @Nonnull
+        public List<Runnable> acceptTransferArrival(
+            @Nonnull UUID playerUuid,
+            @Nonnull String username,
+            @Nonnull LaunchContextData launch,
+            @Nullable ArenaActiveMatch existingMatch,
+            long nowEpochMs
+        ) {
+            List<Runnable> lifecycleDispatches = new ArrayList<>();
+            boolean matchCreated = existingMatch == null;
+            boolean playerAlreadyAssociated = existingMatch != null
+                && (existingMatch.arrivedPlayerUuids().contains(playerUuid)
+                    || existingMatch.activePlayerUuids().contains(playerUuid));
+            boolean isBackfill = ASSIGNMENT_TYPE_BACKFILL.equalsIgnoreCase(launch.assignmentType());
+            String instanceWorldName = launch.usesInstanceTemplate()
+                ? ArenaInstanceRuntime.buildInstanceWorldName(launch.matchId())
+                : "";
+
+            ArenaActiveMatch updated;
+            if (existingMatch == null) {
+                updated = new ArenaActiveMatch(
+                    launch.matchId(),
+                    launch.queueId(),
+                    launch.arenaId(),
+                    launch.originLobbyId(),
+                    launch.returnConnectionAddress(),
+                    launch.returnFallbackTargetId(),
+                    launch.launchTravelProfileId(),
+                    launch.instanceTemplateId(),
+                    instanceWorldName,
+                    launch.matchResolutionTriggerId(),
+                    launch.rulesEngineId(),
+                    launch.assignmentId(),
+                    launch.assignmentType(),
+                    launch.externalMatchId(),
+                    launch.matchSource(),
+                    launch.admissionPolicySchemaVersion(),
+                    launch.admissionCapacity(),
+                    launch.backfillEnabled(),
+                    launch.backfillMode(),
+                    launch.backfillWindowSeconds(),
+                    launch.afkDetectionPolicy(),
+                    launch.expectedPlayerUuids(),
+                    launch.expectedPlayerCount(),
+                    List.of(playerUuid),          // arrivedPlayerUuids
+                    List.<UUID>of(),               // activePlayerUuids – deferred until CONFIRMED
+                    List.<UUID>of(),
+                    List.<UUID>of(),
+                    launch.assignmentId().isBlank() ? Map.of() : Map.of(playerUuid, launch.assignmentId()),
+                    Map.of(playerUuid, launch.playerReturnTarget()),
+                    Map.<UUID, ArenaActiveMatch.ArenaPlayerOutcomeState>of(),
+                    Map.<UUID, Long>of(),
+                    0,
+                    Set.<String>of(),
+                    false,
+                    "",
+                    "",
+                    0L,
+                    "",
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    "",
+                    nowEpochMs,
+                    nowEpochMs,
+                    ""
+                ).normalized();
+            } else {
+                updated = existingMatch
+                    .withPlayerReturnTarget(playerUuid, launch.playerReturnTarget(), nowEpochMs)
+                    .withPlayerAssignmentId(playerUuid, launch.assignmentId(), nowEpochMs)
+                    .withPlayerArrivedOnly(playerUuid, nowEpochMs);
+            }
+
+            if (isBackfill) {
+                updated = updated
+                    .withAcceptedBackfillReservation(launch.admissionReservationId(), nowEpochMs)
+                    .withConsumedBackfillAdmissionIncrement(nowEpochMs);
+                if (backendMatchAdmissionStateReportingService != null) {
+                    backendMatchAdmissionStateReportingService.markAdmissionReservationConsumed(
+                        updated.matchId(), launch.admissionReservationId(), nowEpochMs
+                    );
+                }
+            }
+
+            String previousMatchId = matchIdByPlayerUuid.put(playerUuid, updated.matchId());
+            if (previousMatchId != null && !previousMatchId.equals(updated.matchId())) {
+                ArenaActiveMatch previous = matchesById.get(previousMatchId);
+                if (previous != null) {
+                    ArenaActiveMatch previousUpdated = previous.withoutReturnedPlayer(playerUuid, nowEpochMs);
+                    storeUpdatedMatchOrCloseEmptyRuntime(previous, previousUpdated, nowEpochMs, "", lifecycleDispatches);
+                }
+            }
+
+            ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+            matchesById.put(updated.matchId(), updated);
+            refreshRuntimeSpectatorVisibility(updated);
+            if (updated.spectatorPlayerUuids().contains(playerUuid)) {
+                PlayerRef spectatorRef = Universe.get().getPlayer(playerUuid);
+                if (spectatorRef != null) {
+                    enterRuntimeSpectator(updated, spectatorRef, null);
+                }
+            }
+            maybeScheduleAdmissionReporting(
+                existingMatch, updated, nowEpochMs,
+                isBackfill ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED"
             );
+
+            NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(
+                updated,
+                matchCreated ? "MATCH_CREATED" : (isBackfill ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED"),
+                nowEpochMs
+            );
+            if (matchCreated) {
+                lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchCreated(matchEvent));
+                logger.atInfo().log(
+                    "NEXORI_TRANSFER_MATCH_CREATED matchId=" + updated.matchId()
+                        + " arenaId=" + updated.arenaId()
+                );
+            } else {
+                logger.atInfo().log(
+                    "NEXORI_TRANSFER_MATCH_RESOLVED matchId=" + updated.matchId()
+                        + " arenaId=" + updated.arenaId()
+                );
+            }
+
+            if (!playerAlreadyAssociated && updated.arrivedPlayerUuids().contains(playerUuid)) {
+                PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+                NexoriPlayerMatchLifecycleEvent playerEvent = buildPlayerMatchLifecycleEvent(
+                    matchEvent, updated,
+                    playerRef != null ? playerRef : buildFallbackPlayerRef(playerUuid, username),
+                    isBackfill ? "BACKFILL_PLAYER_ARRIVED" : "PLAYER_ARRIVED",
+                    nowEpochMs
+                );
+                lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerArrived(playerEvent));
+                logger.atInfo().log(
+                    "NEXORI_TRANSFER_CONTEXT_ACCEPTED player=" + playerUuid
+                        + " username=" + username
+                        + " matchId=" + updated.matchId()
+                        + " assignmentType=" + launch.assignmentType()
+                );
+            }
+
+            collectMatchPlacementCompletedTransition(
+                beforeLifecycleReconcile, updated, "MATCH_PLACEMENT_COMPLETED", nowEpochMs, lifecycleDispatches
+            );
+            collectMatchCompletedTransition(
+                beforeLifecycleReconcile, updated, "MATCH_COMPLETED", nowEpochMs, lifecycleDispatches
+            );
+
+            // If a new match was just created, retry any backfill arrivals that were waiting for it.
+            if (matchCreated && minigameTransferService != null) {
+                List<Runnable> retryDispatches = minigameTransferService.processPendingBackfillRetries(launch.matchId(), nowEpochMs);
+                lifecycleDispatches.addAll(retryDispatches);
+            }
+
+            return lifecycleDispatches;
+        }
+
+        @Override
+        @Nonnull
+        public List<Runnable> confirmTransferPlacement(@Nonnull UUID playerUuid, long nowEpochMs) {
+            List<Runnable> lifecycleDispatches = new ArrayList<>();
+            String matchId = matchIdByPlayerUuid.get(playerUuid);
+            if (matchId == null) {
+                return lifecycleDispatches;
+            }
+            ArenaActiveMatch match = matchesById.get(matchId);
+            if (match == null || !match.hasPlayer(playerUuid)) {
+                return lifecycleDispatches;
+            }
+
+            // Guard against double-dispatch: if the player is already in activePlayerUuids,
+            // placement was already confirmed and we don't re-emit the lifecycle event.
+            if (match.activePlayerUuids().contains(playerUuid)) {
+                return lifecycleDispatches;
+            }
+
+            ArenaActiveMatch before = match;
+            ArenaActiveMatch updated = match.withPlayerPlacementConfirmed(playerUuid, nowEpochMs);
+            ArenaActiveMatch beforeLifecycleReconcile = applyAutomaticResolutionTrigger(updated, nowEpochMs);
+            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+            matchesById.put(updated.matchId(), updated);
+
+            // Dispatch placement confirmed event
+            NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(
+                updated, "PLACEMENT_CONFIRMED", nowEpochMs
+            );
+            Universe universe = Universe.get();
+            PlayerRef playerRef = (universe != null) ? universe.getPlayer(playerUuid) : null;
+            if (playerRef != null) {
+                NexoriPlayerMatchLifecycleEvent playerMatchEvent = buildPlayerMatchLifecycleEvent(
+                    matchEvent, updated, playerRef, "PLACEMENT_CONFIRMED", nowEpochMs
+                );
+                NexoriPlayerPlacementLifecycleEvent placementEvent = new NexoriPlayerPlacementLifecycleEvent(
+                    playerMatchEvent,
+                    NexoriPlayerPlacementOutcome.CONFIRMED,
+                    matchEvent.placementState(),
+                    minigameTransferService != null
+                        ? minigameTransferService.findSession(playerUuid).map(s -> s.expectedWorldName()).orElse("")
+                        : "",
+                    minigameTransferService != null
+                        ? minigameTransferService.findSession(playerUuid).map(s -> s.instanceTemplateId()).orElse("")
+                        : "",
+                    nowEpochMs
+                );
+                lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerPlacementConfirmed(placementEvent));
+            } else {
+                // Universe not available (e.g. in tests) — still collect the lifecycle dispatch
+                // using a no-player placement event so listener logic can be exercised.
+                String assignmentId = normalizeOptional(updated.assignmentIdsByPlayerUuid().get(playerUuid));
+                NexoriPlayerPlacementLifecycleEvent placementEvent = new NexoriPlayerPlacementLifecycleEvent(
+                    new NexoriPlayerMatchLifecycleEvent(matchEvent, playerUuid, "", assignmentId, "PLACEMENT_CONFIRMED", nowEpochMs),
+                    NexoriPlayerPlacementOutcome.CONFIRMED,
+                    matchEvent.placementState(),
+                    "",
+                    "",
+                    nowEpochMs
+                );
+                lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchPlayerPlacementConfirmed(placementEvent));
+            }
+
+            collectMatchPlacementCompletedTransition(
+                beforeLifecycleReconcile, updated, "MATCH_PLACEMENT_COMPLETED", nowEpochMs, lifecycleDispatches
+            );
+            collectMatchCompletedTransition(
+                beforeLifecycleReconcile, updated, "MATCH_COMPLETED", nowEpochMs, lifecycleDispatches
+            );
+            return lifecycleDispatches;
+        }
+
+        @Override
+        @Nonnull
+        public List<Runnable> failTransferPlacement(
+            @Nonnull UUID playerUuid,
+            @Nonnull String reason,
+            @Nonnull String returnConnectionAddress,
+            @Nonnull String returnFallbackTargetId,
+            @Nonnull String launchTravelProfileId,
+            @Nonnull String originLobbyId,
+            @Nonnull String sessionMatchId,
+            long nowEpochMs
+        ) {
+            List<Runnable> lifecycleDispatches = new ArrayList<>();
+
+            // Remove from match runtime first so the player cannot be double-processed.
+            String matchId = matchIdByPlayerUuid.get(playerUuid);
+            if (matchId != null) {
+                ArenaActiveMatch match = matchesById.get(matchId);
+                if (match != null && match.hasPlayer(playerUuid)) {
+                    ArenaActiveMatch updated = match.withoutReturnedPlayer(playerUuid, nowEpochMs)
+                        .withLastError("Transfer placement failed: " + reason, nowEpochMs);
+                    updated = reconcileAdmissionLifecycle(applyAutomaticResolutionTrigger(updated, nowEpochMs), nowEpochMs);
+                    storeUpdatedMatchOrCloseEmptyRuntime(match, updated, nowEpochMs, "TRANSFER_FAILED", lifecycleDispatches);
+                } else if (match == null) {
+                    // nothing to clean up in match
+                }
+            }
+            matchIdByPlayerUuid.remove(playerUuid);
+
+            // Attempt controlled return-to-lobby if return info is available and player is online.
+            String effectiveReturnAddr = normalizeOptional(returnConnectionAddress);
+            String effectiveReturnTarget = normalizeOptional(returnFallbackTargetId);
+            String effectiveTravelProfile = normalizeOptional(launchTravelProfileId);
+            if (!effectiveReturnAddr.isBlank() && !effectiveReturnTarget.isBlank() && !effectiveTravelProfile.isBlank()) {
+                Universe universe = Universe.get();
+                PlayerRef playerRef = (universe != null) ? universe.getPlayer(playerUuid) : null;
+                if (playerRef != null && playerRef.isValid()) {
+                    try {
+                        ConfiguredPeer destination = ConfiguredPeer.parse(effectiveReturnAddr);
+                        String effectiveMatchId = normalizeOptional(sessionMatchId, normalizeOptional(matchId, ""));
+                        String effectiveLobbyId = normalizeOptional(originLobbyId, "lobby");
+                        String returnContextJson = buildFailedPlacementReturnContextJson(
+                            effectiveMatchId, effectiveLobbyId, reason, nowEpochMs
+                        );
+                        secureTravelService.travel(
+                            playerRef, destination, effectiveReturnTarget, "",
+                            effectiveTravelProfile, returnContextJson
+                        );
+                        logger.atInfo().log(
+                            "NEXORI_TRANSFER_RETURNING_TO_LOBBY player=" + playerUuid
+                                + " matchId=" + effectiveMatchId
+                                + " reason=" + reason
+                                + " destination=" + effectiveReturnAddr
+                        );
+                    } catch (Exception ex) {
+                        logger.atWarning().withCause(ex).log(
+                            "NEXORI_TRANSFER_FAILED_RETURN_ERROR player=" + playerUuid
+                                + " reason=return_to_lobby_failed detail=" + ex.getClass().getSimpleName()
+                        );
+                    }
+                } else {
+                    logger.atWarning().log(
+                        "NEXORI_TRANSFER_FAILED player=" + playerUuid
+                            + " reason=RETURN_INFO_MISSING detail=player_offline_or_universe_null"
+                    );
+                }
+            } else {
+                logger.atWarning().log(
+                    "NEXORI_TRANSFER_FAILED player=" + playerUuid
+                        + " reason=RETURN_INFO_MISSING detail=blank_return_address"
+                );
+            }
+
+            return lifecycleDispatches;
         }
 
         @Nonnull
-        private PendingInstanceSpawnTeleport withStableTicks(int rawStableTicks) {
-            return new PendingInstanceSpawnTeleport(
-                expectedWorldName,
-                instanceTemplateId,
-                transform,
-                phase,
-                teleportIssued,
-                issuedAtEpochMs,
-                readyObservedAtEpochMs,
-                rawStableTicks
-            );
+        private String buildFailedPlacementReturnContextJson(
+            @Nonnull String matchId,
+            @Nonnull String originLobbyId,
+            @Nonnull String failureReason,
+            long nowEpochMs
+        ) {
+            com.google.gson.JsonObject root = new com.google.gson.JsonObject();
+            root.addProperty("flowType", "minigame.return");
+            root.addProperty("matchId", matchId);
+            root.addProperty("queueId", "");
+            root.addProperty("originLobbyId", originLobbyId);
+            root.addProperty("sourceArenaId", "");
+            root.addProperty("returnReason", "PLACEMENT_FAILED:" + failureReason);
+            root.addProperty("returnedAtEpochMs", nowEpochMs);
+            return new com.google.gson.Gson().toJson(root);
         }
 
-        @Nonnull
-        private PendingInstanceSpawnTeleport withReadyObservedAtEpochMs(long rawReadyObservedAtEpochMs) {
-            return new PendingInstanceSpawnTeleport(
-                expectedWorldName,
-                instanceTemplateId,
-                transform,
-                phase,
-                teleportIssued,
-                issuedAtEpochMs,
-                rawReadyObservedAtEpochMs,
-                stableTicks
-            );
-        }
-
-        @Nonnull
-        private PendingInstanceSpawnTeleport withPhase(@Nonnull PlacementPhase rawPhase) {
-            return new PendingInstanceSpawnTeleport(
-                expectedWorldName,
-                instanceTemplateId,
-                transform,
-                rawPhase,
-                teleportIssued,
-                issuedAtEpochMs,
-                readyObservedAtEpochMs,
-                stableTicks
-            );
+        private PlayerRef buildFallbackPlayerRef(@Nonnull UUID playerUuid, @Nonnull String username) {
+            // Used only when playerRef is not available online (rare edge case).
+            // In practice the player should be online if acceptTransferArrival is being called.
+            return Universe.get().getPlayer(playerUuid);
         }
     }
 
-    private enum PlacementPhase {
-        PENDING_ISSUE,
-        WAITING_FOR_POST_READY,
-        VALIDATING_SLOT,
-        CONFIRMED,
-        FALLBACK
-    }
 }

@@ -296,24 +296,26 @@ public final class DiagnosticsCollectService {
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot =
+            new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+        if (!snapshot.safe()) {
             return;
         }
+        if (snapshot.world() == null) {
+            return;
+        }
+        PlayerRef playerRef = snapshot.playerRef();
 
         PendingCollectReturn pendingReturn = pendingReturns.remove(playerRef.getUuid());
         if (pendingReturn == null) {
             return;
         }
 
-        finalizeReturn(event, playerRef, pendingReturn.originSnapshot(), pendingReturn.message(), pendingReturn.reopenUi());
+        finalizeReturn(snapshot, playerRef, pendingReturn.originSnapshot(), pendingReturn.message(), pendingReturn.reopenUi());
     }
 
     private void finalizeReturn(
-        @Nonnull PlayerReadyEvent event,
+        @Nonnull io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot,
         @Nonnull PlayerRef playerRef,
         @Nonnull DiagnosticsCollectOriginSnapshot originSnapshot,
         @Nonnull String message,
@@ -323,8 +325,8 @@ public final class DiagnosticsCollectService {
         Teleport teleport = world == null
             ? Teleport.createForPlayer(originSnapshot.toTransform())
             : Teleport.createForPlayer(world, originSnapshot.toTransform());
-        Ref<EntityStore> ref = event.getPlayerRef();
-        Store<EntityStore> store = ref.getStore();
+        Ref<EntityStore> ref = snapshot.entityRef();
+        Store<EntityStore> store = snapshot.store();
         store.addComponent(ref, Teleport.getComponentType(), teleport);
         playerRef.sendMessage(Message.raw(message));
         if (reopenUi) {

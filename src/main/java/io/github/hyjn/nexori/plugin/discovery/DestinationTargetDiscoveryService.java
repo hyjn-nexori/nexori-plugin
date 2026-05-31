@@ -242,13 +242,15 @@ public final class DestinationTargetDiscoveryService {
      * Teleports the operator back to the origin location and optionally resumes the UI after discovery finishes.
      */
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            com.hypixel.hytale.server.core.universe.Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot =
+            new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+        if (!snapshot.safe()) {
             return;
         }
+        if (snapshot.world() == null) {
+            return;
+        }
+        PlayerRef playerRef = snapshot.playerRef();
 
         PendingDiscoveryReturn pendingReturn = pendingReturns.remove(playerRef.getUuid());
         if (pendingReturn == null) {
@@ -259,13 +261,13 @@ public final class DestinationTargetDiscoveryService {
         Teleport teleport = world == null
             ? Teleport.createForPlayer(pendingReturn.originTransform().clone())
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
-        event.getPlayerRef().getStore().addComponent(event.getPlayerRef(), Teleport.getComponentType(), teleport);
+        snapshot.store().addComponent(snapshot.entityRef(), Teleport.getComponentType(), teleport);
         if (pendingReturn.resumeAction() != null) {
             pendingReturn.resumeAction().reopenWithStatus(
-                event.getPlayerRef(),
-                event.getPlayerRef().getStore(),
+                snapshot.entityRef(),
+                snapshot.store(),
                 playerRef,
-                event.getPlayer(),
+                snapshot.player(),
                 pendingReturn.message()
             );
             return;

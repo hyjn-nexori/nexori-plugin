@@ -371,6 +371,12 @@ public record ArenaActiveMatch(
         );
     }
 
+    /**
+     * Adds the player to arrivedPlayerUuids AND activePlayerUuids simultaneously.
+     * Use this for arenas without an instance template where the player is immediately active.
+     * For instance-template arenas prefer {@link #withPlayerArrivedOnly} until placement
+     * is confirmed, then call {@link #withPlayerPlacementConfirmed}.
+     */
     @Nonnull
     public ArenaActiveMatch withPlayerArrival(@Nonnull UUID playerUuid, long nowEpochMs) {
         LinkedHashSet<UUID> arrived = new LinkedHashSet<>(arrivedPlayerUuids());
@@ -379,6 +385,71 @@ public record ArenaActiveMatch(
         active.add(playerUuid);
         return copy(
             PlayerUuidLists.canonicalize(arrived),
+            PlayerUuidLists.canonicalize(active),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
+    /**
+     * Records that the player has arrived but is not yet active (placement is still in progress).
+     * Only adds to arrivedPlayerUuids; activePlayerUuids is untouched until
+     * {@link #withPlayerPlacementConfirmed} is called.
+     */
+    @Nonnull
+    public ArenaActiveMatch withPlayerArrivedOnly(@Nonnull UUID playerUuid, long nowEpochMs) {
+        LinkedHashSet<UUID> arrived = new LinkedHashSet<>(arrivedPlayerUuids());
+        arrived.add(playerUuid);
+        return copy(
+            PlayerUuidLists.canonicalize(arrived),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            nowEpochMs,
+            lastError()
+        );
+    }
+
+    /**
+     * Moves the player from arrived-only to fully active once placement is confirmed in the
+     * gameplay world.  No-ops if the player is already in activePlayerUuids.
+     */
+    @Nonnull
+    public ArenaActiveMatch withPlayerPlacementConfirmed(@Nonnull UUID playerUuid, long nowEpochMs) {
+        LinkedHashSet<UUID> active = new LinkedHashSet<>(activePlayerUuids());
+        active.add(playerUuid);
+        return copy(
+            arrivedPlayerUuids(),
             PlayerUuidLists.canonicalize(active),
             eliminatedPlayerUuids(),
             spectatorPlayerUuids(),

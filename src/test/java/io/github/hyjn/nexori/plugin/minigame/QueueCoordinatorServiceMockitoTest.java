@@ -126,8 +126,7 @@ final class QueueCoordinatorServiceMockitoTest {
             destinationTargetService,
             secureReferralService,
             inventoryTransferService,
-            diagnosticsService,
-            instanceSpawnSlotService
+            diagnosticsService
         );
 
         MatchSessionService matchSessionService = new MatchSessionService(

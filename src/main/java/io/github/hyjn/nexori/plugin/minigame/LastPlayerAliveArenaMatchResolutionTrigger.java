@@ -27,7 +27,8 @@ public final class LastPlayerAliveArenaMatchResolutionTrigger {
         }
 
         UUID winnerUuid = alivePlayers.get(0);
-        PlayerRef winnerRef = Universe.get().getPlayer(winnerUuid);
+        Universe universe = Universe.get();
+        PlayerRef winnerRef = universe == null ? null : universe.getPlayer(winnerUuid);
         if (winnerRef != null && winnerRef.isValid()) {
             winnerRef.sendMessage(Message.raw("You won this Nexori match. Returning to the lobby in 5 seconds."));
         }

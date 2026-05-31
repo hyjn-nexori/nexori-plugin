@@ -18,6 +18,7 @@ import io.github.hyjn.nexori.plugin.minigame.QueueMemberState;
 import io.github.hyjn.nexori.plugin.minigame.SourceContextId;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,31 @@ public final class MinigameLaunchContextFactory {
     @Nonnull
     public MinigameLaunchContextBuildResult buildBackfillLaunchContext(
         @Nonnull QueueDefinition queue,
+        @Nonnull String arenaId,
+        @Nonnull List<QueueMemberState> readyMembers,
+        long nowEpochMs,
+        @Nonnull String assignmentId,
+        @Nonnull String matchId,
+        @Nonnull String externalMatchId,
+        @Nonnull List<AssignmentPlayerTicket> assignmentPlayerTickets,
+        @Nonnull String reportingServerId,
+        @Nonnull String returnConnectionAddress
+    ) {
+        return buildBackfillLaunchContext(
+            queue, null, arenaId, readyMembers, nowEpochMs, assignmentId,
+            matchId, externalMatchId, assignmentPlayerTickets, reportingServerId, returnConnectionAddress
+        );
+    }
+
+    /**
+     * Builds a BACKFILL launch context enriched with the same arena metadata as an initial-match
+     * context.  The arena definition is optional; if null, the context is built without instance
+     * template and arena-level fields (same as the legacy overload).
+     */
+    @Nonnull
+    public MinigameLaunchContextBuildResult buildBackfillLaunchContext(
+        @Nonnull QueueDefinition queue,
+        @Nullable ArenaDefinition arena,
         @Nonnull String arenaId,
         @Nonnull List<QueueMemberState> readyMembers,
         long nowEpochMs,
@@ -69,7 +95,7 @@ public final class MinigameLaunchContextFactory {
             root.addProperty("externalMatchId", externalMatchId);
         }
         root.addProperty("queueId", queue.queueId());
-        root.addProperty("arenaId", arenaId);
+        root.addProperty("arenaId", arena != null ? arena.arenaId() : arenaId);
         if (reportingServerId != null && !reportingServerId.isBlank()) {
             root.addProperty("reportingServerId", reportingServerId.trim());
         }
@@ -77,6 +103,34 @@ public final class MinigameLaunchContextFactory {
         root.addProperty("returnConnectionAddress", returnConnectionAddress);
         root.addProperty("returnFallbackTargetId", originReturnTargetId);
         root.addProperty("launchTravelProfileId", queue.launchTravelProfileId());
+
+        // Include the same arena-level metadata as an initial-match context so the unified
+        // MinigameTransferService can handle BACKFILL using the same code path.
+        if (arena != null) {
+            root.addProperty("instanceTemplateId", arena.instanceTemplateId());
+            root.addProperty("matchResolutionTriggerId", arena.matchResolutionTriggerId());
+            root.addProperty("rulesEngineId", arena.rulesEngineId());
+            QueueBackfillMode backfillMode = queue.effectiveBackfillMode();
+            int admissionCapacity = Math.max(queue.maxPlayers(), 0);
+            int arenaCapacity = Math.max(arena.maxSupportedPlayers(), 0);
+            if (arenaCapacity > 0) {
+                admissionCapacity = Math.min(admissionCapacity, arenaCapacity);
+            }
+            root.addProperty(
+                "matchSource",
+                queue.effectiveMatchmakingMode() == QueueMatchmakingMode.BACKEND_DRIVEN
+                    ? ArenaMatchSource.BACKEND_DRIVEN.id()
+                    : ArenaMatchSource.LOCAL_FIFO.id()
+            );
+            root.addProperty("admissionCapacity", admissionCapacity);
+            root.addProperty("backfillEnabled", queue.backfillEnabled());
+            root.addProperty("backfillMode", backfillMode.id());
+            root.addProperty("backfillWindowSeconds", Math.max(queue.backfillWindowSeconds(), 0));
+            root.add("afkDetectionPolicy", afkDetectionPolicyJson(arena.afkDetectionPolicy()));
+            if (arena.usesInstanceTemplate()) {
+                root.addProperty("serverEntryMode", "default_world_natural_spawn");
+            }
+        }
 
         MatchSessionState matchSessionState = new MatchSessionState(
             matchId,

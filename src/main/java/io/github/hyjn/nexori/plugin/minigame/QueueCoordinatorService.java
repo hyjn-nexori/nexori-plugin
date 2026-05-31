@@ -980,8 +980,12 @@ public class QueueCoordinatorService {
         @Nonnull String reportingServerId
     ) {
         String returnConnectionAddress = localConnectionAddressService.getConnectionAddressOrBlank();
+        // Look up the arena definition so the backfill context carries the same metadata
+        // as an initial-match context (instanceTemplateId, serverEntryMode, afkPolicy, etc.).
+        ArenaDefinition arena = arenaService.find(arenaId).orElse(null);
         MinigameLaunchContextBuildResult result = launchContextFactory.buildBackfillLaunchContext(
             queue,
+            arena,
             arenaId,
             readyMembers,
             nowEpochMs,

@@ -56,13 +56,11 @@ public final class MatchPlacementEvaluator {
         }
         int placedInitialPlayers = 0;
         LinkedHashSet<UUID> expected = new LinkedHashSet<>(match.expectedPlayerUuids());
-        for (UUID playerUuid : match.arrivedPlayerUuids()) {
+        for (UUID playerUuid : match.activePlayerUuids()) {
             if (!expected.contains(playerUuid)) {
                 continue;
             }
-            if (!pendingUnconfirmedPlacementPlayerUuids.contains(playerUuid)) {
-                placedInitialPlayers++;
-            }
+            placedInitialPlayers++;
         }
         return placedInitialPlayers;
     }

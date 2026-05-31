@@ -523,15 +523,17 @@ public final class InventoryTransferService {
      * Teleports the player back to the recovery origin and resumes the recovery UI when a recovery query finishes.
      */
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot =
+            new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+        if (!snapshot.safe()) {
             return;
         }
+        if (snapshot.world() == null) {
+            return;
+        }
+        PlayerRef playerRef = snapshot.playerRef();
 
-        Player player = event.getPlayer();
+        Player player = snapshot.player();
         if (player != null) {
             flushPendingRuntimeInventory(playerRef.getUuid(), player);
         }
@@ -545,13 +547,13 @@ public final class InventoryTransferService {
         Teleport teleport = world == null
             ? Teleport.createForPlayer(pendingReturn.originTransform().clone())
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
-        Ref<EntityStore> playerRefStoreRef = event.getPlayerRef();
-        playerRefStoreRef.getStore().addComponent(playerRefStoreRef, Teleport.getComponentType(), teleport);
+        Ref<EntityStore> playerRefStoreRef = snapshot.entityRef();
+        snapshot.store().addComponent(playerRefStoreRef, Teleport.getComponentType(), teleport);
         NexoriRecoveryPage.open(
             playerRefStoreRef,
-            playerRefStoreRef.getStore(),
+            snapshot.store(),
             playerRef,
-            event.getPlayer(),
+            snapshot.player(),
             this,
             pendingReturn.selectedTransferId(),
             pendingReturn.message()

@@ -65,4 +65,50 @@ final class PendingArrivalTest {
         );
         assertEquals("apply_inventory", arrival.travelProfileId());
     }
+
+    @Test
+    void minigameLaunchStagingRequiresTeleportWhenCurrentWorldDiffersFromDefault() {
+        PendingArrival arrival = minigameLaunchArrival("default");
+
+        assertEquals(
+            SecureTravelService.MinigameLaunchStagingDecision.STAGING_REQUIRED,
+            SecureTravelService.decideMinigameLaunchStaging(arrival, "skywars_nexori_template")
+        );
+    }
+
+    @Test
+    void minigameLaunchStagingIsAlreadyReadyWhenCurrentWorldMatchesDefault() {
+        PendingArrival arrival = minigameLaunchArrival("default");
+
+        assertEquals(
+            SecureTravelService.MinigameLaunchStagingDecision.STAGING_ALREADY_READY,
+            SecureTravelService.decideMinigameLaunchStaging(arrival, "DEFAULT")
+        );
+    }
+
+    @Test
+    void nonMinigameTravelDoesNotUseMinigameStagingDecision() {
+        PendingArrival arrival = new PendingArrival(
+            "op-1", "srv-1", "srv.host:25565",
+            "default.natural_spawn", "Default Spawn", "NATURAL_SPAWN",
+            "default", "natural_spawn", "keep_inventory",
+            "", "{\"flowType\":\"portal.travel\",\"serverEntryMode\":\"default_world_natural_spawn\"}", "{}"
+        );
+
+        assertEquals(
+            SecureTravelService.MinigameLaunchStagingDecision.NOT_APPLICABLE,
+            SecureTravelService.decideMinigameLaunchStaging(arrival, "default")
+        );
+    }
+
+    private static PendingArrival minigameLaunchArrival(String worldName) {
+        return new PendingArrival(
+            "op-1", "srv-1", "srv.host:25565",
+            "default.natural_spawn", "Default Spawn", "NATURAL_SPAWN",
+            worldName, "natural_spawn", "keep_inventory",
+            "",
+            "{\"flowType\":\"minigame.launch\",\"serverEntryMode\":\"default_world_natural_spawn\",\"instanceTemplateId\":\"skywars_nexori\"}",
+            "{}"
+        );
+    }
 }

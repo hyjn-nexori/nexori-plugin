@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
-import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Transform;
 import org.joml.Vector3d;
@@ -31,10 +30,6 @@ import io.github.hyjn.nexori.plugin.identity.ServerIdentity;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferService;
 import io.github.hyjn.nexori.plugin.inventory.InventoryTransferState;
 import io.github.hyjn.nexori.plugin.inventory.logic.InventoryOutboundTransferPlan;
-import io.github.hyjn.nexori.plugin.minigame.ArenaDefinition;
-import io.github.hyjn.nexori.plugin.minigame.ArenaInstanceRuntime;
-import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotDefinition;
-import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.profile.TravelProfileType;
 import io.github.hyjn.nexori.plugin.secure.SecureReferralHandler;
@@ -55,12 +50,10 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -83,10 +76,10 @@ public final class SecureTravelService implements SecureReferralHandler {
     private final SecureReferralService secureReferralService;
     private final InventoryTransferService inventoryTransferService;
     private final DiagnosticsService diagnosticsService;
-    private final InstanceSpawnSlotService instanceSpawnSlotService;
     private final TravelContextParser travelContextParser = new TravelContextParser();
     private final SecureTravelDispatchPlanner dispatchPlanner = new SecureTravelDispatchPlanner();
     private final TravelArrivalPlanner arrivalPlanner = new TravelArrivalPlanner();
+    private final ReadyPlayerSnapshotResolver snapshotResolver = new ReadyPlayerSnapshotResolver();
     private final Map<UUID, PendingArrival> pendingArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PendingArrival> recentArrivals = new ConcurrentHashMap<>();
     private final Map<UUID, PortalArrivalSuppression> recentPortalArrivals = new ConcurrentHashMap<>();
@@ -102,8 +95,7 @@ public final class SecureTravelService implements SecureReferralHandler {
         @Nonnull DestinationTargetService destinationTargetService,
         @Nonnull SecureReferralService secureReferralService,
         @Nonnull InventoryTransferService inventoryTransferService,
-        @Nonnull DiagnosticsService diagnosticsService,
-        @Nonnull InstanceSpawnSlotService instanceSpawnSlotService
+        @Nonnull DiagnosticsService diagnosticsService
     ) {
         this.logger = logger;
         this.pluginDataDirectory = pluginDataDirectory;
@@ -113,7 +105,6 @@ public final class SecureTravelService implements SecureReferralHandler {
         this.secureReferralService = secureReferralService;
         this.inventoryTransferService = inventoryTransferService;
         this.diagnosticsService = diagnosticsService;
-        this.instanceSpawnSlotService = instanceSpawnSlotService;
     }
 
     @Nonnull
@@ -482,33 +473,111 @@ public final class SecureTravelService implements SecureReferralHandler {
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        ReadyPlayerSnapshot snapshot = snapshotResolver.resolve(event);
+        if (!snapshot.safe()) {
+            logger.atInfo().log("NEXORI_TRAVEL_UNSAFE_READY reason=" + snapshot.unsafeReason());
             return;
         }
 
-        PendingArrival arrival = pendingArrivals.remove(playerRef.getUuid());
+        // If the engine fires PlayerReadyEvent while the player entity has no world yet
+        // (e.g. temporarily placed in skywars_nexori_template), do not remove the pending
+        // arrival or issue any teleport.  The arrival stays in pendingArrivals and will be
+        // processed on the next safe ready event with a valid world.
+        if (snapshot.world() == null) {
+            logger.atInfo().log(
+                "NEXORI_TRAVEL_UNSAFE_READY player=" + snapshot.playerUuid()
+                    + " username=" + snapshot.username()
+                    + " reason=NULL_WORLD"
+            );
+            return;
+        }
+
+        PlayerRef playerRef = snapshot.playerRef();
+        PendingArrival arrival = pendingArrivals.get(playerRef.getUuid());
         if (arrival == null) {
             inventoryTransferService.handlePlayerReady(event);
             return;
         }
 
-        recentArrivals.put(playerRef.getUuid(), arrival);
-        rememberRecentPortalArrival(playerRef.getUuid(), arrival);
-        if (!tryQueueInstanceArrival(event, playerRef, arrival)) {
-            applyArrivalTeleport(event, playerRef, arrival);
+        MinigameLaunchStagingDecision stagingDecision = decideMinigameLaunchStaging(arrival, snapshot.world().getName());
+        if (stagingDecision == MinigameLaunchStagingDecision.STAGING_REQUIRED) {
+            logger.atInfo().log(
+                "NEXORI_TRAVEL_STAGING_REQUIRED player=" + playerRef.getUuid()
+                    + " username=" + playerRef.getUsername()
+                    + " currentWorld=" + snapshot.world().getName()
+                    + " targetWorld=" + normalizeOptional(arrival.worldName())
+            );
+            if (applyArrivalTeleport(snapshot, playerRef, arrival)) {
+                logger.atInfo().log(
+                    "NEXORI_TRAVEL_STAGING_TELEPORT_ISSUED player=" + playerRef.getUuid()
+                        + " username=" + playerRef.getUsername()
+                        + " target=" + normalizeOptional(arrival.destinationTargetId())
+                );
+            }
+            return;
         }
+
+        if (!pendingArrivals.remove(playerRef.getUuid(), arrival)) {
+            return;
+        }
+
+        if (stagingDecision == MinigameLaunchStagingDecision.STAGING_ALREADY_READY) {
+            logger.atInfo().log(
+                "NEXORI_TRAVEL_STAGING_ALREADY_READY player=" + playerRef.getUuid()
+                    + " username=" + playerRef.getUsername()
+                    + " currentWorld=" + snapshot.world().getName()
+                    + " targetWorld=" + normalizeOptional(arrival.worldName())
+            );
+            markArrivalReady(playerRef.getUuid(), arrival);
+            logger.atInfo().log(
+                "NEXORI_TRAVEL_STAGING_READY player=" + playerRef.getUuid()
+                    + " username=" + playerRef.getUsername()
+                    + " target=" + normalizeOptional(arrival.destinationTargetId())
+            );
+            playerRef.sendMessage(Message.raw(arrivalPlanner.buildArrivalMessage(arrival)));
+            inventoryTransferService.handlePlayerReady(event);
+            return;
+        }
+
+        markArrivalReady(playerRef.getUuid(), arrival);
+        applyArrivalTeleport(snapshot, playerRef, arrival);
+
         playerRef.sendMessage(Message.raw(arrivalPlanner.buildArrivalMessage(arrival)));
         inventoryTransferService.handlePlayerReady(event);
     }
 
+    private void markArrivalReady(@Nonnull UUID playerUuid, @Nonnull PendingArrival arrival) {
+        recentArrivals.put(playerUuid, arrival);
+        rememberRecentPortalArrival(playerUuid, arrival);
+    }
+
+    /**
+     * Returns the most recent accepted arrival for one player without removing it.
+     * Callers that intend to consume the arrival must follow up with
+     * {@link #acknowledgeRecentArrival(UUID, PendingArrival)}.
+     */
     @Nonnull
+    public Optional<PendingArrival> peekRecentArrival(@Nonnull UUID playerUuid) {
+        return Optional.ofNullable(recentArrivals.get(playerUuid));
+    }
+
+    /**
+     * Removes a specific recent arrival once the caller has taken ownership of it.
+     * Uses the exact {@code arrival} reference to guard against races where the map
+     * entry was already replaced by a newer arrival.
+     */
+    public void acknowledgeRecentArrival(@Nonnull UUID playerUuid, @Nonnull PendingArrival arrival) {
+        recentArrivals.remove(playerUuid, arrival);
+    }
+
     /**
      * Returns and clears the most recent accepted arrival record for one player.
+     *
+     * @deprecated Prefer {@link #peekRecentArrival} + {@link #acknowledgeRecentArrival} so that
+     *     the arrival is not lost if the consumer decides not to take ownership.
      */
+    @Deprecated
+    @Nonnull
     public Optional<PendingArrival> consumeRecentArrival(@Nonnull UUID playerUuid) {
         return Optional.ofNullable(recentArrivals.remove(playerUuid));
     }
@@ -551,106 +620,17 @@ public final class SecureTravelService implements SecureReferralHandler {
         return suppression.destinationTargetId().equals(normalizedTargetId);
     }
 
-    private boolean tryQueueInstanceArrival(
-        @Nonnull PlayerReadyEvent event,
-        @Nonnull PlayerRef playerRef,
-        @Nonnull PendingArrival arrival
-    ) {
-        JsonObject context = parseContext(arrival.contextJson());
-        if (context == null || !context.has("flowType") || !context.has("matchId")) {
-            return false;
-        }
-        if (!"minigame.launch".equalsIgnoreCase(context.get("flowType").getAsString())) {
-            return false;
-        }
-
-        String instanceTemplateId = context.has("instanceTemplateId")
-            ? normalizeOptional(context.get("instanceTemplateId").getAsString())
-            : "";
-        if (instanceTemplateId.isBlank()
-            || ArenaDefinition.NO_INSTANCE_TEMPLATE_ID.equalsIgnoreCase(instanceTemplateId)
-            || !InstancesPlugin.doesInstanceAssetExist(instanceTemplateId)) {
-            return false;
-        }
-
-        String matchId = normalizeOptional(context.get("matchId").getAsString()).toLowerCase();
-        if (matchId.isBlank()) {
-            return false;
-        }
-        int launchIndex = context.has("launchIndex")
-            ? Math.max(context.get("launchIndex").getAsInt(), 0)
-            : 0;
-
-        Transform arrivalTransform = resolveArrivalTransform(arrival, playerRef.getUuid());
-        World baseWorld = Universe.get().getWorld(arrival.worldName());
-        if (arrivalTransform == null || baseWorld == null) {
-            return false;
-        }
-
-        Ref<EntityStore> playerEntityRef = event.getPlayerRef();
-        Store<EntityStore> store = playerEntityRef.getStore();
-        String instanceWorldName = ArenaInstanceRuntime.buildInstanceWorldName(matchId);
-        CompletableFuture<World> instanceFuture;
-        List<InstanceSpawnSlotDefinition> spawnSlots = instanceSpawnSlotService.listByInstanceTemplateId(instanceTemplateId);
-        try {
-            World existingWorld = Universe.get().getWorld(instanceWorldName);
-            CompletableFuture<World> materializedInstanceFuture = existingWorld != null && existingWorld.isAlive()
-                ? CompletableFuture.completedFuture(existingWorld)
-                : InstancesPlugin.get().spawnInstance(
-                    instanceTemplateId,
-                    instanceWorldName,
-                    baseWorld,
-                    arrivalTransform.clone()
-                );
-            // The instance is prepared before the player enters it so placement rules are already in place.
-            instanceFuture = materializedInstanceFuture.thenCompose(instanceWorld ->
-                ArenaInstanceRuntime.prepareInstanceForMatch(
-                    instanceWorld,
-                    spawnSlots,
-                    playerRef.getUuid(),
-                    launchIndex
-                )
-            );
-        } catch (Exception exception) {
-            logger.atWarning().withCause(exception).log(
-                "Failed to prepare Nexori instance arrival for match " + matchId + "."
-            );
-            return false;
-        }
-
-        instanceFuture.whenComplete((instanceWorld, throwable) -> {
-            if (throwable != null) {
-                logger.atWarning().withCause(throwable).log(
-                    "Failed to materialize Nexori instance world '" + instanceWorldName + "' for match " + matchId + "."
-                );
-                baseWorld.execute(() -> store.addComponent(
-                    playerEntityRef,
-                    Teleport.getComponentType(),
-                    Teleport.createForPlayer(baseWorld, arrivalTransform.clone())
-                ));
-                return;
-            }
-        });
-        InstancesPlugin.teleportPlayerToLoadingInstance(
-            playerEntityRef,
-            store,
-            instanceFuture,
-            arrivalTransform.clone()
-        );
-        return true;
-    }
-
-    private void applyArrivalTeleport(@Nonnull PlayerReadyEvent event, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {
+    private boolean applyArrivalTeleport(@Nonnull ReadyPlayerSnapshot snapshot, @Nonnull PlayerRef playerRef, @Nonnull PendingArrival arrival) {
         Transform transform = resolveArrivalTransform(arrival, playerRef.getUuid());
         if (transform == null) {
-            return;
+            return false;
         }
 
         World targetWorld = Universe.get().getWorld(arrival.worldName());
         Teleport teleport = targetWorld == null
             ? Teleport.createForPlayer(transform.clone())
             : Teleport.createForPlayer(targetWorld, transform.clone());
-        event.getPlayerRef().getStore().addComponent(event.getPlayerRef(), Teleport.getComponentType(), teleport);
+        snapshot.store().addComponent(snapshot.entityRef(), Teleport.getComponentType(), teleport);
         recordTravel(
             arrival.travelOperationId(),
             DiagnosticsAction.TRAVEL_ARRIVAL_TELEPORT,
@@ -674,6 +654,41 @@ public final class SecureTravelService implements SecureReferralHandler {
         logger.atInfo().log("Queued Nexori ready teleport for " + playerRef.getUsername()
             + " targetId=" + arrival.destinationTargetId()
             + " position=" + transform.getPosition());
+        return true;
+    }
+
+    @Nonnull
+    static MinigameLaunchStagingDecision decideMinigameLaunchStaging(
+        @Nonnull PendingArrival arrival,
+        @Nonnull String currentWorldName
+    ) {
+        TravelContextParser parser = new TravelContextParser();
+        JsonObject context = parser.parseContext(arrival.contextJson()).context();
+        if (!parser.isMinigameLaunchContext(context)
+            || !parser.shouldUseDefaultWorldNaturalSpawnEntry(context)
+            || !hasInstanceTemplateId(parser, context)) {
+            return MinigameLaunchStagingDecision.NOT_APPLICABLE;
+        }
+
+        String targetWorldName = parser.normalizeOptional(arrival.worldName());
+        String normalizedCurrentWorldName = parser.normalizeOptional(currentWorldName);
+        if (!targetWorldName.isBlank()
+            && targetWorldName.equalsIgnoreCase(normalizedCurrentWorldName)) {
+            return MinigameLaunchStagingDecision.STAGING_ALREADY_READY;
+        }
+        return MinigameLaunchStagingDecision.STAGING_REQUIRED;
+    }
+
+    private static boolean hasInstanceTemplateId(@Nonnull TravelContextParser parser, JsonObject context) {
+        return context != null
+            && context.has("instanceTemplateId")
+            && !parser.normalizeOptional(context.get("instanceTemplateId").getAsString()).isBlank();
+    }
+
+    enum MinigameLaunchStagingDecision {
+        NOT_APPLICABLE,
+        STAGING_REQUIRED,
+        STAGING_ALREADY_READY
     }
 
     private Transform resolveArrivalTransform(@Nonnull PendingArrival arrival, @Nonnull UUID playerUuid) {

@@ -135,13 +135,15 @@ public final class NetworkCatalogSyncService {
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot =
+            new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+        if (!snapshot.safe()) {
             return;
         }
+        if (snapshot.world() == null) {
+            return;
+        }
+        PlayerRef playerRef = snapshot.playerRef();
 
         PendingCatalogSyncReturn pendingReturn = pendingReturns.remove(playerRef.getUuid());
         if (pendingReturn == null) {
@@ -156,15 +158,15 @@ public final class NetworkCatalogSyncService {
         Teleport teleport = world == null
             ? Teleport.createForPlayer(pendingReturn.originTransform().clone())
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
-        Ref<EntityStore> storeRef = event.getPlayerRef();
-        Store<EntityStore> store = storeRef.getStore();
+        Ref<EntityStore> storeRef = snapshot.entityRef();
+        Store<EntityStore> store = snapshot.store();
         store.addComponent(storeRef, Teleport.getComponentType(), teleport);
         if (pendingReturn.resumeAction() != null) {
             pendingReturn.resumeAction().reopenWithStatus(
                 storeRef,
                 store,
                 playerRef,
-                event.getPlayer(),
+                snapshot.player(),
                 pendingReturn.message(),
                 pendingReturn.success()
             );

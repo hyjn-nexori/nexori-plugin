@@ -191,13 +191,15 @@ public final class DestinationTargetDiscoverySyncService {
     }
 
     public void handlePlayerReady(@Nonnull PlayerReadyEvent event) {
-        PlayerRef playerRef = event.getPlayerRef().getStore().getComponent(
-            event.getPlayerRef(),
-            Universe.get().getPlayerRefComponentType()
-        );
-        if (playerRef == null) {
+        io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshot snapshot =
+            new io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotResolver().resolve(event);
+        if (!snapshot.safe()) {
             return;
         }
+        if (snapshot.world() == null) {
+            return;
+        }
+        PlayerRef playerRef = snapshot.playerRef();
 
         PendingApplyReturn pendingReturn = pendingReturns.remove(playerRef.getUuid());
         if (pendingReturn == null) {
@@ -208,14 +210,14 @@ public final class DestinationTargetDiscoverySyncService {
         Teleport teleport = world == null
             ? Teleport.createForPlayer(pendingReturn.originTransform().clone())
             : Teleport.createForPlayer(world, pendingReturn.originTransform().clone());
-        Ref<EntityStore> storeRef = event.getPlayerRef();
-        storeRef.getStore().addComponent(storeRef, Teleport.getComponentType(), teleport);
+        Ref<EntityStore> storeRef = snapshot.entityRef();
+        snapshot.store().addComponent(storeRef, Teleport.getComponentType(), teleport);
         if (pendingReturn.resumeAction() != null) {
             pendingReturn.resumeAction().reopenWithStatus(
                 storeRef,
-                storeRef.getStore(),
+                snapshot.store(),
                 playerRef,
-                event.getPlayer(),
+                snapshot.player(),
                 pendingReturn.message(),
                 pendingReturn.success()
             );
