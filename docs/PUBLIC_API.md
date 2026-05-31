@@ -184,26 +184,19 @@ In manual mode:
 - your mod schedules returns explicitly with `returnPlayerToLobby(...)` when needed
 - Nexori takes over again once the outcome has been reported
 
-If the match is not in manual mode:
+Use `rulesEngineId` to decide whether your mod owns the match runtime. Nexori no longer ships built-in match resolution triggers in core.
 
-- your mod should stay passive for match resolution
-- your mod should not try to decide the winner
-- your mod should not call result commands as the owner of the rule engine
-- Nexori's built-in trigger is the system that owns match resolution
-
-If your plugin contains multiple minigames, Nexori still only tells you whether the match is in manual mode. Your own plugin must decide which internal minigame controller, rule set, or game manager should handle that match.
+If your plugin contains multiple minigames, use the match `rulesEngineId` to decide which internal minigame controller, rule set, or game manager should handle that match.
 
 <details>
 <summary><code>Authority model</code></summary>
 
 | Section | Details |
 |---|---|
-| Built-in Nexori resolution | Nexori owns the match outcome. |
-| Manual resolution | Your mod owns the match outcome. |
-| How to detect manual mode | Call `findMatchResolutionTriggerId(matchId)`. |
-| Manual trigger meaning | The demo treats blank or `"none"` as manual resolution. |
-| Your responsibility in manual mode | Decide which gameplay logic is active and when players should be resolved as `WIN` or `LOSS`. |
-| Your behavior in built-in mode | Do not run your own match-resolution authority. Stay passive and let Nexori's built-in trigger own the outcome. |
+| Nexori core resolution | Nexori does not own gameplay-specific match resolution. |
+| External rules engine | Your mod owns the match outcome when `rulesEngineId` matches your engine. |
+| How to detect ownership | Read `rulesEngineId` from match info or lifecycle events. |
+| Your responsibility | Decide which gameplay logic is active and when players should be resolved as `WIN` or `LOSS`. |
 | Nexori's responsibility after that | Store the result, queue backend reporting when configured, and run explicit return-to-lobby requests. |
 
 </details>
@@ -215,9 +208,9 @@ If your plugin contains multiple minigames, Nexori still only tells you whether 
 |---|---|
 | 1 | Resolve `NexoriMinigameApi` from the Nexori plugin. |
 | 2 | Call `findActiveMatchId(playerUuid)` to detect whether the player is inside an active Nexori match. |
-| 3 | Call `findMatchResolutionTriggerId(matchId)` to determine whether the match is using manual resolution or a Nexori built-in trigger. |
+| 3 | Check the match `rulesEngineId` and only handle matches assigned to your external rules engine. |
 | 4 | Before starting gameplay logic that depends on players being in the correct world or position, call `findMatchPlacementState(matchId)` and wait until `placementComplete` is `true`. |
-| 5 | Only if the trigger is manual, hand control to your own game rule engine or minigame controller. |
+| 5 | Hand control to your own game rule engine or minigame controller. |
 | 6 | When your mod decides the winner/losers, call `setPlayerOutcome(...)` for each required player. |
 | 7 | Call `submitFinalMatchResult(...)` to close and optionally report the final match result. |
 | 8 | Call `returnPlayerToLobby(...)` for players that should leave the arena runtime. |
@@ -370,23 +363,17 @@ if (placementState == null || !placementState.placementComplete()) {
 | Section | Details |
 |---|---|
 | Signature | `Optional<String> findMatchResolutionTriggerId(@Nonnull String matchId)` |
-| What it does | Returns the current match resolution trigger id for an active match. |
+| What it does | Legacy compatibility method. Nexori no longer supports built-in match resolution triggers. |
 | Arguments | `matchId` - the active match id. |
-| Returns | `Optional<String>` containing the trigger id, or `Optional.empty()` when the match is not active. |
-| Use this when | You need to decide whether your mod has authority to run the match rule engine or whether it should stay passive and let Nexori resolve the match. |
-| Notes | The companion demo treats blank or `"none"` as manual resolution. The codebase also uses the built-in trigger id `last_player_alive`. If the trigger is not manual, your mod should not act as the match-resolution authority. |
+| Returns | `Optional<String>` containing the legacy value `"none"` for active matches, or `Optional.empty()` when the match is not active. |
+| Use this when | Only for source/binary compatibility with older integrations. |
+| Notes | Deprecated for removal. Use `rulesEngineId` to identify the external minigame/rules engine. External minigames should resolve matches through the public API. |
 
 **Example**
 
 ```java
-String triggerId = minigameApi.findMatchResolutionTriggerId(matchId).orElse("");
-boolean manualResolution = triggerId.isBlank() || "none".equalsIgnoreCase(triggerId);
-
-if (!manualResolution) {
-    // Nexori owns match resolution for this match.
-    // This mod should stay passive and not run its own rule engine.
-    return;
-}
+// Deprecated compatibility method. Prefer rulesEngineId from match info or lifecycle events.
+String legacyTriggerId = minigameApi.findMatchResolutionTriggerId(matchId).orElse("none");
 
 // Manual mode: this mod now has authority to run its own
 // gameplay rule engine and eventually report WIN/LOSS.
@@ -459,12 +446,12 @@ public final class NexoriPublicApiDemoPlugin extends JavaPlugin {
 </details>
 
 <details>
-<summary><code>Gate your gameplay on active match, manual trigger, and placement completion</code></summary>
+<summary><code>Gate your gameplay on active match, rules engine, and placement completion</code></summary>
 
 | Section | Details |
 |---|---|
-| Pattern | Exit early until the player is in an active Nexori match, the trigger is manual, and placement is complete. |
-| Why it helps | Your gameplay logic only takes control when Nexori has fully handed authority to the external mod. If the trigger is not manual, your mod does nothing and Nexori keeps ownership of the match rule engine. |
+| Pattern | Exit early until the player is in an active Nexori match assigned to your `rulesEngineId`, and placement is complete. |
+| Why it helps | Your gameplay logic only takes control when the active match belongs to your external minigame/rules engine and Nexori placement has completed. |
 | Source in demo | `MidCaptureService#handlePlayerTick(...)` |
 
 **Example**
@@ -477,9 +464,8 @@ if (activeMatchId.isEmpty()) {
 
 String matchId = activeMatchId.get();
 
-String triggerId = minigameApi.findMatchResolutionTriggerId(matchId).orElse("");
-boolean manualResolution = triggerId.isBlank() || "none".equalsIgnoreCase(triggerId);
-if (!manualResolution) {
+NexoriActiveMatchInfo matchInfo = minigameApi.findActiveMatchInfo(matchId).orElse(null);
+if (matchInfo == null || !"capture_the_zone".equals(matchInfo.rulesEngineId())) {
     return;
 }
 

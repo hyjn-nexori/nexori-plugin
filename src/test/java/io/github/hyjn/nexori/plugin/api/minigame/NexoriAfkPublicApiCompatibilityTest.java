@@ -206,6 +206,7 @@ final class NexoriAfkPublicApiCompatibilityTest {
         }
 
         @Override
+        @SuppressWarnings("removal")
         public Optional<String> findMatchResolutionTriggerId(String matchId) {
             return Optional.empty();
         }

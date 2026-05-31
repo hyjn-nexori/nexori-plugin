@@ -253,7 +253,7 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 info.assignmentId(),
                 info.externalMatchId(),
                 info.rulesEngineId(),
-                "",
+                "none",
                 info.expectedPlayerUuids(),
                 info.arrivedPlayerUuids(),
                 info.activePlayerUuids(),
@@ -612,7 +612,11 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
     @Nonnull
     @Override
+    @Deprecated(forRemoval = true)
+    @SuppressWarnings("removal")
     public Optional<String> findMatchResolutionTriggerId(@Nonnull String matchId) {
-        return Optional.empty();
+        return arenaMatchService.findActiveMatchInfo(matchId).isPresent()
+            ? Optional.of("none")
+            : Optional.empty();
     }
 }

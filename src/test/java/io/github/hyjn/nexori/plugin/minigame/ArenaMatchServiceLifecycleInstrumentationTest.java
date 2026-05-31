@@ -44,6 +44,7 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
     Path tempDir;
 
     @Test
+    @SuppressWarnings("removal")
     void initialArrivalCollectsMatchCreatedAndPlayerArrivedWithoutDispatchingImmediately() {
         NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
         ArenaMatchService service = service(dispatcher);
@@ -80,6 +81,7 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
         assertEquals("queue-1", createdEvents.get(0).queueId());
         assertEquals("arena-1", createdEvents.get(0).arenaId());
         assertEquals("capture_the_zone", createdEvents.get(0).rulesEngineId());
+        assertEquals("none", createdEvents.get(0).matchResolutionTriggerId());
         assertEquals(1, arrivedEvents.size());
         assertEquals(PLAYER_ONE, arrivedEvents.get(0).playerUuid());
         assertEquals("PlayerOne", arrivedEvents.get(0).playerName());

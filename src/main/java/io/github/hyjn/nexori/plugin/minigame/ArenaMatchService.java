@@ -1671,7 +1671,7 @@ public class ArenaMatchService {
             match.assignmentId(),
             match.externalMatchId(),
             match.rulesEngineId(),
-            "",
+            "none",
             match.expectedPlayerUuids(),
             match.arrivedPlayerUuids(),
             match.activePlayerUuids(),

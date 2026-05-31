@@ -36,6 +36,25 @@ final class NexoriMinigameApiBridgeAfkTest {
     private static final UUID PLAYER_TWO = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     @Test
+    @SuppressWarnings("removal")
+    void legacyMatchResolutionTriggerReturnsEmptyValueOnlyForExistingMatch() {
+        ArenaMatchService arenaMatchService = mock(ArenaMatchService.class);
+        when(arenaMatchService.findActiveMatchInfo("match-1")).thenReturn(Optional.of(activeMatchInfo()));
+        when(arenaMatchService.findActiveMatchInfo("missing")).thenReturn(Optional.empty());
+        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
+            arenaMatchService,
+            new AfkActivityService(playerUuid -> Optional.empty()),
+            null,
+            new NexoriMatchLifecycleDispatcher(),
+            new NexoriAfkActivityDispatcher()
+        );
+
+        assertEquals(Optional.of("none"), bridge.findMatchResolutionTriggerId("match-1"));
+        assertEquals(Optional.empty(), bridge.findMatchResolutionTriggerId("missing"));
+    }
+
+    @Test
+    @SuppressWarnings("removal")
     void activeMatchInfoIncludesOnlyAfkPlayersFromActivityService() {
         ArenaMatchService arenaMatchService = mock(ArenaMatchService.class);
         when(arenaMatchService.findActiveMatchInfo("match-1")).thenReturn(Optional.of(activeMatchInfo()));
@@ -62,6 +81,7 @@ final class NexoriMinigameApiBridgeAfkTest {
         NexoriActiveMatchInfo info = bridge.findActiveMatchInfo("match-1").orElseThrow();
 
         assertEquals(List.of(PLAYER_ONE), info.afkPlayerUuids());
+        assertEquals("none", info.matchResolutionTriggerId());
     }
 
     @Test
@@ -608,7 +628,7 @@ final class NexoriMinigameApiBridgeAfkTest {
                 @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultResult submitFinalMatchResult(io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest request) { return null; }
                 @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionResult closeMatchAdmission(io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest request) { return null; }
                 @Override public java.util.Optional<io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState> findMatchPlacementState(String matchId) { return java.util.Optional.empty(); }
-                @Override public java.util.Optional<String> findMatchResolutionTriggerId(String matchId) { return java.util.Optional.empty(); }
+                @Override @SuppressWarnings("removal") public java.util.Optional<String> findMatchResolutionTriggerId(String matchId) { return java.util.Optional.empty(); }
                 @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriListenerRegistration registerMatchLifecycleListener(String rulesEngineId, io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchLifecycleListener listener) { return () -> {}; }
             };
 

@@ -26,9 +26,7 @@ The full test flow is:
 5. finish the match
 6. return to the lobby
 
-> If you test the built-in `Last Player Alive` mode alone, Nexori may immediately resolve you as the winner because you are the only remaining player.
->
-> For a more realistic test, use at least two players.
+> Nexori core no longer includes built-in minigame rule engines. Use an external minigame integration, such as Capture The Zone, to drive gameplay and report outcomes through the public API.
 
 ---
 
@@ -249,7 +247,7 @@ Create a new GAME using:
 
 - **target server:** server 2
 - **instance template:** `skywars_nexori`
-- **return-to-lobby trigger:** `Last Player Alive`
+- **rules engine id:** the id used by your external minigame integration
 
 <details>
 <summary>What each field means</summary>
@@ -260,16 +258,10 @@ Create a new GAME using:
 - **Instance template**  
   The world template Nexori will use to create match instances.
 
-- **Return-to-lobby trigger**  
-  The match resolution logic.
+- **Rules engine id**  
+  The external minigame/rules engine that should own gameplay for this arena.
 
-For this guide, use Nexori's built-in trigger:
-
-- `Last Player Alive`
-
-That built-in logic marks dead players as `LOSS` and the final surviving player as `WIN`.
-
-The `Manual` option is for third-party minigame mods that want to provide their own gameplay rule engine and report outcomes through Nexori's public API.
+Nexori core handles matchmaking, placement, backfill, lifecycle, result storage, and return flow. The external minigame mod owns match-specific gameplay rules and reports outcomes through Nexori's public API.
 
 </details>
 
@@ -510,17 +502,15 @@ Once the countdown finishes:
 
 ## 21. Test the match result
 
-If you are testing alone, Nexori's built-in `Last Player Alive` trigger will usually resolve you as the winner quickly.
-
-If you are testing with a friend, fight normally and let one player die.
+Use your external minigame integration to complete the match and report outcomes.
 
 <details>
-<summary>Expected built-in behavior</summary>
+<summary>Expected external rules-engine behavior</summary>
 
-With `Last Player Alive`:
+With an external minigame integration:
 
-- dead players are marked as `LOSS`
-- the last surviving player is marked as `WIN`
+- the minigame decides each player's `WIN`, `LOSS`, or other outcome
+- the minigame submits the final match result through Nexori's public API
 
 After the result is recorded, Nexori handles the delayed return-to-lobby flow automatically.
 
@@ -549,7 +539,7 @@ There are a few directions this could improve in future versions:
 
 For `2.0.0`, this was intentionally left simple so development could keep moving instead of getting blocked on a larger spectator-mode feature.
 
-The important part for this release is that Nexori still resolves the result and returns the player to the lobby correctly.
+The important part for this release is that the external minigame reports the result and Nexori returns the player to the lobby correctly.
 
 </details>
 
@@ -564,7 +554,7 @@ If you completed the full setup, you now have:
 - one minigame server
 - a queue entry portal
 - a queue exit portal
-- a built-in `Last Player Alive` match flow
+- an external minigame rules-engine match flow
 - return-to-lobby behavior after the match ends
 
 That gives you a complete backendless minigame flow built directly in-game.
