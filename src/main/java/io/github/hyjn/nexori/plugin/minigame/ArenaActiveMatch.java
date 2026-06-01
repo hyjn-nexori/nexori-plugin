@@ -48,6 +48,13 @@ public record ArenaActiveMatch(
     String explicitAdmissionCloseMessage,
     long explicitAdmissionClosedAtEpochMs,
     String winnerPlayerUuid,
+    int minimumInitialPlayers,
+    long initialPlacementWindowStartedAtEpochMs,
+    long initialPlacementWindowExpiresAtEpochMs,
+    long initialPlacementWindowClosedAtEpochMs,
+    String initialPlacementWindowCloseReason,
+    long startGateOpenedAtEpochMs,
+    String startGateOpenReason,
     long placementCompletedAtEpochMs,
     long matchStartedAtEpochMs,
     long completedAtEpochMs,
@@ -311,6 +318,109 @@ public record ArenaActiveMatch(
         );
     }
 
+    public ArenaActiveMatch(
+        String matchId,
+        String queueId,
+        String arenaId,
+        String originLobbyId,
+        String returnConnectionAddress,
+        String returnFallbackTargetId,
+        String launchTravelProfileId,
+        String instanceTemplateId,
+        String instanceWorldName,
+        String rulesEngineId,
+        String assignmentId,
+        String createdByAssignmentType,
+        String externalMatchId,
+        String matchSource,
+        int admissionPolicySchemaVersion,
+        int admissionCapacity,
+        boolean backfillEnabled,
+        String backfillMode,
+        int backfillWindowSeconds,
+        AfkDetectionPolicy afkDetectionPolicy,
+        List<UUID> expectedPlayerUuids,
+        int expectedPlayerCount,
+        List<UUID> arrivedPlayerUuids,
+        List<UUID> activePlayerUuids,
+        List<UUID> eliminatedPlayerUuids,
+        List<UUID> spectatorPlayerUuids,
+        Map<UUID, String> assignmentIdsByPlayerUuid,
+        Map<UUID, ArenaPlayerReturnTarget> playerReturnTargetsByUuid,
+        Map<UUID, ArenaPlayerOutcomeState> playerOutcomeByUuid,
+        Map<UUID, Long> pendingReturnAtEpochMsByPlayerUuid,
+        int consumedBackfillAdmissionCount,
+        Set<String> acceptedBackfillReservationIds,
+        boolean explicitAdmissionClosed,
+        String explicitAdmissionCloseReason,
+        String explicitAdmissionCloseMessage,
+        long explicitAdmissionClosedAtEpochMs,
+        String winnerPlayerUuid,
+        long placementCompletedAtEpochMs,
+        long matchStartedAtEpochMs,
+        long completedAtEpochMs,
+        long resultSubmittedAtEpochMs,
+        String resultPayloadHash,
+        long createdAtEpochMs,
+        long lastUpdatedAtEpochMs,
+        String lastError
+    ) {
+        this(
+            matchId,
+            queueId,
+            arenaId,
+            originLobbyId,
+            returnConnectionAddress,
+            returnFallbackTargetId,
+            launchTravelProfileId,
+            instanceTemplateId,
+            instanceWorldName,
+            rulesEngineId,
+            assignmentId,
+            createdByAssignmentType,
+            externalMatchId,
+            matchSource,
+            admissionPolicySchemaVersion,
+            admissionCapacity,
+            backfillEnabled,
+            backfillMode,
+            backfillWindowSeconds,
+            afkDetectionPolicy,
+            expectedPlayerUuids,
+            expectedPlayerCount,
+            arrivedPlayerUuids,
+            activePlayerUuids,
+            eliminatedPlayerUuids,
+            spectatorPlayerUuids,
+            assignmentIdsByPlayerUuid,
+            playerReturnTargetsByUuid,
+            playerOutcomeByUuid,
+            pendingReturnAtEpochMsByPlayerUuid,
+            consumedBackfillAdmissionCount,
+            acceptedBackfillReservationIds,
+            explicitAdmissionClosed,
+            explicitAdmissionCloseReason,
+            explicitAdmissionCloseMessage,
+            explicitAdmissionClosedAtEpochMs,
+            winnerPlayerUuid,
+            Math.min(Math.max(expectedPlayerCount, 0), PlayerUuidLists.canonicalize(expectedPlayerUuids).size()),
+            0L,
+            0L,
+            0L,
+            "",
+            0L,
+            "",
+            placementCompletedAtEpochMs,
+            matchStartedAtEpochMs,
+            completedAtEpochMs,
+            resultSubmittedAtEpochMs,
+            resultPayloadHash,
+            createdAtEpochMs,
+            lastUpdatedAtEpochMs,
+            lastError
+        );
+    }
+
     @Nonnull
     public ArenaActiveMatch normalized() {
         long now = System.currentTimeMillis();
@@ -352,6 +462,17 @@ public record ArenaActiveMatch(
             normalizeOptional(explicitAdmissionCloseMessage),
             Math.max(0L, explicitAdmissionClosedAtEpochMs),
             normalizeOptional(winnerPlayerUuid),
+            normalizeMinimumInitialPlayers(
+                minimumInitialPlayers,
+                Math.max(expectedPlayerCount, 0),
+                PlayerUuidLists.canonicalize(expectedPlayerUuids).size()
+            ),
+            Math.max(0L, initialPlacementWindowStartedAtEpochMs),
+            Math.max(0L, initialPlacementWindowExpiresAtEpochMs),
+            Math.max(0L, initialPlacementWindowClosedAtEpochMs),
+            normalizeOptional(initialPlacementWindowCloseReason),
+            Math.max(0L, startGateOpenedAtEpochMs),
+            normalizeOptional(startGateOpenReason),
             Math.max(0L, placementCompletedAtEpochMs),
             Math.max(0L, matchStartedAtEpochMs),
             Math.max(0L, completedAtEpochMs),
@@ -568,6 +689,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs(),
@@ -803,6 +931,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs(),
@@ -854,6 +989,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs(),
@@ -905,6 +1047,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs,
@@ -956,6 +1105,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs(),
@@ -968,11 +1124,12 @@ public record ArenaActiveMatch(
     }
 
     @Nonnull
-    public ArenaActiveMatch withPlacementCompleted(long placementCompletedAtEpochMs, long nowEpochMs) {
-        long normalizedPlacementCompletedAtEpochMs = Math.max(placementCompletedAtEpochMs, 0L);
-        long normalizedMatchStartedAtEpochMs = matchStartedAtEpochMs() > 0L
-            ? matchStartedAtEpochMs()
-            : normalizedPlacementCompletedAtEpochMs;
+    public ArenaActiveMatch withInitialPlacementWindowRuntime(
+        int rawMinimumInitialPlayers,
+        long startedAtEpochMs,
+        long expiresAtEpochMs,
+        long nowEpochMs
+    ) {
         return new ArenaActiveMatch(
             matchId(),
             queueId(),
@@ -1011,8 +1168,195 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
-            normalizedPlacementCompletedAtEpochMs,
+            rawMinimumInitialPlayers,
+            Math.max(0L, startedAtEpochMs),
+            Math.max(0L, expiresAtEpochMs),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
+            placementCompletedAtEpochMs(),
+            matchStartedAtEpochMs(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            lastError()
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withInitialPlacementWindowClosed(@Nonnull String rawReason, long closedAtEpochMs, long nowEpochMs) {
+        long normalizedClosedAtEpochMs = Math.max(0L, closedAtEpochMs);
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            rulesEngineId(),
+            assignmentId(),
+            createdByAssignmentType(),
+            externalMatchId(),
+            matchSource(),
+            admissionPolicySchemaVersion(),
+            admissionCapacity(),
+            backfillEnabled(),
+            backfillMode(),
+            backfillWindowSeconds(),
+            afkDetectionPolicy(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            normalizedClosedAtEpochMs,
+            rawReason,
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
+            placementCompletedAtEpochMs(),
+            matchStartedAtEpochMs(),
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            lastError()
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withStartGateOpened(@Nonnull String rawReason, long openedAtEpochMs, long nowEpochMs) {
+        long normalizedOpenedAtEpochMs = Math.max(0L, openedAtEpochMs);
+        long normalizedMatchStartedAtEpochMs = matchStartedAtEpochMs() > 0L
+            ? matchStartedAtEpochMs()
+            : normalizedOpenedAtEpochMs;
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            rulesEngineId(),
+            assignmentId(),
+            createdByAssignmentType(),
+            externalMatchId(),
+            matchSource(),
+            admissionPolicySchemaVersion(),
+            admissionCapacity(),
+            backfillEnabled(),
+            backfillMode(),
+            backfillWindowSeconds(),
+            afkDetectionPolicy(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            normalizedOpenedAtEpochMs,
+            rawReason,
+            placementCompletedAtEpochMs(),
             normalizedMatchStartedAtEpochMs,
+            completedAtEpochMs(),
+            resultSubmittedAtEpochMs(),
+            resultPayloadHash(),
+            createdAtEpochMs(),
+            nowEpochMs,
+            lastError()
+        ).normalized();
+    }
+
+    @Nonnull
+    public ArenaActiveMatch withPlacementCompleted(long placementCompletedAtEpochMs, long nowEpochMs) {
+        long normalizedPlacementCompletedAtEpochMs = Math.max(placementCompletedAtEpochMs, 0L);
+        return new ArenaActiveMatch(
+            matchId(),
+            queueId(),
+            arenaId(),
+            originLobbyId(),
+            returnConnectionAddress(),
+            returnFallbackTargetId(),
+            launchTravelProfileId(),
+            instanceTemplateId(),
+            instanceWorldName(),
+            rulesEngineId(),
+            assignmentId(),
+            createdByAssignmentType(),
+            externalMatchId(),
+            matchSource(),
+            admissionPolicySchemaVersion(),
+            admissionCapacity(),
+            backfillEnabled(),
+            backfillMode(),
+            backfillWindowSeconds(),
+            afkDetectionPolicy(),
+            expectedPlayerUuids(),
+            expectedPlayerCount(),
+            arrivedPlayerUuids(),
+            activePlayerUuids(),
+            eliminatedPlayerUuids(),
+            spectatorPlayerUuids(),
+            assignmentIdsByPlayerUuid(),
+            playerReturnTargetsByUuid(),
+            playerOutcomeByUuid(),
+            pendingReturnAtEpochMsByPlayerUuid(),
+            consumedBackfillAdmissionCount(),
+            acceptedBackfillReservationIds(),
+            explicitAdmissionClosed(),
+            explicitAdmissionCloseReason(),
+            explicitAdmissionCloseMessage(),
+            explicitAdmissionClosedAtEpochMs(),
+            winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
+            normalizedPlacementCompletedAtEpochMs,
+            matchStartedAtEpochMs(),
             completedAtEpochMs(),
             resultSubmittedAtEpochMs(),
             resultPayloadHash(),
@@ -1062,6 +1406,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs,
@@ -1162,6 +1513,22 @@ public record ArenaActiveMatch(
 
     public boolean hasSubmittedResult() {
         return resultSubmittedAtEpochMs() > 0L;
+    }
+
+    public boolean initialPlacementWindowClosed() {
+        return initialPlacementWindowClosedAtEpochMs() > 0L;
+    }
+
+    public boolean initialPlacementWindowOpen(long nowEpochMs) {
+        return initialPlacementWindowExpiresAtEpochMs() > 0L
+            && initialPlacementWindowClosedAtEpochMs() <= 0L
+            && startGateOpenedAtEpochMs() <= 0L
+            && completedAtEpochMs() <= 0L
+            && nowEpochMs < initialPlacementWindowExpiresAtEpochMs();
+    }
+
+    public boolean startGateOpen() {
+        return startGateOpenedAtEpochMs() > 0L;
     }
 
     public boolean usesInstanceTemplate() {
@@ -1325,6 +1692,13 @@ public record ArenaActiveMatch(
             explicitAdmissionCloseMessage(),
             explicitAdmissionClosedAtEpochMs(),
             winnerPlayerUuid(),
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAtEpochMs(),
@@ -1428,6 +1802,13 @@ public record ArenaActiveMatch(
             admissionCloseMessage,
             admissionClosedAtEpochMs,
             winner,
+            minimumInitialPlayers(),
+            initialPlacementWindowStartedAtEpochMs(),
+            initialPlacementWindowExpiresAtEpochMs(),
+            initialPlacementWindowClosedAtEpochMs(),
+            initialPlacementWindowCloseReason(),
+            startGateOpenedAtEpochMs(),
+            startGateOpenReason(),
             placementCompletedAtEpochMs(),
             matchStartedAtEpochMs(),
             completedAt,
@@ -1533,6 +1914,23 @@ public record ArenaActiveMatch(
         }
         String normalized = rawValue.trim();
         return normalized.isBlank() ? "" : normalized;
+    }
+
+    private static int normalizeMinimumInitialPlayers(
+        int rawMinimumInitialPlayers,
+        int rawExpectedPlayerCount,
+        int rawExpectedPlayerUuidCount
+    ) {
+        int expectedCount = Math.max(rawExpectedPlayerCount, 0);
+        int expectedUuidCount = Math.max(rawExpectedPlayerUuidCount, 0);
+        int maximum = expectedUuidCount > 0 ? Math.min(expectedCount, expectedUuidCount) : expectedCount;
+        if (maximum <= 0) {
+            return 0;
+        }
+        if (rawMinimumInitialPlayers <= 0) {
+            return maximum;
+        }
+        return Math.min(rawMinimumInitialPlayers, maximum);
     }
 
     @Nonnull

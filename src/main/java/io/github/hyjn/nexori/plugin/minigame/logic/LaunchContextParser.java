@@ -60,6 +60,10 @@ public final class LaunchContextParser {
                 ? normalizeOptional(root.get("backfillMode").getAsString(), QueueBackfillMode.defaultMode().id())
                 : QueueBackfillMode.defaultMode().id(),
             root.has("backfillWindowSeconds") ? Math.max(root.get("backfillWindowSeconds").getAsInt(), 0) : 0,
+            root.has("initialPlacementWindowSeconds")
+                ? ArenaDefinition.normalizeInitialPlacementWindowSeconds(root.get("initialPlacementWindowSeconds").getAsInt())
+                : ArenaDefinition.DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS,
+            root.has("minimumInitialPlayers") ? Math.max(root.get("minimumInitialPlayers").getAsInt(), 0) : 0,
             readAfkDetectionPolicy(root),
             readExpectedPlayerUuids(root),
             root.has("expectedPlayerCount") ? Math.max(root.get("expectedPlayerCount").getAsInt(), 0) : 0,

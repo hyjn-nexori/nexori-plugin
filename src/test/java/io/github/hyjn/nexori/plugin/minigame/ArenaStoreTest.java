@@ -77,6 +77,28 @@ final class ArenaStoreTest {
     }
 
     @Test
+    void saveAndLoadPreservesInitialPlacementWindowSeconds(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("arenas.json");
+        ArenaStore store = new ArenaStore(file);
+
+        store.save(List.of(new ArenaDefinition(
+            "arena-1",
+            "Arena 1",
+            "srv.example.com:25565",
+            "hub-1",
+            "none",
+            "rules",
+            45,
+            16,
+            true,
+            AfkDetectionPolicy.defaults()
+        )));
+        List<ArenaDefinition> loaded = store.loadOrCreate();
+
+        assertEquals(45, loaded.get(0).initialPlacementWindowSeconds());
+    }
+
+    @Test
     void loadOrCreateNormalizesArenas(@TempDir Path dir) throws IOException {
         Path file = dir.resolve("arenas.json");
         ArenaStore store = new ArenaStore(file);

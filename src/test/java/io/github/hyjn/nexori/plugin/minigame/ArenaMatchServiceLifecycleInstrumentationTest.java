@@ -14,6 +14,7 @@ import io.github.hyjn.nexori.plugin.minigame.logic.LaunchContextData;
 import io.github.hyjn.nexori.plugin.minigame.spectator.NoopSpectatorRuntimeController;
 import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferPhase;
 import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferService;
+import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferSession;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
 import io.github.hyjn.nexori.plugin.travel.ReadyPlayerSnapshotTestHelper;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +42,12 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
 
     private static final UUID PLAYER_ONE = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID PLAYER_TWO = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID PLAYER_THREE = UUID.fromString("33333333-3333-3333-3333-333333333333");
+    private static final UUID PLAYER_FOUR = UUID.fromString("44444444-4444-4444-4444-444444444444");
+    private static final UUID PLAYER_FIVE = UUID.fromString("55555555-5555-5555-5555-555555555555");
+    private static final UUID PLAYER_SIX = UUID.fromString("66666666-6666-6666-6666-666666666666");
+    private static final UUID PLAYER_SEVEN = UUID.fromString("77777777-7777-7777-7777-777777777777");
+    private static final UUID PLAYER_EIGHT = UUID.fromString("88888888-8888-8888-8888-888888888888");
 
     @TempDir
     Path tempDir;
@@ -544,6 +553,423 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
     }
 
     @Test
+    void initialPlacementTimeoutWithMinimumPlayersOpensStartGateWithoutPlacementCompleted() {
+        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
+        ArenaActiveMatch match = match(List.of(PLAYER_ONE, PLAYER_TWO), List.of(PLAYER_ONE), List.of(PLAYER_ONE))
+            .withInitialPlacementWindowRuntime(1, 1_000L, 2_000L, 1_000L);
+        List<Runnable> dispatches = new ArrayList<>();
+
+        ArenaActiveMatch updated = reconcileAdmissionLifecycle(service, match, 2_000L, dispatches);
+
+        assertTrue(updated.startGateOpen());
+        assertEquals("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", updated.startGateOpenReason());
+        assertEquals(0L, updated.placementCompletedAtEpochMs());
+        assertFalse(updated.placementCompletedAtEpochMs() > 0L);
+    }
+
+    @Test
+    void initialPlacementTimeoutWithShortfallCancelsAsNoContestAndSchedulesReturns() {
+        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
+        ArenaActiveMatch match = match(List.of(PLAYER_ONE, PLAYER_TWO), List.of(PLAYER_ONE), List.of(PLAYER_ONE))
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        List<Runnable> dispatches = new ArrayList<>();
+
+        ArenaActiveMatch updated = reconcileAdmissionLifecycle(service, match, 2_000L, dispatches);
+
+        assertTrue(updated.explicitAdmissionClosed());
+        assertEquals("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_NOT_MET", updated.explicitAdmissionCloseReason());
+        assertTrue(updated.hasSubmittedResult());
+        assertTrue(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_ONE));
+        assertTrue(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_TWO));
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_ONE).outcome());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_TWO).outcome());
+    }
+
+    @Test
+    void initialPlacementTimeoutWithPartialRosterMarksMissingPlayersNoContestWithoutReturns() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        AtomicInteger startAllowedCalls = new AtomicInteger();
+        AtomicInteger placementCompletedCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onMatchStartAllowed(NexoriMatchLifecycleEvent event) {
+                startAllowedCalls.incrementAndGet();
+            }
+
+            @Override
+            public void onMatchPlacementCompleted(NexoriMatchLifecycleEvent event) {
+                placementCompletedCalls.incrementAndGet();
+            }
+        });
+
+        List<UUID> expected = List.of(
+            PLAYER_ONE, PLAYER_TWO, PLAYER_THREE, PLAYER_FOUR,
+            PLAYER_FIVE, PLAYER_SIX, PLAYER_SEVEN, PLAYER_EIGHT
+        );
+        List<UUID> placed = List.of(
+            PLAYER_ONE, PLAYER_TWO, PLAYER_THREE, PLAYER_FOUR, PLAYER_FIVE, PLAYER_SIX
+        );
+        ArenaActiveMatch match = match(expected, placed, placed)
+            .withInitialPlacementWindowRuntime(6, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.startGateOpen());
+        assertEquals("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", updated.startGateOpenReason());
+        assertEquals(0L, updated.placementCompletedAtEpochMs());
+        assertEquals(1, startAllowedCalls.get());
+        assertEquals(0, placementCompletedCalls.get());
+
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_SEVEN).outcome());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_EIGHT).outcome());
+        assertEquals("INITIAL_PLACEMENT_WINDOW_MISSED", updated.playerOutcomeByUuid().get(PLAYER_SEVEN).reason());
+        // Placed players keep no NO_CONTEST stamp; their outcome is decided later by the minigame.
+        assertFalse(updated.playerOutcomeByUuid().containsKey(PLAYER_ONE));
+        // Players that never arrived are not scheduled to return to the lobby.
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_SEVEN));
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_EIGHT));
+    }
+
+    @Test
+    void finalResultSucceedsAfterMissingInitialPlayersMarkedNoContest() {
+        ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
+        List<UUID> expected = List.of(
+            PLAYER_ONE, PLAYER_TWO, PLAYER_THREE, PLAYER_FOUR,
+            PLAYER_FIVE, PLAYER_SIX, PLAYER_SEVEN, PLAYER_EIGHT
+        );
+        List<UUID> placed = List.of(
+            PLAYER_ONE, PLAYER_TWO, PLAYER_THREE, PLAYER_FOUR, PLAYER_FIVE, PLAYER_SIX
+        );
+        ArenaActiveMatch match = match(expected, placed, placed)
+            .withInitialPlacementWindowRuntime(6, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        // The external minigame resolves the six placed players.
+        service.setPlayerOutcome("match-1", PLAYER_ONE, ArenaPlayerResolutionOutcome.WIN, "WIN", "winner");
+        for (UUID loser : List.of(PLAYER_TWO, PLAYER_THREE, PLAYER_FOUR, PLAYER_FIVE, PLAYER_SIX)) {
+            service.setPlayerOutcome("match-1", loser, ArenaPlayerResolutionOutcome.LOSS, "LOSS", "eliminated");
+        }
+
+        ArenaMatchService.SubmitMatchResult result = service.submitFinalMatchResult("match-1", "MATCH_COMPLETED", null);
+
+        assertEquals(ArenaMatchService.SubmitMatchOutcome.ACCEPTED, result.outcome());
+    }
+
+    @Test
+    void centralReconcileOpensStartGateWithoutPlayerTick() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        AtomicInteger startAllowedCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onMatchStartAllowed(NexoriMatchLifecycleEvent event) {
+                startAllowedCalls.incrementAndGet();
+            }
+        });
+        ArenaActiveMatch match = match(List.of(PLAYER_ONE, PLAYER_TWO), List.of(PLAYER_ONE), List.of(PLAYER_ONE))
+            .withInitialPlacementWindowRuntime(1, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.startGateOpen());
+        assertEquals("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", updated.startGateOpenReason());
+        assertEquals(1, startAllowedCalls.get());
+
+        // Idempotent: a second sweep must not re-emit the start gate event.
+        service.reconcileInitialPlacementWindows(2_500L);
+        assertEquals(1, startAllowedCalls.get());
+    }
+
+    @Test
+    void centralReconcileCancelsShortfallWithoutPlayerTick() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        AtomicInteger cancellationCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onMatchCancellationRequested(NexoriMatchLifecycleEvent event) {
+                cancellationCalls.incrementAndGet();
+            }
+        });
+        ArenaActiveMatch match = match(List.of(PLAYER_ONE, PLAYER_TWO), List.of(PLAYER_ONE), List.of(PLAYER_ONE))
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.explicitAdmissionClosed());
+        assertEquals("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_NOT_MET", updated.explicitAdmissionCloseReason());
+        assertTrue(updated.hasSubmittedResult());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_ONE).outcome());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_TWO).outcome());
+        assertEquals(1, cancellationCalls.get());
+
+        // Idempotent: a second sweep must not re-emit the cancellation event.
+        service.reconcileInitialPlacementWindows(2_500L);
+        assertEquals(1, cancellationCalls.get());
+    }
+
+    @Test
+    void partialRosterFailsPendingSessionOfMissingInitialPlayer() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("partial-session-slots.json"));
+        service.setMinigameTransferService(transferService);
+
+        // expected=3, minimum=2; PLAYER_ONE/TWO placed, PLAYER_THREE arrived with a pending session.
+        MinigameTransferSession missingSession = addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.startGateOpen());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_THREE).outcome());
+        // The missing player's transfer session is terminal/failed and removed from the active map,
+        // so no pending teleport or confirmation can complete for them.
+        assertEquals(MinigameTransferPhase.FAILED, missingSession.phase());
+        assertTrue(missingSession.isTerminal());
+        assertFalse(transferService.hasPendingPlacementSession(PLAYER_THREE));
+        assertTrue(transferService.findSession(PLAYER_THREE).isEmpty());
+    }
+
+    @Test
+    void lateConfirmationForMissingInitialPlayerIsSkipped() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("late-confirm-slots.json"));
+        service.setMinigameTransferService(transferService);
+        AtomicInteger placementConfirmedCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onPlayerPlacementConfirmed(NexoriPlayerPlacementLifecycleEvent event) {
+                placementConfirmedCalls.incrementAndGet();
+            }
+        });
+
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+        mapPlayerToMatch(service, PLAYER_THREE, "match-1");
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        // A teleport/ready completes late and tries to confirm the missing player.
+        List<Runnable> dispatches = service.collectConfirmTransferPlacementForTest(PLAYER_THREE, 3_000L);
+        dispatches.forEach(Runnable::run);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertFalse(updated.activePlayerUuids().contains(PLAYER_THREE));
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_THREE).outcome());
+        assertEquals(0, placementConfirmedCalls.get());
+    }
+
+    @Test
+    void partialRosterCleanupDoesNotTouchBackfillSession() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("backfill-untouched-slots.json"));
+        service.setMinigameTransferService(transferService);
+
+        // PLAYER_THREE is a missing initial player; PLAYER_FOUR is a valid backfill (not in the
+        // expected roster) with its own live session for the same match.
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        MinigameTransferSession backfillSession = addPendingSessionForMatch(transferService, PLAYER_FOUR, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        // Missing initial player's session is failed, backfill session stays alive.
+        assertFalse(transferService.hasPendingPlacementSession(PLAYER_THREE));
+        assertTrue(transferService.hasPendingPlacementSession(PLAYER_FOUR));
+        assertFalse(backfillSession.isTerminal());
+        assertEquals(MinigameTransferPhase.INSTANCE_WORLD_CREATING, backfillSession.phase());
+    }
+
+    @Test
+    void partialRosterSessionCleanupIsIdempotent() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("idempotent-session-slots.json"));
+        service.setMinigameTransferService(transferService);
+        AtomicInteger startAllowedCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onMatchStartAllowed(NexoriMatchLifecycleEvent event) {
+                startAllowedCalls.incrementAndGet();
+            }
+        });
+
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+        long firstOutcomeUpdatedAt = service.findMatchRaw("match-1").orElseThrow()
+            .playerOutcomeByUuid().get(PLAYER_THREE).updatedAtEpochMs();
+
+        // Second sweep must not re-mark NO_CONTEST, re-fail the session, or re-emit lifecycle events.
+        service.reconcileInitialPlacementWindows(5_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertEquals(1, startAllowedCalls.get());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_THREE).outcome());
+        assertEquals(firstOutcomeUpdatedAt, updated.playerOutcomeByUuid().get(PLAYER_THREE).updatedAtEpochMs());
+        assertTrue(transferService.findSession(PLAYER_THREE).isEmpty());
+    }
+
+    @Test
+    void missingInitialPlayerOfflineGetsNoContestWithoutReturn() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        // No transfer session and no online ref (Universe is null in tests) → PLAYER_THREE is offline.
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.startGateOpen());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_THREE).outcome());
+        // Offline missing player: NO_CONTEST only, no pending return (nobody present to return).
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_THREE));
+    }
+
+    @Test
+    void missingInitialPlayerStagedGetsNoContestAndReturnToLobby() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("staged-return-slots.json"));
+        service.setMinigameTransferService(transferService);
+
+        // PLAYER_THREE arrived/staged (pending session) but was not placed before the window closed.
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+        mapPlayerToMatch(service, PLAYER_THREE, "match-1");
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertTrue(updated.startGateOpen());
+        assertEquals(ArenaPlayerResolutionOutcome.NO_CONTEST, updated.playerOutcomeByUuid().get(PLAYER_THREE).outcome());
+        // Present/staged missing player is scheduled to return to lobby instead of being stranded.
+        // The pending return drives the existing per-player return + HUD "Lobby in Xs" countdown.
+        assertTrue(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_THREE));
+        assertEquals(2_000L + 10_000L, updated.pendingReturnAtEpochMsByPlayerUuid().get(PLAYER_THREE));
+        // Their pending placement session is still failed/removed.
+        assertFalse(transferService.hasPendingPlacementSession(PLAYER_THREE));
+        assertTrue(transferService.findSession(PLAYER_THREE).isEmpty());
+        // Placed players that will actually play are not returned or marked.
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_ONE));
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_TWO));
+        assertFalse(updated.playerOutcomeByUuid().containsKey(PLAYER_ONE));
+        assertFalse(updated.playerOutcomeByUuid().containsKey(PLAYER_TWO));
+    }
+
+    @Test
+    void missingInitialPlayerStagedReturnIsIdempotent() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("staged-return-idem-slots.json"));
+        service.setMinigameTransferService(transferService);
+        AtomicInteger startAllowedCalls = new AtomicInteger();
+        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
+            @Override
+            public void onMatchStartAllowed(NexoriMatchLifecycleEvent event) {
+                startAllowedCalls.incrementAndGet();
+            }
+        });
+
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+        long firstReturnAt = service.findMatchRaw("match-1").orElseThrow()
+            .pendingReturnAtEpochMsByPlayerUuid().get(PLAYER_THREE);
+
+        // Second sweep must not re-schedule the return or re-emit the start gate event.
+        service.reconcileInitialPlacementWindows(5_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        assertEquals(1, startAllowedCalls.get());
+        assertEquals(firstReturnAt, updated.pendingReturnAtEpochMsByPlayerUuid().get(PLAYER_THREE));
+    }
+
+    @Test
+    void backfillPlayerNotMarkedOrReturnedByPartialRosterCleanup() {
+        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
+        ArenaMatchService service = service(dispatcher);
+        MinigameTransferService transferService = newTransferService(tempDir.resolve("backfill-no-return-slots.json"));
+        service.setMinigameTransferService(transferService);
+
+        // PLAYER_THREE missing initial (staged); PLAYER_FOUR is a valid backfill (not in expected roster).
+        addPendingSessionForMatch(transferService, PLAYER_THREE, "match-1");
+        addPendingSessionForMatch(transferService, PLAYER_FOUR, "match-1");
+        ArenaActiveMatch match = match(
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO, PLAYER_THREE),
+                List.of(PLAYER_ONE, PLAYER_TWO)
+            )
+            .withInitialPlacementWindowRuntime(2, 1_000L, 2_000L, 1_000L);
+        addActiveMatch(service, match);
+
+        service.reconcileInitialPlacementWindows(2_000L);
+
+        ArenaActiveMatch updated = service.findMatchRaw("match-1").orElseThrow();
+        // Backfill player is neither marked NO_CONTEST nor scheduled for return by the initial-window cleanup.
+        assertFalse(updated.playerOutcomeByUuid().containsKey(PLAYER_FOUR));
+        assertFalse(updated.pendingReturnAtEpochMsByPlayerUuid().containsKey(PLAYER_FOUR));
+        assertTrue(transferService.hasPendingPlacementSession(PLAYER_FOUR));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void playerTickRunsPendingBackfillRetriesBeforePlayerMatchAssociation() throws Exception {
         ArenaMatchService service = new ArenaMatchService(
@@ -788,7 +1214,15 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
     }
 
     private static ArenaMatchService service(NexoriMatchLifecycleDispatcher dispatcher) {
-        return new ArenaMatchService(null, null, null, null, null, NoopSpectatorRuntimeController.INSTANCE, dispatcher);
+        return new ArenaMatchService(
+            HytaleLogger.getLogger(),
+            null,
+            null,
+            null,
+            null,
+            NoopSpectatorRuntimeController.INSTANCE,
+            dispatcher
+        );
     }
 
     private static MinigameTransferService.MatchGateway emptyMatchGateway() {
@@ -828,6 +1262,57 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
                 return List.of();
             }
         };
+    }
+
+    private static MinigameTransferService newTransferService(Path slotStorePath) {
+        try {
+            return new MinigameTransferService(
+                HytaleLogger.getLogger(),
+                new InstanceSpawnSlotService(new InstanceSpawnSlotStore(slotStorePath))
+            );
+        } catch (java.io.IOException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static MinigameTransferSession addPendingSessionForMatch(
+        MinigameTransferService transferService,
+        UUID playerUuid,
+        String matchId
+    ) {
+        try {
+            java.lang.reflect.Constructor<MinigameTransferSession> constructor =
+                MinigameTransferSession.class.getDeclaredConstructor(UUID.class, String.class, long.class);
+            constructor.setAccessible(true);
+            MinigameTransferSession session = constructor.newInstance(playerUuid, "Player", 1_000L);
+
+            Field phase = MinigameTransferSession.class.getDeclaredField("phase");
+            phase.setAccessible(true);
+            phase.set(session, MinigameTransferPhase.INSTANCE_WORLD_CREATING);
+
+            Field matchIdField = MinigameTransferSession.class.getDeclaredField("matchId");
+            matchIdField.setAccessible(true);
+            matchIdField.set(session, matchId);
+
+            Field sessions = MinigameTransferService.class.getDeclaredField("sessionsByPlayerUuid");
+            sessions.setAccessible(true);
+            ((Map<UUID, MinigameTransferSession>) sessions.get(transferService)).put(playerUuid, session);
+            return session;
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void mapPlayerToMatch(ArenaMatchService service, UUID playerUuid, String matchId) {
+        try {
+            Field matchIdByPlayerUuid = ArenaMatchService.class.getDeclaredField("matchIdByPlayerUuid");
+            matchIdByPlayerUuid.setAccessible(true);
+            ((Map<UUID, String>) matchIdByPlayerUuid.get(service)).put(playerUuid, matchId);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(exception);
+        }
     }
 
     private static MinigameTransferService transferServiceWithPendingPlacement(UUID pendingPlayerUuid, Path slotStorePath) {
@@ -999,6 +1484,32 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
             List<Runnable> dispatches = new ArrayList<>();
             method.invoke(service, previous, updated, "MATCH_PLACEMENT_COMPLETED", 2_000L, dispatches);
             return dispatches;
+        } catch (NoSuchMethodException | IllegalAccessException exception) {
+            throw new AssertionError(exception);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new AssertionError(cause);
+        }
+    }
+
+    private static ArenaActiveMatch reconcileAdmissionLifecycle(
+        ArenaMatchService service,
+        ArenaActiveMatch match,
+        long nowEpochMs,
+        List<Runnable> lifecycleDispatches
+    ) {
+        try {
+            Method method = ArenaMatchService.class.getDeclaredMethod(
+                "reconcileAdmissionLifecycle",
+                ArenaActiveMatch.class,
+                long.class,
+                List.class
+            );
+            method.setAccessible(true);
+            return (ArenaActiveMatch) method.invoke(service, match, nowEpochMs, lifecycleDispatches);
         } catch (NoSuchMethodException | IllegalAccessException exception) {
             throw new AssertionError(exception);
         } catch (InvocationTargetException exception) {

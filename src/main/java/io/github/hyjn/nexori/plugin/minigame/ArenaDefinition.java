@@ -11,12 +11,16 @@ public record ArenaDefinition(
     String destinationTargetId,
     String instanceTemplateId,
     String rulesEngineId,
+    int initialPlacementWindowSeconds,
     int maxSupportedPlayers,
     boolean enabled,
     AfkDetectionPolicy afkDetectionPolicy
 ) {
 
     public static final String NO_INSTANCE_TEMPLATE_ID = "none";
+    public static final int DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS = 60;
+    public static final int MIN_INITIAL_PLACEMENT_WINDOW_SECONDS = 1;
+    public static final int MAX_INITIAL_PLACEMENT_WINDOW_SECONDS = 600;
     public static final int MAX_RULES_ENGINE_ID_LENGTH = 64;
     private static final Pattern RULES_ENGINE_ID_PATTERN = Pattern.compile("[a-zA-Z0-9_.-]*");
 
@@ -36,6 +40,7 @@ public record ArenaDefinition(
             destinationTargetId,
             instanceTemplateId,
             "",
+            DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS,
             maxSupportedPlayers,
             enabled,
             AfkDetectionPolicy.defaults()
@@ -59,9 +64,35 @@ public record ArenaDefinition(
             destinationTargetId,
             instanceTemplateId,
             rulesEngineId,
+            DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS,
             maxSupportedPlayers,
             enabled,
             AfkDetectionPolicy.defaults()
+        );
+    }
+
+    public ArenaDefinition(
+        String arenaId,
+        String displayName,
+        String destinationConnectionAddress,
+        String destinationTargetId,
+        String instanceTemplateId,
+        String rulesEngineId,
+        int maxSupportedPlayers,
+        boolean enabled,
+        AfkDetectionPolicy afkDetectionPolicy
+    ) {
+        this(
+            arenaId,
+            displayName,
+            destinationConnectionAddress,
+            destinationTargetId,
+            instanceTemplateId,
+            rulesEngineId,
+            DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS,
+            maxSupportedPlayers,
+            enabled,
+            afkDetectionPolicy
         );
     }
 
@@ -78,6 +109,7 @@ public record ArenaDefinition(
             normalizedTargetId,
             normalizeInstanceTemplateId(instanceTemplateId),
             normalizeRulesEngineId(rulesEngineId),
+            normalizeInitialPlacementWindowSeconds(initialPlacementWindowSeconds),
             maxSupportedPlayers,
             enabled,
             AfkDetectionPolicy.normalize(afkDetectionPolicy)
@@ -136,6 +168,13 @@ public record ArenaDefinition(
             throw new IllegalArgumentException("Rules engine id can only contain letters, numbers, underscore, dot, or dash.");
         }
         return normalized;
+    }
+
+    public static int normalizeInitialPlacementWindowSeconds(int rawSeconds) {
+        if (rawSeconds <= 0) {
+            return DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS;
+        }
+        return Math.min(Math.max(rawSeconds, MIN_INITIAL_PLACEMENT_WINDOW_SECONDS), MAX_INITIAL_PLACEMENT_WINDOW_SECONDS);
     }
 
     @Nonnull

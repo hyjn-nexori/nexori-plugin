@@ -130,6 +130,7 @@ final class NexoriMatchLifecycleDispatcherTest {
         NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
         AtomicInteger placementConfirmedCalls = new AtomicInteger();
         AtomicInteger placementCompletedCalls = new AtomicInteger();
+        AtomicInteger startAllowedCalls = new AtomicInteger();
         AtomicInteger completedCalls = new AtomicInteger();
         AtomicInteger runtimeClosedCalls = new AtomicInteger();
         dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
@@ -141,6 +142,11 @@ final class NexoriMatchLifecycleDispatcherTest {
             @Override
             public void onMatchPlacementCompleted(NexoriMatchLifecycleEvent event) {
                 placementCompletedCalls.incrementAndGet();
+            }
+
+            @Override
+            public void onMatchStartAllowed(NexoriMatchLifecycleEvent event) {
+                startAllowedCalls.incrementAndGet();
             }
 
             @Override
@@ -163,11 +169,13 @@ final class NexoriMatchLifecycleDispatcherTest {
             2_500L
         ));
         dispatcher.dispatchMatchPlacementCompleted(matchEvent("capture_the_zone"));
+        dispatcher.dispatchMatchStartAllowed(matchEvent("capture_the_zone"));
         dispatcher.dispatchMatchCompleted(matchEvent("capture_the_zone"));
         dispatcher.dispatchMatchRuntimeClosed(matchEvent("capture_the_zone"));
 
         assertEquals(1, placementConfirmedCalls.get());
         assertEquals(1, placementCompletedCalls.get());
+        assertEquals(1, startAllowedCalls.get());
         assertEquals(1, completedCalls.get());
         assertEquals(1, runtimeClosedCalls.get());
     }

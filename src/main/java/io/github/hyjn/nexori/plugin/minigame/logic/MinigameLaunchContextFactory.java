@@ -221,6 +221,8 @@ public final class MinigameLaunchContextFactory {
         root.addProperty("instanceTemplateId", arena.instanceTemplateId());
         root.addProperty("rulesEngineId", arena.rulesEngineId());
         root.addProperty("expectedPlayerCount", expectedPlayerUuids.size());
+        root.addProperty("minimumInitialPlayers", Math.min(Math.max(queue.minPlayers(), 0), expectedPlayerUuids.size()));
+        root.addProperty("initialPlacementWindowSeconds", arena.initialPlacementWindowSeconds());
         root.addProperty("admissionPolicySchemaVersion", admissionPolicySchemaVersion);
         root.addProperty(
             "matchSource",

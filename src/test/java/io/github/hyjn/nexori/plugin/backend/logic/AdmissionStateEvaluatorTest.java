@@ -79,7 +79,8 @@ final class AdmissionStateEvaluatorTest {
     @Test
     void evaluatesActiveWindowInsideActiveWindowAsOpenWithDeadline() {
         ArenaActiveMatch match = baseMatch(QueueBackfillMode.ACTIVE_WINDOW, 30, 4, 0)
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         AdmissionStateEvaluation result = evaluate(match, true, NOW + 10_000L, "MATCH_STARTED");
 
@@ -92,7 +93,8 @@ final class AdmissionStateEvaluatorTest {
     @Test
     void evaluatesActiveWindowAfterDeadlineAsClosedWindowExpired() {
         ArenaActiveMatch match = baseMatch(QueueBackfillMode.ACTIVE_WINDOW, 30, 4, 0)
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         AdmissionStateEvaluation result = evaluate(match, true, NOW + 30_001L, "MATCH_STARTED");
 
@@ -105,7 +107,8 @@ final class AdmissionStateEvaluatorTest {
     @Test
     void evaluatesActiveWindowAtFullCapacityAsClosedNoLongerAccepting() {
         ArenaActiveMatch match = baseMatch(QueueBackfillMode.ACTIVE_WINDOW, 30, 2, 0)
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         AdmissionStateEvaluation result = evaluate(match, true, NOW + 10_000L, "PLAYER_ARRIVED");
 
@@ -197,7 +200,8 @@ final class AdmissionStateEvaluatorTest {
     @Test
     void overridesPrimaryChangeReasonWhenWindowExpired() {
         ArenaActiveMatch match = baseMatch(QueueBackfillMode.ACTIVE_WINDOW, 30, 4, 0)
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         AdmissionStateEvaluation result = evaluate(match, true, NOW + 30_001L, "PLAYER_ARRIVED");
 
@@ -207,7 +211,8 @@ final class AdmissionStateEvaluatorTest {
     @Test
     void activeWindowAtExactDeadlineRemainsOpen() {
         ArenaActiveMatch match = baseMatch(QueueBackfillMode.ACTIVE_WINDOW, 30, 4, 0)
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         AdmissionStateEvaluation result = evaluate(match, true, NOW + 30_000L, "MATCH_STARTED");
 

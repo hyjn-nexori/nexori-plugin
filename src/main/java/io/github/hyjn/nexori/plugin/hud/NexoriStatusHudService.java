@@ -448,21 +448,23 @@ public final class NexoriStatusHudService {
         String normalizedOutcome = returnHudState.outcomeLabel() == null
             ? ""
             : returnHudState.outcomeLabel().trim().toLowerCase();
-        String titleText;
         String accentColor;
         if ("victory".equals(normalizedOutcome)) {
-            titleText = "VICTORY";
             accentColor = RETURN_VICTORY_COLOR;
         } else if ("eliminated".equals(normalizedOutcome)) {
-            titleText = "ELIMINATED";
             accentColor = RETURN_ELIMINATED_COLOR;
         } else if ("no contest".equals(normalizedOutcome)) {
-            titleText = "MATCH CANCELLED DO TO AFK PLAYER";
             accentColor = RETURN_NO_CONTEST_COLOR;
         } else {
-            titleText = "MATCH COMPLETE";
             accentColor = RETURN_GENERIC_COLOR;
         }
+
+        // Reason-aware title/subtitle so a player returned for an expired start window or a
+        // not-enough-players shortfall does not see AFK-specific copy.
+        ReturnHudCopy.Copy copy = ReturnHudCopy.resolve(
+            returnHudState.outcomeLabel(),
+            returnHudState.returnReasonCode()
+        );
 
         String detailText = returnHudState.arenaDisplayName() == null || returnHudState.arenaDisplayName().isBlank()
             ? "Get ready to queue again"
@@ -470,8 +472,8 @@ public final class NexoriStatusHudService {
 
         return new HudRenderState(
             HudRenderKind.RETURN,
-            titleText,
-            "Returning to Origin Server",
+            copy.title(),
+            copy.subtitle(),
             detailText,
             "Lobby in " + secondsRemaining(returnHudState.returnAtEpochMs(), nowEpochMs) + "s",
             accentColor,

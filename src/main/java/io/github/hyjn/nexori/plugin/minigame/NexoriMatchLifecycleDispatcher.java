@@ -66,6 +66,10 @@ public final class NexoriMatchLifecycleDispatcher {
         dispatchMatchEvent(event, NexoriMatchLifecycleListener::onMatchPlacementCompleted);
     }
 
+    public void dispatchMatchStartAllowed(@Nonnull NexoriMatchLifecycleEvent event) {
+        dispatchMatchEvent(event, NexoriMatchLifecycleListener::onMatchStartAllowed);
+    }
+
     public void dispatchMatchCancellationRequested(@Nonnull NexoriMatchLifecycleEvent event) {
         dispatchMatchEvent(event, NexoriMatchLifecycleListener::onMatchCancellationRequested);
     }

@@ -143,7 +143,8 @@ final class BackfillAdmissionDeciderTest {
     @Test
     void allowsActiveWindowInsideWindow() {
         ArenaActiveMatch match = baseMatch()
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         BackfillAdmissionDecision decision = decider.decide(
             match,
@@ -161,7 +162,8 @@ final class BackfillAdmissionDeciderTest {
     @Test
     void rejectsActiveWindowAfterWindow() {
         ArenaActiveMatch match = baseMatch()
-            .withPlacementCompleted(NOW, NOW);
+            .withPlacementCompleted(NOW, NOW)
+            .withStartGateOpened("ALL_INITIAL_PLAYERS_PLACED", NOW, NOW);
 
         BackfillAdmissionDecision decision = decider.decide(
             match,

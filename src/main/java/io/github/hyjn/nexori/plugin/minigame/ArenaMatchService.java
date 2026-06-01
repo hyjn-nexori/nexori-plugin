@@ -35,6 +35,7 @@ import io.github.hyjn.nexori.plugin.minigame.spectator.NoopSpectatorRuntimeContr
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeController;
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeReason;
 import io.github.hyjn.nexori.plugin.minigame.spectator.SpectatorRuntimeResult;
+import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferFailureReason;
 import io.github.hyjn.nexori.plugin.minigame.transfer.MinigameTransferService;
 import io.github.hyjn.nexori.plugin.peers.ConfiguredPeer;
 import io.github.hyjn.nexori.plugin.travel.PendingArrival;
@@ -74,6 +75,15 @@ public class ArenaMatchService {
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
     private static final String CLOSE_REASON_MATCH_RUNTIME_ENDED = "MATCH_RUNTIME_ENDED";
+    private static final String INITIAL_WINDOW_CLOSE_ALL_PLACED = "ALL_INITIAL_PLAYERS_PLACED";
+    private static final String INITIAL_WINDOW_CLOSE_MIN_PLAYERS_MET = "INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET";
+    private static final String INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET = "INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_NOT_MET";
+    private static final String INITIAL_PLACEMENT_WINDOW_MISSED = "INITIAL_PLACEMENT_WINDOW_MISSED";
+    private static final String BACKEND_AFK_CANCEL_REASON = "BACKEND_AFK_CANCEL";
+    private static final String BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX = "Backend AFK cancellation requested: ";
+    private static final String INITIAL_PLACEMENT_WINDOW_MISSED_PLAYER_MESSAGE =
+        "Match start window expired: you did not join in time. Returning to lobby...";
+    private static final long INITIAL_PLACEMENT_WINDOW_SWEEP_INTERVAL_MS = 250L;
     public static final int MAX_RESULT_REASON_LENGTH = MatchResultValidator.MAX_RESULT_REASON_LENGTH;
     public static final int MAX_RESULT_METADATA_ENTRIES = MatchResultValidator.MAX_RESULT_METADATA_ENTRIES;
     public static final int MAX_RESULT_METADATA_KEY_LENGTH = MatchResultValidator.MAX_RESULT_METADATA_KEY_LENGTH;
@@ -107,6 +117,7 @@ public class ArenaMatchService {
     private final Map<String, String> lastLoggedPlacementStatesByMatchId = new LinkedHashMap<>();
     private final Map<String, AfkDetectionPolicy> matchAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
     private final Map<String, Map<UUID, AfkDetectionPolicy>> playerAfkPolicyOverridesByMatchId = new LinkedHashMap<>();
+    private long lastInitialPlacementWindowSweepAtEpochMs;
 
     /**
      * Creates the arena match runtime service used by queue launch, match resolution, and return HUDs.
@@ -369,7 +380,7 @@ public class ArenaMatchService {
         long now = System.currentTimeMillis();
         ArenaActiveMatch updated = match.withoutReturnedPlayer(playerRef.getUuid(), now)
             .withLastError("Player disconnected: " + event.getDisconnectReason(), now);
-        updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now);
+        updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now, lifecycleDispatches);
 
         storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
         return lifecycleDispatches;
@@ -429,7 +440,7 @@ public class ArenaMatchService {
                 if (match != null) {
                     ArenaActiveMatch updated = match.withExpectedPlayerCount(match.expectedPlayerCount() - 1, now)
                         .withLastError(reason, now);
-                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now);
+                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, now), now, lifecycleDispatches);
                     storeUpdatedMatchOrCloseEmptyRuntime(match, updated, now, "", lifecycleDispatches);
                 }
                 return lifecycleDispatches;
@@ -468,6 +479,15 @@ public class ArenaMatchService {
             lifecycleDispatches.addAll(minigameTransferService.tickPendingBackfillRetries(nowEpochMs));
         }
 
+        // Reconcile initial placement windows independently of which player is ticking. This runs
+        // for every match (not just the ticking player's) so a window still closes even when no
+        // placed player is ticking. Throttled so it sweeps at most once per interval regardless of
+        // how many player entities tick within the same server frame.
+        if (nowEpochMs - lastInitialPlacementWindowSweepAtEpochMs >= INITIAL_PLACEMENT_WINDOW_SWEEP_INTERVAL_MS) {
+            lastInitialPlacementWindowSweepAtEpochMs = nowEpochMs;
+            lifecycleDispatches.addAll(reconcileInitialPlacementWindowsLocked(nowEpochMs));
+        }
+
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
             return lifecycleDispatches;
@@ -500,11 +520,18 @@ public class ArenaMatchService {
 
         ArenaActiveMatch updated = match;
         ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
-        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs, lifecycleDispatches);
         collectMatchPlacementCompletedTransition(
             beforeLifecycleReconcile,
             updated,
             "MATCH_PLACEMENT_COMPLETED",
+            nowEpochMs,
+            lifecycleDispatches
+        );
+        collectMatchStartAllowedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            updated.startGateOpenReason().isBlank() ? "MATCH_START_ALLOWED" : updated.startGateOpenReason(),
             nowEpochMs,
             lifecycleDispatches
         );
@@ -573,9 +600,11 @@ public class ArenaMatchService {
             .orElse(match.arenaId());
 
         String outcomeLabel;
+        String returnReasonCode = "";
         ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(playerUuid);
         if (outcome != null && outcome.outcome() == ArenaPlayerResolutionOutcome.NO_CONTEST) {
             outcomeLabel = "No Contest";
+            returnReasonCode = resolveNoContestReturnReasonCode(match, outcome);
         } else if (playerUuid.toString().equalsIgnoreCase(match.winnerPlayerUuid())) {
             outcomeLabel = "Victory";
         } else if (match.isPlayerEliminated(playerUuid)) {
@@ -589,9 +618,40 @@ public class ArenaMatchService {
             match.queueId(),
             arenaDisplayName,
             outcomeLabel,
+            returnReasonCode,
             returnAtEpochMs,
             Math.max(0L, returnAtEpochMs - nowEpochMs)
         ));
+    }
+
+    /**
+     * Maps a NO_CONTEST return to a stable reason code the HUD uses to pick reason-aware copy. The
+     * per-player outcome reason wins when it is the initial-placement-missed code; otherwise the
+     * match-level explicit admission close reason (shortfall / backend AFK cancel / etc.) is used.
+     * Returns "" when no specific reason is known, so the HUD falls back to generic cancellation copy.
+     */
+    @Nonnull
+    private String resolveNoContestReturnReasonCode(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull ArenaActiveMatch.ArenaPlayerOutcomeState outcome
+    ) {
+        if (INITIAL_PLACEMENT_WINDOW_MISSED.equals(normalizeOptional(outcome.reason()))) {
+            return INITIAL_PLACEMENT_WINDOW_MISSED;
+        }
+        // Shortfall cancellation explicitly closes admission with a code
+        // (e.g. INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_NOT_MET).
+        if (match.explicitAdmissionClosed()) {
+            String closeReason = normalizeOptional(match.explicitAdmissionCloseReason());
+            if (!closeReason.isBlank()) {
+                return closeReason;
+            }
+        }
+        // Backend AFK cancellation does not close admission explicitly; it is recognised by the
+        // last error stamped by cancelMatchForBackendAfkLocked.
+        if (normalizeOptional(match.lastError()).startsWith(BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX.trim())) {
+            return BACKEND_AFK_CANCEL_REASON;
+        }
+        return "";
     }
 
     /**
@@ -916,7 +976,16 @@ public class ArenaMatchService {
             evaluation.expectedPlayers(),
             evaluation.arrivedInitialPlayers(),
             evaluation.placedInitialPlayers(),
-            evaluation.placementComplete()
+            evaluation.placementComplete(),
+            match.minimumInitialPlayers(),
+            match.initialPlacementWindowOpen(System.currentTimeMillis()),
+            match.initialPlacementWindowStartedAtEpochMs(),
+            match.initialPlacementWindowExpiresAtEpochMs(),
+            match.initialPlacementWindowClosedAtEpochMs(),
+            match.initialPlacementWindowCloseReason(),
+            match.startGateOpen(),
+            match.startGateOpenedAtEpochMs(),
+            match.startGateOpenReason()
         ));
     }
 
@@ -1315,7 +1384,7 @@ public class ArenaMatchService {
             validation.customData()
         );
         updated = updated
-            .withLastError("Backend AFK cancellation requested: " + reasonCode, now)
+            .withLastError(BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX + reasonCode, now)
             .withSubmittedResult(now, now, payloadHash);
         matchesById.put(updated.matchId(), updated);
         restoreRuntimeSpectators(updated, SpectatorRuntimeReason.MATCH_CLEANUP);
@@ -1540,6 +1609,13 @@ public class ArenaMatchService {
                 "",
                 0L,
                 "",
+                launch.minimumInitialPlayers(),
+                now,
+                initialPlacementWindowExpiresAt(now, launch.initialPlacementWindowSeconds()),
+                0L,
+                "",
+                0L,
+                "",
                 0L,
                 0L,
                 0L,
@@ -1573,7 +1649,7 @@ public class ArenaMatchService {
         }
 
         ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, now);
-        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, now);
+        updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, now, lifecycleDispatches);
         matchesById.put(updated.matchId(), updated);
         refreshRuntimeSpectatorVisibility(updated);
         if (updated.spectatorPlayerUuids().contains(playerRef.getUuid())) {
@@ -1593,6 +1669,13 @@ public class ArenaMatchService {
             beforeLifecycleReconcile,
             updated,
             "MATCH_PLACEMENT_COMPLETED",
+            now,
+            lifecycleDispatches
+        );
+        collectMatchStartAllowedTransition(
+            beforeLifecycleReconcile,
+            updated,
+            updated.startGateOpenReason().isBlank() ? "MATCH_START_ALLOWED" : updated.startGateOpenReason(),
             now,
             lifecycleDispatches
         );
@@ -1681,7 +1764,16 @@ public class ArenaMatchService {
                 evaluation.expectedPlayers(),
                 evaluation.arrivedInitialPlayers(),
                 evaluation.placedInitialPlayers(),
-                evaluation.placementComplete()
+                evaluation.placementComplete(),
+                match.minimumInitialPlayers(),
+                match.initialPlacementWindowOpen(eventAtEpochMs),
+                match.initialPlacementWindowStartedAtEpochMs(),
+                match.initialPlacementWindowExpiresAtEpochMs(),
+                match.initialPlacementWindowClosedAtEpochMs(),
+                match.initialPlacementWindowCloseReason(),
+                match.startGateOpen(),
+                match.startGateOpenedAtEpochMs(),
+                match.startGateOpenReason()
             ),
             reason,
             match.createdAtEpochMs(),
@@ -1707,6 +1799,25 @@ public class ArenaMatchService {
         }
         NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
         lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchPlacementCompleted(matchEvent));
+    }
+
+    private void collectMatchStartAllowedTransition(
+        @Nonnull ArenaActiveMatch previous,
+        @Nonnull ArenaActiveMatch updated,
+        @Nonnull String reason,
+        long eventAtEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (previous.startGateOpenedAtEpochMs() > 0L || updated.startGateOpenedAtEpochMs() <= 0L) {
+            return;
+        }
+        NexoriMatchLifecycleEvent matchEvent = buildMatchLifecycleEvent(updated, reason, eventAtEpochMs);
+        logger.atInfo().log(
+            "NEXORI_MATCH_START_ALLOWED matchId=" + updated.matchId()
+                + " reason=" + reason
+                + " openedAt=" + updated.startGateOpenedAtEpochMs()
+        );
+        lifecycleDispatches.add(() -> matchLifecycleDispatcher.dispatchMatchStartAllowed(matchEvent));
     }
 
     private void collectMatchCompletedTransition(
@@ -2198,17 +2309,394 @@ public class ArenaMatchService {
     }
 
     @Nonnull
-    private ArenaActiveMatch reconcileAdmissionLifecycle(@Nonnull ArenaActiveMatch match, long nowEpochMs) {
+    private ArenaActiveMatch reconcileAdmissionLifecycle(
+        @Nonnull ArenaActiveMatch match,
+        long nowEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
         ArenaActiveMatch updated = match;
         MatchPlacementEvaluation evaluation = evaluatePlacement(updated);
         if (evaluation.shouldMarkPlacementCompleted()) {
             updated = updated.withPlacementCompleted(nowEpochMs, nowEpochMs);
         }
+        updated = reconcileInitialPlacementStartGate(updated, evaluation, nowEpochMs, lifecycleDispatches);
         evaluation = evaluatePlacement(updated);
         if (updated.completedAtEpochMs() <= 0L && evaluation.shouldMarkMatchCompleted()) {
             updated = updated.withCompleted(nowEpochMs, nowEpochMs);
         }
         return updated;
+    }
+
+    @Nonnull
+    private ArenaActiveMatch reconcileInitialPlacementStartGate(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull MatchPlacementEvaluation evaluation,
+        long nowEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (match.startGateOpen() || match.hasCompleted() || match.expectedPlayerCount() <= 0) {
+            return match;
+        }
+        if (evaluation.placementComplete()) {
+            ArenaActiveMatch updated = match.initialPlacementWindowClosed()
+                ? match
+                : match.withInitialPlacementWindowClosed(INITIAL_WINDOW_CLOSE_ALL_PLACED, nowEpochMs, nowEpochMs);
+            if (!match.initialPlacementWindowClosed()) {
+                logger.atInfo().log(
+                    "NEXORI_INITIAL_PLACEMENT_WINDOW_CLOSED matchId=" + updated.matchId()
+                        + " reason=" + INITIAL_WINDOW_CLOSE_ALL_PLACED
+                        + " placedInitialPlayers=" + evaluation.placedInitialPlayers()
+                        + " expectedPlayers=" + evaluation.expectedPlayers()
+                );
+            }
+            return updated.withStartGateOpened(INITIAL_WINDOW_CLOSE_ALL_PLACED, nowEpochMs, nowEpochMs);
+        }
+        if (match.initialPlacementWindowExpiresAtEpochMs() > 0L
+            && nowEpochMs >= match.initialPlacementWindowExpiresAtEpochMs()
+            && evaluation.placedInitialPlayers() >= match.minimumInitialPlayers()) {
+            ArenaActiveMatch updated = match.initialPlacementWindowClosed()
+                ? match
+                : match.withInitialPlacementWindowClosed(INITIAL_WINDOW_CLOSE_MIN_PLAYERS_MET, nowEpochMs, nowEpochMs);
+            // The start gate opens with a partial roster: expected initial players that were never
+            // placed in time are recorded as NO_CONTEST so the eventual final result does not block
+            // on missing player outcomes. They keep their audit trail and are not penalised. Missing
+            // players who are still present (online/staged) are also scheduled for return to lobby.
+            updated = markMissingInitialPlayersNoContest(updated, nowEpochMs, lifecycleDispatches);
+            logger.atInfo().log(
+                "NEXORI_INITIAL_PLACEMENT_WINDOW_CLOSED matchId=" + updated.matchId()
+                    + " reason=" + INITIAL_WINDOW_CLOSE_MIN_PLAYERS_MET
+                    + " placedInitialPlayers=" + evaluation.placedInitialPlayers()
+                    + " minimumInitialPlayers=" + updated.minimumInitialPlayers()
+            );
+            return updated.withStartGateOpened(INITIAL_WINDOW_CLOSE_MIN_PLAYERS_MET, nowEpochMs, nowEpochMs);
+        }
+        if (match.initialPlacementWindowExpiresAtEpochMs() > 0L
+            && nowEpochMs >= match.initialPlacementWindowExpiresAtEpochMs()
+            && evaluation.placedInitialPlayers() < match.minimumInitialPlayers()) {
+            ArenaActiveMatch updated = match.initialPlacementWindowClosed()
+                ? match
+                : match.withInitialPlacementWindowClosed(INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET, nowEpochMs, nowEpochMs);
+            logger.atWarning().log(
+                "NEXORI_INITIAL_PLACEMENT_WINDOW_CLOSED matchId=" + updated.matchId()
+                    + " reason=" + INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET
+                    + " placedInitialPlayers=" + evaluation.placedInitialPlayers()
+                    + " minimumInitialPlayers=" + updated.minimumInitialPlayers()
+            );
+            return cancelMatchForInitialPlacementShortfall(updated, evaluation, nowEpochMs, lifecycleDispatches);
+        }
+        return match;
+    }
+
+    @Nonnull
+    private ArenaActiveMatch cancelMatchForInitialPlacementShortfall(
+        @Nonnull ArenaActiveMatch match,
+        @Nonnull MatchPlacementEvaluation evaluation,
+        long nowEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        if (match.hasSubmittedResult()) {
+            return match;
+        }
+        String playerReason = "Match cancelled: not enough players joined in time. Returning to lobby...";
+        long returnAt = nowEpochMs + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
+        collectMatchCancellationRequested(match, INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET, nowEpochMs, lifecycleDispatches);
+        ArenaActiveMatch updated = match.withExplicitAdmissionClosed(
+            INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET,
+            playerReason,
+            nowEpochMs,
+            nowEpochMs
+        );
+        for (UUID playerUuid : buildRequiredResultPlayerUuids(updated)) {
+            updated = updated
+                .withPlayerOutcome(playerUuid, ArenaPlayerResolutionOutcome.NO_CONTEST, "NO_CONTEST", playerReason, nowEpochMs)
+                .withPendingReturn(playerUuid, returnAt, nowEpochMs);
+        }
+
+        JsonObject customData = new JsonObject();
+        customData.addProperty("cancelledBy", "nexori");
+        customData.addProperty("cancelReason", INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET);
+        customData.addProperty("placedInitialPlayers", evaluation.placedInitialPlayers());
+        customData.addProperty("minimumInitialPlayers", updated.minimumInitialPlayers());
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("cancelled_by", "nexori");
+        metadata.put("cancel_reason", INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET);
+        metadata.put("placed_initial_players", Integer.toString(evaluation.placedInitialPlayers()));
+        metadata.put("minimum_initial_players", Integer.toString(updated.minimumInitialPlayers()));
+
+        MatchResultValidationResult validation = matchResultValidator.validateFinalResult(
+            updated,
+            INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET,
+            metadata,
+            customData
+        );
+        if (validation.valid()) {
+            String payloadHash = hashFinalSubmittedResult(
+                updated,
+                toSubmitMatchPlayerResults(validation.players()),
+                validation.metadata(),
+                validation.reason(),
+                validation.customData()
+            );
+            updated = updated.withSubmittedResult(nowEpochMs, nowEpochMs, payloadHash);
+        } else {
+            updated = updated.withCompleted(nowEpochMs, nowEpochMs)
+                .withLastError("Initial placement shortfall result validation failed: " + validation.message(), nowEpochMs);
+        }
+        if (minigameTransferService != null) {
+            minigameTransferService.closePendingSessionsForMatch(
+                updated.matchId(),
+                MinigameTransferFailureReason.INITIAL_PLACEMENT_SHORTFALL,
+                nowEpochMs
+            );
+        }
+        logger.atWarning().log(
+            "NEXORI_INITIAL_PLACEMENT_SHORTFALL_CANCELLED matchId=" + updated.matchId()
+                + " expectedPlayers=" + evaluation.expectedPlayers()
+                + " placedInitialPlayers=" + evaluation.placedInitialPlayers()
+                + " minimumInitialPlayers=" + updated.minimumInitialPlayers()
+        );
+        return updated;
+    }
+
+    /**
+     * Records {@code NO_CONTEST} for expected initial players that were never placed before the
+     * initial placement window closed with the start gate opening on a partial roster.
+     *
+     * <p>Missing players keep an explicit, auditable outcome (reason
+     * {@link #INITIAL_PLACEMENT_WINDOW_MISSED}) so {@code buildRequiredResultPlayerUuids(...)}
+     * validation does not later block the final result. They are not penalised with a LOSS and no
+     * pending return is scheduled because they never arrived. Players that already hold an outcome
+     * (for example, an eliminated active player) are left untouched.</p>
+     *
+     * <p>Any non-terminal transfer session belonging to a missing player (one who arrived but was
+     * not placed in time) is also failed so a late teleport/ready cannot confirm them after they
+     * were marked NO_CONTEST. Backfill sessions are unaffected: backfill players are never part of
+     * {@code expectedPlayerUuids} and so are never in the missing set.</p>
+     *
+     * <p>Missing players who are still <em>present</em> — online on this server or staged with a
+     * pending transfer session — would otherwise be stranded in the default/staging world. They are
+     * scheduled for a return to lobby (reusing the per-player pending-return / HUD countdown flow)
+     * and shown a clear message. Missing players who never arrived / are offline get NO_CONTEST only
+     * and no pending return because there is nobody present to return.</p>
+     */
+    @Nonnull
+    private ArenaActiveMatch markMissingInitialPlayersNoContest(
+        @Nonnull ArenaActiveMatch match,
+        long nowEpochMs,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        List<UUID> missingInitialPlayers = missingInitialPlayerUuids(match);
+        if (missingInitialPlayers.isEmpty()) {
+            return match;
+        }
+        // Capture presence before failing transfer sessions, since failing removes the session
+        // evidence that the player arrived/staged on this server.
+        LinkedHashSet<UUID> presentMissingPlayers = new LinkedHashSet<>();
+        for (UUID expectedPlayerUuid : missingInitialPlayers) {
+            if (isMissingInitialPlayerPresent(expectedPlayerUuid)) {
+                presentMissingPlayers.add(expectedPlayerUuid);
+            }
+        }
+
+        long returnAtEpochMs = nowEpochMs + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
+        ArenaActiveMatch updated = match;
+        for (UUID expectedPlayerUuid : missingInitialPlayers) {
+            ArenaActiveMatch.ArenaPlayerOutcomeState existing = updated.playerOutcomeByUuid().get(expectedPlayerUuid);
+            boolean alreadyResolved = existing != null && existing.outcome() != null;
+            if (!alreadyResolved) {
+                updated = updated.withPlayerOutcome(
+                    expectedPlayerUuid,
+                    ArenaPlayerResolutionOutcome.NO_CONTEST,
+                    "NO_CONTEST",
+                    INITIAL_PLACEMENT_WINDOW_MISSED,
+                    nowEpochMs
+                );
+                logger.atInfo().log(
+                    "NEXORI_INITIAL_PLACEMENT_WINDOW_MISSED matchId=" + updated.matchId()
+                        + " playerUuid=" + expectedPlayerUuid
+                        + " outcome=NO_CONTEST"
+                );
+            }
+            if (presentMissingPlayers.contains(expectedPlayerUuid)) {
+                if (!updated.hasPendingReturn(expectedPlayerUuid)) {
+                    updated = updated.withPendingReturn(expectedPlayerUuid, returnAtEpochMs, nowEpochMs);
+                    collectInitialPlacementMissedReturnMessage(expectedPlayerUuid, lifecycleDispatches);
+                    logger.atInfo().log(
+                        "NEXORI_INITIAL_PLACEMENT_MISSED_RETURN_SCHEDULED matchId=" + updated.matchId()
+                            + " playerUuid=" + expectedPlayerUuid
+                            + " returnAtEpochMs=" + returnAtEpochMs
+                    );
+                }
+            } else if (!alreadyResolved) {
+                logger.atInfo().log(
+                    "NEXORI_INITIAL_PLACEMENT_MISSED_NO_RETURN matchId=" + updated.matchId()
+                        + " playerUuid=" + expectedPlayerUuid
+                        + " reason=player_not_present"
+                );
+            }
+        }
+        if (minigameTransferService != null) {
+            minigameTransferService.failPendingInitialPlacementSessions(
+                updated.matchId(),
+                new LinkedHashSet<>(missingInitialPlayers),
+                MinigameTransferFailureReason.INITIAL_PLACEMENT_WINDOW_MISSED,
+                nowEpochMs
+            );
+        }
+        return updated;
+    }
+
+    /**
+     * A missing initial player is "present" (and therefore stranded unless returned) when they are
+     * online on this server or still hold a pending transfer session showing they arrived/staged.
+     */
+    private boolean isMissingInitialPlayerPresent(@Nonnull UUID playerUuid) {
+        if (minigameTransferService != null && minigameTransferService.hasPendingPlacementSession(playerUuid)) {
+            return true;
+        }
+        PlayerRef playerRef = resolveOnlinePlayerRef(playerUuid);
+        return playerRef != null && playerRef.isValid();
+    }
+
+    @Nullable
+    private PlayerRef resolveOnlinePlayerRef(@Nonnull UUID playerUuid) {
+        Universe universe = Universe.get();
+        return universe == null ? null : universe.getPlayer(playerUuid);
+    }
+
+    private void collectInitialPlacementMissedReturnMessage(
+        @Nonnull UUID playerUuid,
+        @Nonnull List<Runnable> lifecycleDispatches
+    ) {
+        lifecycleDispatches.add(() -> {
+            PlayerRef playerRef = resolveOnlinePlayerRef(playerUuid);
+            if (playerRef != null && playerRef.isValid()) {
+                playerRef.sendMessage(Message.raw(INITIAL_PLACEMENT_WINDOW_MISSED_PLAYER_MESSAGE));
+            }
+        });
+    }
+
+    /**
+     * Expected initial players that were not placed (not in {@code activePlayerUuids}) by the time
+     * the initial placement window closed. This is the canonical "missing initial" set reused for
+     * both the NO_CONTEST outcomes and the pending transfer session cleanup.
+     */
+    @Nonnull
+    private List<UUID> missingInitialPlayerUuids(@Nonnull ArenaActiveMatch match) {
+        LinkedHashSet<UUID> activePlayers = new LinkedHashSet<>(match.activePlayerUuids());
+        List<UUID> missing = new ArrayList<>();
+        for (UUID expectedPlayerUuid : match.expectedPlayerUuids()) {
+            if (!activePlayers.contains(expectedPlayerUuid)) {
+                missing.add(expectedPlayerUuid);
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * True when the player is an expected initial player who missed the placement window: still
+     * not active, the window/start gate has already closed, and they hold the NO_CONTEST outcome
+     * stamped with {@link #INITIAL_PLACEMENT_WINDOW_MISSED}. Backfill players are excluded because
+     * they are never part of {@code expectedPlayerUuids}.
+     */
+    private boolean isInitialPlacementWindowMissed(@Nonnull ArenaActiveMatch match, @Nonnull UUID playerUuid) {
+        if (!match.expectedPlayerUuids().contains(playerUuid)
+            || match.activePlayerUuids().contains(playerUuid)
+            || !(match.startGateOpen() || match.initialPlacementWindowClosed())) {
+            return false;
+        }
+        ArenaActiveMatch.ArenaPlayerOutcomeState outcome = match.playerOutcomeByUuid().get(playerUuid);
+        return outcome != null
+            && outcome.outcome() == ArenaPlayerResolutionOutcome.NO_CONTEST
+            && INITIAL_PLACEMENT_WINDOW_MISSED.equals(outcome.reason());
+    }
+
+    /**
+     * Player-independent reconciliation of every live match whose initial placement window is still
+     * open. The per-player tick only reconciles the match a ticking player belongs to, so a match
+     * whose expected players never arrived (no active player ticks) would otherwise never close its
+     * window. This sweep guarantees the window expires, opening the start gate or cancelling for a
+     * shortfall, even when no placed player is ticking.
+     *
+     * <p>Idempotent: matches whose window already closed or whose start gate already opened are
+     * skipped, and the transition collectors only dispatch on the first observed change.</p>
+     */
+    public void reconcileInitialPlacementWindows(long nowEpochMs) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            lifecycleDispatches = reconcileInitialPlacementWindowsLocked(nowEpochMs);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    /**
+     * Throttled, server-global entry point for the initial placement window sweep. Invoked by
+     * {@link ArenaMatchWindowTickSystem} once per server tick so windows reconcile even when no
+     * player entity is ticking (e.g. the only expected player is stuck in transfer/placement and
+     * never reaches CONFIRMED, leaving zero placed/active players). The same throttle field is
+     * shared with the per-player tick so at most one sweep runs per interval regardless of source.
+     */
+    public void tickInitialPlacementWindows(long nowEpochMs) {
+        List<Runnable> lifecycleDispatches;
+        synchronized (this) {
+            if (nowEpochMs - lastInitialPlacementWindowSweepAtEpochMs < INITIAL_PLACEMENT_WINDOW_SWEEP_INTERVAL_MS) {
+                return;
+            }
+            lastInitialPlacementWindowSweepAtEpochMs = nowEpochMs;
+            lifecycleDispatches = reconcileInitialPlacementWindowsLocked(nowEpochMs);
+        }
+        dispatchLifecycleEvents(lifecycleDispatches);
+    }
+
+    @Nonnull
+    private List<Runnable> reconcileInitialPlacementWindowsLocked(long nowEpochMs) {
+        List<Runnable> lifecycleDispatches = new ArrayList<>();
+        for (ArenaActiveMatch snapshot : new ArrayList<>(matchesById.values())) {
+            ArenaActiveMatch current = matchesById.get(snapshot.matchId());
+            if (current == null
+                || current.hasCompleted()
+                || current.hasSubmittedResult()
+                || current.startGateOpen()
+                || current.initialPlacementWindowExpiresAtEpochMs() <= 0L) {
+                continue;
+            }
+            ArenaActiveMatch updated = reconcileAdmissionLifecycle(
+                scheduleWinnerReturnIfNeeded(current, nowEpochMs),
+                nowEpochMs,
+                lifecycleDispatches
+            );
+            if (updated == current) {
+                continue;
+            }
+            collectMatchPlacementCompletedTransition(
+                current,
+                updated,
+                "MATCH_PLACEMENT_COMPLETED",
+                nowEpochMs,
+                lifecycleDispatches
+            );
+            collectMatchStartAllowedTransition(
+                current,
+                updated,
+                updated.startGateOpenReason().isBlank() ? "MATCH_START_ALLOWED" : updated.startGateOpenReason(),
+                nowEpochMs,
+                lifecycleDispatches
+            );
+            collectMatchCompletedTransition(
+                current,
+                updated,
+                "MATCH_COMPLETED",
+                nowEpochMs,
+                lifecycleDispatches
+            );
+            storeUpdatedMatchOrCloseEmptyRuntime(current, updated, nowEpochMs, "", lifecycleDispatches);
+        }
+        return lifecycleDispatches;
+    }
+
+    private long initialPlacementWindowExpiresAt(long nowEpochMs, int initialPlacementWindowSeconds) {
+        long normalizedSeconds = Math.max(1, initialPlacementWindowSeconds);
+        return nowEpochMs + (normalizedSeconds * 1_000L);
     }
 
     @Nonnull
@@ -2928,6 +3416,7 @@ public class ArenaMatchService {
         String queueId,
         String arenaDisplayName,
         String outcomeLabel,
+        String returnReasonCode,
         long returnAtEpochMs,
         long remainingReturnDelayMs
     ) {
@@ -2937,7 +3426,16 @@ public class ArenaMatchService {
         int expectedPlayers,
         int arrivedPlayers,
         int placedPlayers,
-        boolean placementComplete
+        boolean placementComplete,
+        int minimumInitialPlayers,
+        boolean initialPlacementWindowOpen,
+        long initialPlacementWindowStartedAtEpochMs,
+        long initialPlacementWindowExpiresAtEpochMs,
+        long initialPlacementWindowClosedAtEpochMs,
+        String initialPlacementWindowCloseReason,
+        boolean startGateOpen,
+        long startGateOpenedAtEpochMs,
+        String startGateOpenReason
     ) {
     }
 
@@ -3014,6 +3512,13 @@ public class ArenaMatchService {
                     "",
                     0L,
                     "",
+                    launch.minimumInitialPlayers(),
+                    nowEpochMs,
+                    initialPlacementWindowExpiresAt(nowEpochMs, launch.initialPlacementWindowSeconds()),
+                    0L,
+                    "",
+                    0L,
+                    "",
                     0L,
                     0L,
                     0L,
@@ -3051,7 +3556,7 @@ public class ArenaMatchService {
             }
 
             ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
-            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs, lifecycleDispatches);
             matchesById.put(updated.matchId(), updated);
             refreshRuntimeSpectatorVisibility(updated);
             if (updated.spectatorPlayerUuids().contains(playerUuid)) {
@@ -3075,6 +3580,12 @@ public class ArenaMatchService {
                 logger.atInfo().log(
                     "NEXORI_TRANSFER_MATCH_CREATED matchId=" + updated.matchId()
                         + " arenaId=" + updated.arenaId()
+                );
+                logger.atInfo().log(
+                    "NEXORI_INITIAL_PLACEMENT_WINDOW_OPENED matchId=" + updated.matchId()
+                        + " startedAt=" + updated.initialPlacementWindowStartedAtEpochMs()
+                        + " expiresAt=" + updated.initialPlacementWindowExpiresAtEpochMs()
+                        + " minimumInitialPlayers=" + updated.minimumInitialPlayers()
                 );
             } else {
                 logger.atInfo().log(
@@ -3102,6 +3613,13 @@ public class ArenaMatchService {
 
             collectMatchPlacementCompletedTransition(
                 beforeLifecycleReconcile, updated, "MATCH_PLACEMENT_COMPLETED", nowEpochMs, lifecycleDispatches
+            );
+            collectMatchStartAllowedTransition(
+                beforeLifecycleReconcile,
+                updated,
+                updated.startGateOpenReason().isBlank() ? "MATCH_START_ALLOWED" : updated.startGateOpenReason(),
+                nowEpochMs,
+                lifecycleDispatches
             );
             collectMatchCompletedTransition(
                 beforeLifecycleReconcile, updated, "MATCH_COMPLETED", nowEpochMs, lifecycleDispatches
@@ -3135,10 +3653,24 @@ public class ArenaMatchService {
                 return lifecycleDispatches;
             }
 
+            // Guard against late confirmation: an expected initial player who missed the placement
+            // window was marked NO_CONTEST when the start gate opened on a partial roster. A
+            // teleport/ready that completes afterwards must not place them or emit a late
+            // onPlayerPlacementConfirmed. Backfill players are never in expectedPlayerUuids, so
+            // valid backfill placement is unaffected.
+            if (isInitialPlacementWindowMissed(match, playerUuid)) {
+                logger.atWarning().log(
+                    "NEXORI_INITIAL_PLACEMENT_LATE_CONFIRMATION_SKIPPED matchId=" + match.matchId()
+                        + " playerUuid=" + playerUuid
+                        + " reason=" + INITIAL_PLACEMENT_WINDOW_MISSED
+                );
+                return lifecycleDispatches;
+            }
+
             ArenaActiveMatch before = match;
             ArenaActiveMatch updated = match.withPlayerPlacementConfirmed(playerUuid, nowEpochMs);
             ArenaActiveMatch beforeLifecycleReconcile = scheduleWinnerReturnIfNeeded(updated, nowEpochMs);
-            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs);
+            updated = reconcileAdmissionLifecycle(beforeLifecycleReconcile, nowEpochMs, lifecycleDispatches);
             matchesById.put(updated.matchId(), updated);
 
             // Dispatch placement confirmed event
@@ -3182,6 +3714,13 @@ public class ArenaMatchService {
             collectMatchPlacementCompletedTransition(
                 beforeLifecycleReconcile, updated, "MATCH_PLACEMENT_COMPLETED", nowEpochMs, lifecycleDispatches
             );
+            collectMatchStartAllowedTransition(
+                beforeLifecycleReconcile,
+                updated,
+                updated.startGateOpenReason().isBlank() ? "MATCH_START_ALLOWED" : updated.startGateOpenReason(),
+                nowEpochMs,
+                lifecycleDispatches
+            );
             collectMatchCompletedTransition(
                 beforeLifecycleReconcile, updated, "MATCH_COMPLETED", nowEpochMs, lifecycleDispatches
             );
@@ -3209,7 +3748,7 @@ public class ArenaMatchService {
                 if (match != null && match.hasPlayer(playerUuid)) {
                     ArenaActiveMatch updated = match.withoutReturnedPlayer(playerUuid, nowEpochMs)
                         .withLastError("Transfer placement failed: " + reason, nowEpochMs);
-                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, nowEpochMs), nowEpochMs);
+                    updated = reconcileAdmissionLifecycle(scheduleWinnerReturnIfNeeded(updated, nowEpochMs), nowEpochMs, lifecycleDispatches);
                     storeUpdatedMatchOrCloseEmptyRuntime(match, updated, nowEpochMs, "TRANSFER_FAILED", lifecycleDispatches);
                 } else if (match == null) {
                     // nothing to clean up in match

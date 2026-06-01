@@ -85,6 +85,7 @@ import io.github.hyjn.nexori.plugin.minigame.AfkInventoryPacketActivityAdapter;
 import io.github.hyjn.nexori.plugin.minigame.AfkPlayerInputActivitySystem;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchService;
 import io.github.hyjn.nexori.plugin.minigame.ArenaMatchTickSystem;
+import io.github.hyjn.nexori.plugin.minigame.ArenaMatchWindowTickSystem;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotService;
 import io.github.hyjn.nexori.plugin.minigame.InstanceSpawnSlotStore;
 import io.github.hyjn.nexori.plugin.minigame.MatchSessionService;
@@ -647,6 +648,7 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new NexoriPortalBreakSystem(this.getLogger(), this.portalInstanceService));
             this.getEntityStoreRegistry().registerSystem(new QueueCoordinatorTickSystem(this.queueCoordinatorService));
             this.getEntityStoreRegistry().registerSystem(new ArenaMatchTickSystem(this.arenaMatchService));
+            this.getEntityStoreRegistry().registerSystem(new ArenaMatchWindowTickSystem(this.arenaMatchService));
             this.getEntityStoreRegistry().registerSystem(new BackendSyncTickSystem(this.backendSyncService));
             this.getEntityStoreRegistry().registerSystem(new BackendMatchAdmissionStateReportingTickSystem(this.backendMatchAdmissionStateReportingService));
             this.getEntityStoreRegistry().registerSystem(new BackendResultReportingTickSystem(this.backendResultReportingService));

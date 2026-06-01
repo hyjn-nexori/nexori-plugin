@@ -305,6 +305,53 @@ final class MinigameTransferServiceTest {
         assertFalse(service.hasPendingPlacementSession(PLAYER));  // not in sessionsByPlayerUuid yet
     }
 
+    @Test
+    void failPendingInitialPlacementSessionsOnlyFailsListedPlayersForMatchingMatch() {
+        MinigameTransferSession missing = new MinigameTransferSession(PLAYER, "alice", NOW);
+        missing.phase = MinigameTransferPhase.INSTANCE_WORLD_CREATING;
+        missing.matchId = "match-1";
+        putSession(service, missing);
+
+        // Same match but not in the target set (e.g. valid backfill) — must be left alone.
+        MinigameTransferSession backfill = new MinigameTransferSession(PLAYER_2, "bob", NOW);
+        backfill.phase = MinigameTransferPhase.INSTANCE_WORLD_CREATING;
+        backfill.matchId = "match-1";
+        putSession(service, backfill);
+
+        service.failPendingInitialPlacementSessions(
+            "match-1",
+            Set.of(PLAYER),
+            MinigameTransferFailureReason.INITIAL_PLACEMENT_WINDOW_MISSED,
+            NOW + 1_000L
+        );
+
+        assertEquals(MinigameTransferPhase.FAILED, missing.phase);
+        assertEquals(MinigameTransferFailureReason.INITIAL_PLACEMENT_WINDOW_MISSED, missing.failureReason);
+        assertTrue(service.findSession(PLAYER).isEmpty());
+        // Backfill untouched.
+        assertEquals(MinigameTransferPhase.INSTANCE_WORLD_CREATING, backfill.phase);
+        assertTrue(service.hasPendingPlacementSession(PLAYER_2));
+    }
+
+    @Test
+    void failPendingInitialPlacementSessionsIgnoresSessionFromDifferentMatch() {
+        MinigameTransferSession otherMatch = new MinigameTransferSession(PLAYER, "alice", NOW);
+        otherMatch.phase = MinigameTransferPhase.INSTANCE_WORLD_CREATING;
+        otherMatch.matchId = "match-2";
+        putSession(service, otherMatch);
+
+        service.failPendingInitialPlacementSessions(
+            "match-1",
+            Set.of(PLAYER),
+            MinigameTransferFailureReason.INITIAL_PLACEMENT_WINDOW_MISSED,
+            NOW + 1_000L
+        );
+
+        // matchId mismatch: the unrelated session must not be failed or removed.
+        assertEquals(MinigameTransferPhase.INSTANCE_WORLD_CREATING, otherMatch.phase);
+        assertTrue(service.hasPendingPlacementSession(PLAYER));
+    }
+
     // -------------------------------------------------------------------------
     // onPlayerReadyObserved: advances TELEPORT_ISSUED → POST_READY_GRACE
     // -------------------------------------------------------------------------
@@ -367,6 +414,66 @@ final class MinigameTransferServiceTest {
         assertEquals(MinigameTransferOnReadyResult.Kind.RETRY_LATER, result.kind());
         assertTrue(result.arrivalAcknowledged(),
             "RETRY_LATER must acknowledge so recentArrivals is cleaned up immediately");
+    }
+
+    @Test
+    void lateInitialAfterExpiresAtRejectsEvenBeforeWindowClosed() {
+        ArenaActiveMatch match = buildMatch("match-1", 1)
+            .withInitialPlacementWindowRuntime(1, NOW - 10_000L, NOW - 1L, NOW - 10_000L);
+        gateway.existingMatches.put("match-1", match);
+
+        MinigameTransferOnReadyResult result = service.onMinigameLaunchSafeReady(
+            fakeSnapshot(PLAYER), arrival(noInstanceContextJson("match-1")), NOW);
+
+        assertEquals(MinigameTransferOnReadyResult.Kind.TERMINAL_FAILURE, result.kind());
+        assertEquals(List.of(PLAYER), gateway.failCalls);
+        assertEquals(List.of(MinigameTransferFailureReason.LATE_INITIAL_ARRIVAL), gateway.failReasons);
+        assertTrue(gateway.acceptCalls.isEmpty());
+    }
+
+    @Test
+    void lateInitialAfterStartGateOpenRejects() {
+        ArenaActiveMatch match = buildMatch("match-1", 1)
+            .withInitialPlacementWindowRuntime(1, NOW - 10_000L, NOW + 10_000L, NOW - 10_000L)
+            .withStartGateOpened("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", NOW - 1L, NOW - 1L);
+        gateway.existingMatches.put("match-1", match);
+
+        MinigameTransferOnReadyResult result = service.onMinigameLaunchSafeReady(
+            fakeSnapshot(PLAYER), arrival(noInstanceContextJson("match-1")), NOW);
+
+        assertEquals(MinigameTransferOnReadyResult.Kind.TERMINAL_FAILURE, result.kind());
+        assertEquals(List.of(MinigameTransferFailureReason.LATE_INITIAL_ARRIVAL), gateway.failReasons);
+        assertTrue(gateway.acceptCalls.isEmpty());
+    }
+
+    @Test
+    void backfillAfterInitialWindowClosedStillUsesBackfillAdmissionPolicy() {
+        ArenaActiveMatch match = buildMatch("match-1", 1)
+            .withInitialPlacementWindowRuntime(1, NOW - 10_000L, NOW - 1L, NOW - 10_000L)
+            .withInitialPlacementWindowClosed("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", NOW - 1L, NOW - 1L);
+        gateway.existingMatches.put("match-1", match);
+
+        MinigameTransferOnReadyResult result = service.onMinigameLaunchSafeReady(
+            fakeSnapshot(PLAYER), arrival(backfillContextJson("match-1", "reservation-1", NOW + 10_000L)), NOW);
+
+        assertEquals(MinigameTransferOnReadyResult.Kind.ACCEPTED, result.kind());
+        assertEquals(List.of(PLAYER), gateway.acceptCalls);
+        assertTrue(gateway.failCalls.isEmpty());
+    }
+
+    @Test
+    void expiredBackfillAfterInitialWindowClosedRejectedByBackfillPolicy() {
+        ArenaActiveMatch match = buildMatch("match-1", 1)
+            .withInitialPlacementWindowRuntime(1, NOW - 10_000L, NOW - 1L, NOW - 10_000L)
+            .withInitialPlacementWindowClosed("INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET", NOW - 1L, NOW - 1L);
+        gateway.existingMatches.put("match-1", match);
+
+        MinigameTransferOnReadyResult result = service.onMinigameLaunchSafeReady(
+            fakeSnapshot(PLAYER), arrival(backfillContextJson("match-1", "reservation-1", NOW - 1L)), NOW);
+
+        assertEquals(MinigameTransferOnReadyResult.Kind.TERMINAL_FAILURE, result.kind());
+        assertEquals(List.of(MinigameTransferFailureReason.BACKFILL_RESERVATION_REJECTED), gateway.failReasons);
+        assertTrue(gateway.acceptCalls.isEmpty());
     }
 
     // -------------------------------------------------------------------------
@@ -802,6 +909,7 @@ final class MinigameTransferServiceTest {
         final List<UUID> acceptCalls = new ArrayList<>();
         final List<UUID> confirmCalls = new ArrayList<>();
         final List<UUID> failCalls = new ArrayList<>();
+        final List<String> failReasons = new ArrayList<>();
         final java.util.Set<UUID> confirmedPlayers = new java.util.HashSet<>();
         final Map<String, ArenaActiveMatch> existingMatches = new LinkedHashMap<>();
         java.util.function.Consumer<UUID> onAcceptTransferArrival = ignored -> {};
@@ -847,6 +955,7 @@ final class MinigameTransferServiceTest {
             long nowEpochMs
         ) {
             failCalls.add(playerUuid);
+            failReasons.add(reason);
             return List.of();
         }
     }

@@ -84,6 +84,7 @@ public class ArenaService {
             normalized.destinationTargetId(),
             normalized.instanceTemplateId(),
             normalized.rulesEngineId(),
+            normalized.initialPlacementWindowSeconds(),
             normalized.maxSupportedPlayers(),
             normalized.enabled(),
             normalized.afkDetectionPolicy()

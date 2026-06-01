@@ -606,7 +606,16 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 state.expectedPlayers(),
                 state.arrivedPlayers(),
                 state.placedPlayers(),
-                state.placementComplete()
+                state.placementComplete(),
+                state.minimumInitialPlayers(),
+                state.initialPlacementWindowOpen(),
+                state.initialPlacementWindowStartedAtEpochMs(),
+                state.initialPlacementWindowExpiresAtEpochMs(),
+                state.initialPlacementWindowClosedAtEpochMs(),
+                state.initialPlacementWindowCloseReason(),
+                state.startGateOpen(),
+                state.startGateOpenedAtEpochMs(),
+                state.startGateOpenReason()
             ));
     }
 

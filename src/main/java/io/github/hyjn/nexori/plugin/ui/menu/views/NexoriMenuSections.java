@@ -129,6 +129,7 @@ public class NexoriMenuSections {
     protected static final String DESTINATION_DISPLAY_NAME_INPUT_ID = "nexori-v2-destination-display-name";
     protected static final String DESTINATION_RULES_ENGINE_INPUT_ID = "nexori-v2-destination-rules-engine";
     protected static final String DESTINATION_AFK_TIMEOUT_INPUT_ID = "nexori-v2-destination-afk-timeout";
+    protected static final String DESTINATION_INITIAL_PLACEMENT_WINDOW_INPUT_ID = "nexori-v2-destination-initial-placement-window";
     protected static final String QUEUE_DISPLAY_NAME_INPUT_ID = "nexori-v2-queue-display-name";
     protected static final String QUEUE_MIN_PLAYERS_INPUT_ID = "nexori-v2-queue-min-players";
     protected static final String QUEUE_MAX_PLAYERS_INPUT_ID = "nexori-v2-queue-max-players";
@@ -195,6 +196,7 @@ public class NexoriMenuSections {
     protected static final Map<UUID, QueueMatchmakingMode> QUEUE_MODE_DRAFTS = new ConcurrentHashMap<>();
     protected static final Map<UUID, QueueBackfillDraft> QUEUE_BACKFILL_DRAFTS = new ConcurrentHashMap<>();
     protected static final Map<UUID, AfkDetectionPolicyDraft> ARENA_AFK_POLICY_DRAFTS = new ConcurrentHashMap<>();
+    protected static final Map<UUID, String> ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS = new ConcurrentHashMap<>();
 
     protected NexoriMenuSections() {
     }
@@ -669,6 +671,51 @@ public class NexoriMenuSections {
             .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
             .withPadding(HyUIPadding.all(16))
             .withBackground(background);
+    }
+
+    /**
+     * Rectangular setting card matching the Backend Setup style: title on top, muted description
+     * below, and the control(s) inside. Returns an empty padded container the caller fills.
+     */
+    @Nonnull
+    protected static GroupBuilder settingCard(int width, int height) {
+        return GroupBuilder.group()
+            .withLayoutMode("Top")
+            .withAnchor(new HyUIAnchor().setWidth(width).setHeight(height))
+            .withPadding(HyUIPadding.all(14))
+            .withBackground(PANEL_BG);
+    }
+
+    /**
+     * Setting card with a single text input, mirroring {@code backendInputCard}: title, muted
+     * description, then the input field.
+     */
+    @Nonnull
+    protected static GroupBuilder settingInputCard(
+        @Nonnull String title,
+        @Nonnull String detail,
+        @Nonnull String fieldId,
+        @Nonnull String currentValue,
+        @Nonnull String placeholder,
+        int width,
+        int height,
+        int maxLength
+    ) {
+        GroupBuilder cardGroup = settingCard(width, height);
+        cardGroup.addChild(label(title, SUBTITLE, width - 28));
+        cardGroup.addChild(spacerY(4));
+        cardGroup.addChild(label(detail, MUTED, width - 28));
+        cardGroup.addChild(spacerY(8));
+        cardGroup.addChild(
+            TextFieldBuilder.textInput()
+                .withId(fieldId)
+                .withValue(currentValue)
+                .withPlaceholderText(placeholder)
+                .withMaxLength(maxLength)
+                .withAnchor(new HyUIAnchor().setWidth(width - 28).setHeight(HOME_INPUT_FIELD_H))
+                .withBackground("#101926")
+        );
+        return cardGroup;
     }
 
     @Nonnull

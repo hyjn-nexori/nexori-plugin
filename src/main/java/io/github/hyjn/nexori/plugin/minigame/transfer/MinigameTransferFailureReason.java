@@ -21,6 +21,9 @@ public final class MinigameTransferFailureReason {
     public static final String PLAYER_DISCONNECTED_DURING_PLACEMENT = "PLAYER_DISCONNECTED_DURING_PLACEMENT";
     public static final String LAUNCH_CONTEXT_INCONSISTENCY = "LAUNCH_CONTEXT_INCONSISTENCY";
     public static final String PLAYER_NOT_IN_EXPECTED_ROSTER = "PLAYER_NOT_IN_EXPECTED_ROSTER";
+    public static final String LATE_INITIAL_ARRIVAL = "LATE_INITIAL_ARRIVAL";
+    public static final String INITIAL_PLACEMENT_SHORTFALL = "INITIAL_PLACEMENT_SHORTFALL";
+    public static final String INITIAL_PLACEMENT_WINDOW_MISSED = "INITIAL_PLACEMENT_WINDOW_MISSED";
 
     private MinigameTransferFailureReason() {
     }

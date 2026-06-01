@@ -29,6 +29,8 @@ public record LaunchContextData(
     boolean backfillEnabled,
     String backfillMode,
     int backfillWindowSeconds,
+    int initialPlacementWindowSeconds,
+    int minimumInitialPlayers,
     AfkDetectionPolicy afkDetectionPolicy,
     List<UUID> expectedPlayerUuids,
     int expectedPlayerCount,

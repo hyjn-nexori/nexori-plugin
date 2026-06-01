@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -320,6 +321,31 @@ public final class MinigameTransferService {
         String originLobbyId = launch.originLobbyId();
         String matchId = launch.matchId();
 
+        if (!isBackfill
+            && existingMatch != null
+            && isLateInitialArrival(existingMatch, playerUuid, nowEpochMs)) {
+            logger.atWarning().log(
+                "NEXORI_LATE_INITIAL_ARRIVAL_REJECTED player=" + playerUuid
+                    + " username=" + username
+                    + " matchId=" + matchId
+                    + " assignmentType=" + launch.assignmentType()
+                    + " reason=" + MinigameTransferFailureReason.LATE_INITIAL_ARRIVAL
+                    + " windowCloseReason=" + existingMatch.initialPlacementWindowCloseReason()
+                    + " expiresAt=" + existingMatch.initialPlacementWindowExpiresAtEpochMs()
+                    + " startGateOpen=" + existingMatch.startGateOpen()
+            );
+            List<Runnable> failDispatches = matchGateway.failTransferPlacement(
+                playerUuid, MinigameTransferFailureReason.LATE_INITIAL_ARRIVAL,
+                returnAddr,
+                returnTarget,
+                travelProfile,
+                originLobbyId,
+                matchId,
+                nowEpochMs
+            );
+            return MinigameTransferOnReadyResult.terminalFailure(failDispatches);
+        }
+
         // Create session and advance to ACCEPTED_BY_MINIGAME BEFORE calling acceptTransferArrival.
         // This ensures hasPendingPlacementSession() returns true during reconcileAdmissionLifecycle
         // inside acceptTransferArrival, preventing premature MATCH_PLACEMENT_COMPLETED.
@@ -591,6 +617,99 @@ public final class MinigameTransferService {
             && p != MinigameTransferPhase.CLOSED
             && p != MinigameTransferPhase.WAITING_FOR_SAFE_READY
             && p != MinigameTransferPhase.SAFE_DEFAULT_READY;
+    }
+
+    public void closePendingSessionsForMatch(@Nonnull String matchId, @Nonnull String reason, long nowEpochMs) {
+        String normalizedMatchId = normalizeOptional(matchId);
+        if (normalizedMatchId.isBlank()) {
+            return;
+        }
+        List<UUID> playersToClose = new ArrayList<>();
+        for (MinigameTransferSession session : sessionsByPlayerUuid.values()) {
+            if (normalizedMatchId.equals(session.matchId) && hasPendingPlacementSession(session.playerUuid)) {
+                session.failureReason = reason;
+                advancePhase(session, MinigameTransferPhase.FAILED, nowEpochMs);
+                playersToClose.add(session.playerUuid);
+            }
+        }
+        for (UUID playerUuid : playersToClose) {
+            sessionsByPlayerUuid.remove(playerUuid);
+        }
+        if (!playersToClose.isEmpty()) {
+            logger.atWarning().log(
+                "NEXORI_TRANSFER_PENDING_SESSIONS_CLOSED matchId=" + normalizedMatchId
+                    + " reason=" + reason
+                    + " count=" + playersToClose.size()
+            );
+        }
+    }
+
+    /**
+     * Fails the pending placement sessions of the given expected initial players who missed the
+     * initial placement window (start gate opened on a partial roster).
+     *
+     * <p>Player-scoped on purpose: unlike {@link #closePendingSessionsForMatch}, this only touches
+     * the supplied player UUIDs, so valid backfill sessions for the same match are left alone. Only
+     * non-terminal sessions whose {@code matchId} matches are failed; players that never arrived
+     * (no session) and already-placed/terminal sessions are skipped. Marking the session terminal
+     * also stops any pending tick from issuing a deferred teleport.</p>
+     */
+    public void failPendingInitialPlacementSessions(
+        @Nonnull String matchId,
+        @Nonnull Set<UUID> playerUuids,
+        @Nonnull String reason,
+        long nowEpochMs
+    ) {
+        String normalizedMatchId = normalizeOptional(matchId);
+        if (normalizedMatchId.isBlank() || playerUuids.isEmpty()) {
+            return;
+        }
+        List<UUID> closed = new ArrayList<>();
+        for (UUID playerUuid : playerUuids) {
+            if (playerUuid == null) {
+                continue;
+            }
+            MinigameTransferSession session = sessionsByPlayerUuid.get(playerUuid);
+            if (session == null
+                || !normalizedMatchId.equals(session.matchId)
+                || !hasPendingPlacementSession(playerUuid)) {
+                continue;
+            }
+            session.failureReason = reason;
+            session.instanceTeleportDeferred = false;
+            advancePhase(session, MinigameTransferPhase.FAILED, nowEpochMs);
+            closed.add(playerUuid);
+        }
+        for (UUID playerUuid : closed) {
+            sessionsByPlayerUuid.remove(playerUuid);
+        }
+        if (!closed.isEmpty()) {
+            logger.atWarning().log(
+                "NEXORI_INITIAL_PLACEMENT_PENDING_SESSIONS_FAILED matchId=" + normalizedMatchId
+                    + " reason=" + reason
+                    + " count=" + closed.size()
+            );
+        }
+    }
+
+    private boolean isLateInitialArrival(@Nonnull ArenaActiveMatch match, @Nonnull UUID playerUuid, long nowEpochMs) {
+        if (match.activePlayerUuids().contains(playerUuid)) {
+            return false;
+        }
+        return match.initialPlacementWindowClosed()
+            || (match.initialPlacementWindowExpiresAtEpochMs() > 0L && nowEpochMs >= match.initialPlacementWindowExpiresAtEpochMs())
+            || match.startGateOpen()
+            || match.hasCompleted()
+            || match.hasSubmittedResult();
+    }
+
+    @Nonnull
+    private static String normalizeOptional(String rawValue) {
+        if (rawValue == null) {
+            return "";
+        }
+        String normalized = rawValue.trim();
+        return normalized.isBlank() ? "" : normalized;
     }
 
     // -------------------------------------------------------------------------
@@ -946,6 +1065,18 @@ public final class MinigameTransferService {
         @Nonnull MinigameTransferSession session,
         @Nonnull World targetWorld
     ) {
+        // The session may have been failed (e.g. the initial placement window expired and this
+        // expected player was marked NO_CONTEST) between scheduling and executing this deferred
+        // teleport. Do not place a player whose session is already terminal.
+        if (session.isTerminal()) {
+            logger.atInfo().log(
+                "NEXORI_TRANSFER_DEFERRED_TELEPORT_SKIPPED player=" + playerUuid
+                    + " matchId=" + session.matchId
+                    + " phase=" + session.phase
+                    + " reason=" + session.failureReason
+            );
+            return;
+        }
         Transform transform = session.expectedTransform != null
             ? session.expectedTransform.clone()
             : new Transform(0.0, 0.0, 0.0, 0.0f, 0.0f, 0.0f);

@@ -190,6 +190,22 @@ final class ArenaDefinitionTest {
         assertFalse(a.usesInstanceTemplate());
     }
 
+    @Test
+    void oldArenaDefinitionsDefaultInitialPlacementWindowSeconds() {
+        ArenaDefinition a = new ArenaDefinition("a", "A", "addr:1", "hub", "none", "", 4, true).normalized();
+
+        assertEquals(ArenaDefinition.DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS, a.initialPlacementWindowSeconds());
+    }
+
+    @Test
+    void initialPlacementWindowSecondsNormalizeToSupportedRange() {
+        ArenaDefinition belowMin = new ArenaDefinition("a", "A", "addr:1", "hub", "none", "", -1, 4, true, AfkDetectionPolicy.defaults()).normalized();
+        ArenaDefinition aboveMax = new ArenaDefinition("b", "B", "addr:1", "hub", "none", "", 9_999, 4, true, AfkDetectionPolicy.defaults()).normalized();
+
+        assertEquals(ArenaDefinition.DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS, belowMin.initialPlacementWindowSeconds());
+        assertEquals(ArenaDefinition.MAX_INITIAL_PLACEMENT_WINDOW_SECONDS, aboveMax.initialPlacementWindowSeconds());
+    }
+
     // ── normalizeId ───────────────────────────────────────────────────────────
 
     @Test

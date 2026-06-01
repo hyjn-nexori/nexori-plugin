@@ -69,6 +69,7 @@ import io.github.hyjn.nexori.plugin.ui.menu.context.NexoriMenuSetupState;
 import io.github.hyjn.nexori.plugin.ui.menu.state.AfkDetectionPolicyDraft;
 import io.github.hyjn.nexori.plugin.ui.menu.state.AfkTimeoutDraftValidator;
 import io.github.hyjn.nexori.plugin.ui.menu.state.BackendConfigDraft;
+import io.github.hyjn.nexori.plugin.ui.menu.state.InitialPlacementWindowDraftResolver;
 import io.github.hyjn.nexori.plugin.ui.menu.state.BackendWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.AccessGateWorkspaceTab;
 import io.github.hyjn.nexori.plugin.ui.menu.state.MinigameWorkspaceTab;
@@ -575,6 +576,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         String rulesEngineValue = state.pendingDestinationRulesEngineId().isBlank()
             ? (editing == null ? "" : editing.rulesEngineId())
             : state.pendingDestinationRulesEngineId();
+        String initialPlacementWindowValue = arenaInitialPlacementWindowDraft(playerRef, editing);
         AfkDetectionPolicyDraft afkDraft = arenaAfkPolicyDraft(playerRef, editing);
 
         boolean canSave = !state.pendingDestinationConnectionAddress().isBlank()
@@ -602,10 +604,14 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         .onClick((ignored, ctx) -> {
                             String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
                             String rulesEngineId = ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim();
+                            String initialPlacementWindowRaw = ctx.getValue(
+                                DESTINATION_INITIAL_PLACEMENT_WINDOW_INPUT_ID, String.class
+                            ).orElse(initialPlacementWindowValue).trim();
                             AfkDetectionPolicyDraft currentAfkDraft = arenaAfkPolicyDraft(playerRef, editing)
                                 .withInactivityTimeoutSeconds(ctx.getValue(DESTINATION_AFK_TIMEOUT_INPUT_ID, String.class).orElse(afkDraft.inactivityTimeoutSeconds()).trim());
                             if (rulesEngineId.isBlank()) {
                                 ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), currentAfkDraft);
+                                ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.put(playerRef.getUuid(), initialPlacementWindowRaw);
                                 open(
                                     ref,
                                     store,
@@ -625,6 +631,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                             }
                             try {
                                 int afkTimeoutSeconds = AfkTimeoutDraftValidator.parseTimeoutSeconds(currentAfkDraft.inactivityTimeoutSeconds());
+                                int initialPlacementWindowSeconds = parseInitialPlacementWindowSeconds(initialPlacementWindowRaw);
                                 String destinationId = editing == null ? deriveId(displayName, "destination") : editing.arenaId();
                                 ArenaDefinition saved = plugin.getArenaService().upsert(new ArenaDefinition(
                                         destinationId,
@@ -633,14 +640,17 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                                         "",
                                         state.pendingDestinationInstanceTemplateId(),
                                         rulesEngineId,
+                                        initialPlacementWindowSeconds,
                                         DEFAULT_DESTINATION_MAX_SUPPORTED_PLAYERS,
                                         true,
                                         new AfkDetectionPolicy(currentAfkDraft.enabled(), afkTimeoutSeconds)
                                 ));
                                 ARENA_AFK_POLICY_DRAFTS.remove(playerRef.getUuid());
+                                ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.remove(playerRef.getUuid());
                                 open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Saved game " + saved.displayName() + "."));
                             } catch (IOException | IllegalArgumentException exception) {
                                 ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), currentAfkDraft);
+                                ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.put(playerRef.getUuid(), initialPlacementWindowRaw);
                                 open(ref, store, playerRef, player, plugin, state.withDestinationDraft(displayName, state.pendingDestinationConnectionAddress(), "", state.pendingDestinationInstanceTemplateId(), rulesEngineId, state.pendingDestinationMaxPlayers()).withStatusText("Could not save game: " + exception.getMessage()));
                             }
                         })
@@ -652,6 +662,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         .withAnchor(new HyUIAnchor().setWidth(120).setHeight(HOME_INPUT_FIELD_H))
                         .onClick((ignored, ctx) -> {
                             ARENA_AFK_POLICY_DRAFTS.remove(playerRef.getUuid());
+                            ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.remove(playerRef.getUuid());
                             open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText("Game edit cleared."));
                         })
         );
@@ -678,19 +689,32 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         card.addChild(topRow);
         card.addChild(spacerY(12));
 
-        GroupBuilder afkRow = GroupBuilder.group().withLayoutMode("Left").withAnchor(new HyUIAnchor().setWidth(width - 32).setHeight(HOME_INPUT_BLOCK_H));
-        GroupBuilder afkToggleColumn = GroupBuilder.group().withLayoutMode("Top").withAnchor(new HyUIAnchor().setWidth(170).setHeight(HOME_INPUT_BLOCK_H));
-        afkToggleColumn.addChild(label("AFK Detection", MUTED, 170));
-        afkToggleColumn.addChild(spacerY(8));
-        afkToggleColumn.addChild(
+        // AFK and Initial Placement settings rendered as two Backend-Setup-style cards side by side.
+        int settingsRowWidth = width - 32;
+        int settingsCardWidth = (settingsRowWidth - 12) / 2;
+        int settingsCardHeight = 226;
+        int settingsCardInnerWidth = settingsCardWidth - 28;
+
+        GroupBuilder settingsRow = GroupBuilder.group()
+            .withLayoutMode("Left")
+            .withAnchor(new HyUIAnchor().setWidth(settingsRowWidth).setHeight(settingsCardHeight));
+
+        GroupBuilder afkCard = settingCard(settingsCardWidth, settingsCardHeight);
+        afkCard.addChild(label("AFK Detection", SUBTITLE, settingsCardInnerWidth));
+        afkCard.addChild(spacerY(4));
+        afkCard.addChild(label("Default is OFF with 30 seconds. Valid range: 5 to 3600 seconds.", MUTED, settingsCardInnerWidth));
+        afkCard.addChild(spacerY(8));
+        afkCard.addChild(
             ButtonBuilder.secondaryTextButton()
-                .withText(afkDraft.enabled() ? "ON" : "OFF")
-                .withAnchor(new HyUIAnchor().setWidth(120).setHeight(HOME_INPUT_FIELD_H))
+                .withText(afkDraft.enabled() ? "AFK DETECTION: ON" : "AFK DETECTION: OFF")
+                .withAnchor(new HyUIAnchor().setWidth(settingsCardInnerWidth).setHeight(HOME_INPUT_FIELD_H))
                 .onClick((ignored, ctx) -> {
                     String timeout = ctx.getValue(DESTINATION_AFK_TIMEOUT_INPUT_ID, String.class).orElse(afkDraft.inactivityTimeoutSeconds()).trim();
                     String displayName = ctx.getValue(DESTINATION_DISPLAY_NAME_INPUT_ID, String.class).orElse(displayValue).trim();
                     String rulesEngineId = ctx.getValue(DESTINATION_RULES_ENGINE_INPUT_ID, String.class).orElse(rulesEngineValue).trim();
+                    String placementWindow = ctx.getValue(DESTINATION_INITIAL_PLACEMENT_WINDOW_INPUT_ID, String.class).orElse(initialPlacementWindowValue).trim();
                     ARENA_AFK_POLICY_DRAFTS.put(playerRef.getUuid(), new AfkDetectionPolicyDraft(!afkDraft.enabled(), timeout));
+                    ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.put(playerRef.getUuid(), placementWindow);
                     open(
                         ref,
                         store,
@@ -708,12 +732,30 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                     );
                 })
         );
-        afkRow.addChild(afkToggleColumn);
-        afkRow.addChild(spacerX(12));
-        afkRow.addChild(inputField("Timeout Seconds", DESTINATION_AFK_TIMEOUT_INPUT_ID, afkDraft.inactivityTimeoutSeconds(), Integer.toString(AfkDetectionPolicy.DEFAULT_INACTIVITY_TIMEOUT_SECONDS), 180));
-        afkRow.addChild(spacerX(12));
-        afkRow.addChild(label("Default is OFF with 30 seconds. Valid range: 5 to 3600 seconds.", MUTED, width - 406));
-        card.addChild(afkRow);
+        afkCard.addChild(spacerY(8));
+        afkCard.addChild(inputField(
+            "Timeout Seconds",
+            DESTINATION_AFK_TIMEOUT_INPUT_ID,
+            afkDraft.inactivityTimeoutSeconds(),
+            Integer.toString(AfkDetectionPolicy.DEFAULT_INACTIVITY_TIMEOUT_SECONDS),
+            settingsCardInnerWidth
+        ));
+
+        GroupBuilder placementCard = settingInputCard(
+            "Initial Placement Wait Seconds",
+            "How long Nexori waits for initial assigned players to be placed before starting with enough players or cancelling the match.",
+            DESTINATION_INITIAL_PLACEMENT_WINDOW_INPUT_ID,
+            initialPlacementWindowValue,
+            Integer.toString(ArenaDefinition.DEFAULT_INITIAL_PLACEMENT_WINDOW_SECONDS),
+            settingsCardWidth,
+            settingsCardHeight,
+            8
+        );
+
+        settingsRow.addChild(afkCard);
+        settingsRow.addChild(spacerX(12));
+        settingsRow.addChild(placementCard);
+        card.addChild(settingsRow);
         return card;
     }
 
@@ -739,7 +781,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
         List<ArenaDefinition> destinations = plugin.getArenaService().list();
         ArenaDefinition editing = currentEditedDestination(plugin, state);
 
-        int setupHeight = 280;
+        int setupHeight = 440;
         int selectorsHeight = Math.max(320, viewportHeight - setupHeight - 420);
         int savedHeight = Math.max(360, viewportHeight - setupHeight - selectorsHeight - 56);
         int contentHeight = 16 + setupHeight + 12 + selectorsHeight + 12 + savedHeight + 20;
@@ -1360,6 +1402,10 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                         playerRef.getUuid(),
                         new AfkDetectionPolicyDraft(policy.enabled(), Integer.toString(policy.inactivityTimeoutSeconds()))
                     );
+                    ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.put(
+                        playerRef.getUuid(),
+                        Integer.toString(ArenaDefinition.normalizeInitialPlacementWindowSeconds(destination.initialPlacementWindowSeconds()))
+                    );
                     open(
                         ref, store, playerRef, player, plugin,
                         state.withEditingDestinationId(destination.arenaId())
@@ -1377,6 +1423,7 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
                     try {
                         boolean removed = plugin.getArenaService().remove(destination.arenaId());
                         ARENA_AFK_POLICY_DRAFTS.remove(playerRef.getUuid());
+                        ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.remove(playerRef.getUuid());
                         open(ref, store, playerRef, player, plugin, state.clearedDestinationDraft().withStatusText(removed ? "Removed game " + destination.displayName() + "." : destination.displayName() + " was already removed."));
                     } catch (IOException | IllegalArgumentException exception) {
                         open(ref, store, playerRef, player, plugin, state.withStatusText("Could not remove game: " + exception.getMessage()));
@@ -2554,6 +2601,28 @@ public final class NexoriMinigameSections extends NexoriMenuSections {
             ? AfkDetectionPolicy.defaults()
             : AfkDetectionPolicy.normalize(editing.afkDetectionPolicy());
         return new AfkDetectionPolicyDraft(policy.enabled(), Integer.toString(policy.inactivityTimeoutSeconds()));
+    }
+
+    static int parseInitialPlacementWindowSeconds(@Nonnull String rawValue) {
+        try {
+            return ArenaDefinition.normalizeInitialPlacementWindowSeconds(Integer.parseInt(rawValue.trim()));
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("Initial placement wait seconds must be a number.");
+        }
+    }
+
+    /**
+     * Resolves the value shown in the initial placement window input, preferring the in-progress
+     * draft kept while the player edits the Games form so the value survives re-renders triggered
+     * by other fields (AFK toggle, validation errors, etc.). Falls back to the saved arena value or
+     * the default when there is no draft.
+     */
+    @Nonnull
+    static String arenaInitialPlacementWindowDraft(@Nonnull PlayerRef playerRef, ArenaDefinition editing) {
+        return InitialPlacementWindowDraftResolver.resolveDisplayValue(
+            ARENA_INITIAL_PLACEMENT_WINDOW_DRAFTS.get(playerRef.getUuid()),
+            editing
+        );
     }
 
     @Nonnull
