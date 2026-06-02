@@ -37,7 +37,6 @@ public final class NexoriDiscoverCommand extends AbstractPlayerCommand {
         this.plugin = plugin;
         this.discoveryService = discoveryService;
         this.destinationArg = withRequiredArg("destination", "Trusted destination in host:port format.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override

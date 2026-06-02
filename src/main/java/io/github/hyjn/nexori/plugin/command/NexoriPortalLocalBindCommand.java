@@ -37,7 +37,6 @@ public final class NexoriPortalLocalBindCommand extends CommandBase {
         this.triggerBindingService = triggerBindingService;
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
         this.targetIdArg = withRequiredArg("targetId", "Local Nexori target id.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override

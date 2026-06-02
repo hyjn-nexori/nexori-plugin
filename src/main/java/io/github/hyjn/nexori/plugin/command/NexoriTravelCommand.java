@@ -37,7 +37,6 @@ public final class NexoriTravelCommand extends AbstractPlayerCommand {
         this.legacyRouteKeyArg = withOptionalArg("routeKey", "Deprecated alias for targetId.", ArgTypes.STRING);
         this.entryPointArg = withOptionalArg("arrivalPoint", "Optional arrival point override.", ArgTypes.STRING);
         this.travelProfileArg = withOptionalArg("travelProfile", "Optional travel profile id.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override
@@ -48,9 +47,6 @@ public final class NexoriTravelCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         try {
             ConfiguredPeer destination = ConfiguredPeer.parse(context.get(destinationArg));
             String targetId = context.provided(targetIdArg)

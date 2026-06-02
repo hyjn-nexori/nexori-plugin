@@ -17,14 +17,10 @@ public final class NexoriMatchStatusCommand extends CommandBase {
     public NexoriMatchStatusCommand(@Nonnull ArenaMatchService arenaMatchService) {
         super("nexorimatchstatus", "Shows the active Nexori arena matches on this server.");
         this.arenaMatchService = arenaMatchService;
-        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         List<ArenaActiveMatch> matches = arenaMatchService.listMatches();
         if (matches.isEmpty()) {
             context.sendMessage(Message.raw("No active Nexori arena matches are running on this server."));

@@ -43,7 +43,6 @@ public final class NexoriQueueUpsertCommand extends CommandBase {
         this.launchTravelProfileArg = withRequiredArg("launchTravelProfile", "Launch travel profile.", ArgTypes.STRING);
         this.displayNameArg = withOptionalArg("displayName", "Optional display name.", ArgTypes.STRING);
         this.matchmakingModeArg = withOptionalArg("matchmakingMode", "Optional matchmaking mode: LOCAL_FIFO or BACKEND_DRIVEN.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override

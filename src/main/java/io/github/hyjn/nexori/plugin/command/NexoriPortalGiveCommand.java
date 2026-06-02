@@ -27,7 +27,6 @@ public final class NexoriPortalGiveCommand extends AbstractPlayerCommand {
         super("nexoriportalgive", "Gives the Nexori portal block item to the executing player.");
         this.plugin = plugin;
         this.amountArg = withOptionalArg("amount", "How many portal items to give.", ArgTypes.INTEGER);
-        setPermissionGroups("OP");
     }
 
     @Override

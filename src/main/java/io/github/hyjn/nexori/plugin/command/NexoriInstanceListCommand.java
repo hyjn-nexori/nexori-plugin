@@ -14,14 +14,10 @@ public final class NexoriInstanceListCommand extends CommandBase {
 
     public NexoriInstanceListCommand() {
         super("nexoriinstancelist", "Lists loaded Hytale instance template ids available to Nexori on this server.");
-        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         List<String> instanceIds = InstancesPlugin.get().getInstanceAssets().stream()
             .filter(id -> id != null && !id.isBlank())
             .sorted(Comparator.naturalOrder())

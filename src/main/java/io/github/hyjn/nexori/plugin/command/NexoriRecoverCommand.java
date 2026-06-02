@@ -9,7 +9,6 @@ import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
-import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
@@ -22,7 +21,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 
-public final class NexoriRecoverCommand extends AbstractPlayerCommand {
+public final class NexoriRecoverCommand extends NexoriSelfServicePlayerCommand {
 
     private final InventoryTransferService inventoryTransferService;
     private final RequiredArg<String> transferIdArg;
@@ -31,7 +30,8 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
         super("nexorirecover", "Queries the destination for one of your Nexori inventory transfer backups and restores it if needed.");
         this.inventoryTransferService = inventoryTransferService;
         this.transferIdArg = withRequiredArg("transferId", "The transfer id shown by /nexoribackups.", ArgTypes.STRING);
-        setPermissionGroups("OP");
+        // Self-service: restores only the caller's OWN backup (InventoryTransferService validates the
+        // transferId belongs to the caller's UUID). No OP group / admin permission required.
     }
 
     @Override
@@ -42,7 +42,8 @@ public final class NexoriRecoverCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
-        if (!NexoriOpAccess.requireOp(context)) {
+        if (!inventoryTransferService.isRecoveryEnabled()) {
+            context.sendMessage(Message.raw("Nexori inventory recovery is currently disabled by this server's admin."));
             return;
         }
         try {

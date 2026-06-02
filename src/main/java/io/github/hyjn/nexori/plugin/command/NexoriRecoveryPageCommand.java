@@ -5,7 +5,6 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -15,14 +14,15 @@ import io.github.hyjn.nexori.plugin.ui.NexoriRecoveryPage;
 
 import javax.annotation.Nonnull;
 
-public final class NexoriRecoveryPageCommand extends AbstractPlayerCommand {
+public final class NexoriRecoveryPageCommand extends NexoriSelfServicePlayerCommand {
 
     private final InventoryTransferService inventoryTransferService;
 
     public NexoriRecoveryPageCommand(@Nonnull InventoryTransferService inventoryTransferService) {
         super("nexorirecovery", "Opens your Nexori inventory recovery page.");
         this.inventoryTransferService = inventoryTransferService;
-        setPermissionGroups("OP");
+        // Self-service: any player may open their OWN recovery page. Gated functionally by
+        // isRecoveryEnabled(); no OP group / admin permission required.
     }
 
     @Override
@@ -33,9 +33,6 @@ public final class NexoriRecoveryPageCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         if (!inventoryTransferService.isRecoveryEnabled()) {
             context.sendMessage(Message.raw("Nexori inventory recovery is currently disabled by this server's admin."));
             return;

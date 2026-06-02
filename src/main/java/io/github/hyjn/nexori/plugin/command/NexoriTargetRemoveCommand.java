@@ -19,14 +19,10 @@ public final class NexoriTargetRemoveCommand extends CommandBase {
         super("nexoritargetremove", "Removes a Nexori destination target.");
         this.plugin = plugin;
         this.targetIdArg = withRequiredArg("targetId", "Destination target id to remove.", ArgTypes.STRING);
-        this.setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext ctx) {
-        if (!NexoriOpAccess.requireOp(ctx)) {
-            return;
-        }
         try {
             boolean removed = plugin.getDestinationTargetService().remove(ctx.get(targetIdArg));
             ctx.sendMessage(Message.raw(removed

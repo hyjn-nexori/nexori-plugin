@@ -20,7 +20,6 @@ public final class NexoriQueueLeaveCommand extends AbstractPlayerCommand {
     public NexoriQueueLeaveCommand(@Nonnull QueueCoordinatorService queueCoordinatorService) {
         super("nexoriqueueleave", "Leaves the current Nexori queue.");
         this.queueCoordinatorService = queueCoordinatorService;
-        setPermissionGroups("OP");
     }
 
     @Override
@@ -31,9 +30,6 @@ public final class NexoriQueueLeaveCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         QueueCoordinatorService.LeaveResult result = queueCoordinatorService.leaveCurrentQueue(playerRef.getUuid());
         if (result.outcome() == QueueCoordinatorService.LeaveOutcome.NOT_QUEUED) {
             context.sendMessage(Message.raw("You are not in a Nexori queue right now."));

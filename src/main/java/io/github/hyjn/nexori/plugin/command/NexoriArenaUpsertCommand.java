@@ -45,7 +45,6 @@ public final class NexoriArenaUpsertCommand extends CommandBase {
             "Optional external rules engine id for lifecycle events and public API resolution.",
             ArgTypes.STRING
         );
-        setPermissionGroups("OP");
     }
 
     @Override

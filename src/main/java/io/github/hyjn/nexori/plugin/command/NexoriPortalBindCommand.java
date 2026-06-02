@@ -39,7 +39,6 @@ public final class NexoriPortalBindCommand extends CommandBase {
         this.destinationArg = withRequiredArg("destination", "Trusted destination in host:port format.", ArgTypes.STRING);
         this.targetIdArg = withRequiredArg("targetId", "Remote destination target id.", ArgTypes.STRING);
         this.travelProfileArg = withOptionalArg("travelProfile", "Optional travel profile id.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override

@@ -545,7 +545,10 @@ public class NexoriPlugin extends JavaPlugin {
             this.registerAdminCommand(new NexoriCommand(this));
             this.registerAdminCommand(new NexoriBackupLimitCommand(this, this.inventoryTransferService));
             this.registerAdminCommand(new NexoriRecoveryModeCommand(this, this.inventoryTransferService));
-            this.registerAdminCommand(new NexoriBackupsCommand(this.inventoryTransferService));
+            // Self-service recovery: a normal player lists/recovers only their own backups when
+            // recovery is enabled (ownership enforced by InventoryTransferService via the caller's
+            // own UUID). These must NOT require admin/OP.
+            this.registerPlayerCommand(new NexoriBackupsCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriDiscoverCommand(this, this.destinationTargetDiscoveryService));
             this.registerAdminCommand(new NexoriDiscoveredTargetsCommand(this.discoveredDestinationTargetCacheService));
             this.registerAdminCommand(new NexoriPortalGiveCommand(this));
@@ -570,8 +573,8 @@ public class NexoriPlugin extends JavaPlugin {
             this.registerAdminCommand(new NexoriMatchStatusCommand(this.arenaMatchService));
             this.registerAdminCommand(new NexoriMatchSessionStatusCommand(this.matchSessionService));
             this.registerAdminCommand(new NexoriMatchEndCommand(this, this.arenaMatchService));
-            this.registerAdminCommand(new NexoriRecoverCommand(this.inventoryTransferService));
-            this.registerAdminCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
+            this.registerPlayerCommand(new NexoriRecoverCommand(this.inventoryTransferService));
+            this.registerPlayerCommand(new NexoriRecoveryPageCommand(this.inventoryTransferService));
             this.registerAdminCommand(new NexoriTargetHelpCommand());
             this.registerAdminCommand(new NexoriTargetListCommand(this));
             this.registerAdminCommand(new NexoriTargetShowCommand(this));
@@ -915,6 +918,15 @@ public class NexoriPlugin extends JavaPlugin {
 
     private void registerAdminCommand(@Nonnull AbstractCommand command) {
         command.requirePermission(this.getBasePermission() + ".admin");
+        this.getCommandRegistry().registerCommand(command);
+    }
+
+    /**
+     * Registers a self-service command available to normal players (no admin permission node and no
+     * OP group requirement). The command must enforce its own functional gating (e.g. recovery must
+     * be enabled and a player may only act on their own data).
+     */
+    private void registerPlayerCommand(@Nonnull AbstractCommand command) {
         this.getCommandRegistry().registerCommand(command);
     }
 

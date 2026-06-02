@@ -29,7 +29,6 @@ public final class NexoriWorldLabelCleanupCommand extends AbstractPlayerCommand 
         );
         this.plugin = plugin;
         this.worldLabelService = worldLabelService;
-        setPermissionGroups("OP");
     }
 
     @Override

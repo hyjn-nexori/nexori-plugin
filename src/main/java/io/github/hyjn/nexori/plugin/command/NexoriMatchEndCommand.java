@@ -25,7 +25,6 @@ public final class NexoriMatchEndCommand extends CommandBase {
         this.arenaMatchService = arenaMatchService;
         this.matchIdArg = withRequiredArg("matchId", "Active match id.", ArgTypes.STRING);
         this.reasonArg = withOptionalArg("reason", "Optional return reason.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override

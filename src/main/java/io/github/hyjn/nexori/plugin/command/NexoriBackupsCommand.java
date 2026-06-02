@@ -5,7 +5,6 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -16,14 +15,15 @@ import javax.annotation.Nonnull;
 import java.time.Instant;
 import java.util.List;
 
-public final class NexoriBackupsCommand extends AbstractPlayerCommand {
+public final class NexoriBackupsCommand extends NexoriSelfServicePlayerCommand {
 
     private final InventoryTransferService inventoryTransferService;
 
     public NexoriBackupsCommand(@Nonnull InventoryTransferService inventoryTransferService) {
         super("nexoribackups", "Lists your recent Nexori inventory transfer backups.");
         this.inventoryTransferService = inventoryTransferService;
-        setPermissionGroups("OP");
+        // Self-service: lists only the caller's own backups (scoped by their UUID). Gated by
+        // isRecoveryEnabled(); no OP group / admin permission required.
     }
 
     @Override
@@ -34,9 +34,6 @@ public final class NexoriBackupsCommand extends AbstractPlayerCommand {
         @Nonnull PlayerRef playerRef,
         @Nonnull World world
     ) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         if (!inventoryTransferService.isRecoveryEnabled()) {
             context.sendMessage(Message.raw("Nexori inventory recovery is currently disabled by this server's admin."));
             return;

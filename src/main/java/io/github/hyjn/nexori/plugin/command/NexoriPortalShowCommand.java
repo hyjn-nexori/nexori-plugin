@@ -29,14 +29,10 @@ public final class NexoriPortalShowCommand extends CommandBase {
         this.portalInstanceService = portalInstanceService;
         this.triggerBindingService = triggerBindingService;
         this.portalIdArg = withRequiredArg("portalId", "Portal id.", ArgTypes.STRING);
-        setPermissionGroups("OP");
     }
 
     @Override
     protected void executeSync(@Nonnull CommandContext context) {
-        if (!NexoriOpAccess.requireOp(context)) {
-            return;
-        }
         PortalInstanceDefinition portal = portalInstanceService.findById(context.get(portalIdArg)).orElse(null);
         if (portal == null) {
             context.sendMessage(Message.raw("That Nexori portal does not exist on this server."));
