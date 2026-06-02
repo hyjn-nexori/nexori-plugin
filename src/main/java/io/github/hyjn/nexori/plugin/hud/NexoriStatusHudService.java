@@ -694,7 +694,7 @@ public final class NexoriStatusHudService {
         String cardOutline = isNoContest ? AFK_DETECTED_OUTLINE       : QUEUE_CARD_OUTLINE;
         String leftBg      = isNoContest ? AFK_DETECTED_LEFT_BG       : QUEUE_LEFT_BG;
         String leftOutline = isNoContest ? AFK_DETECTED_LEFT_OUTLINE  : QUEUE_LEFT_OUTLINE;
-        String logoTint    = isNoContest ? AFK_DETECTED_LOGO_TINT     : "#00000000";
+        String logoTint    = isNoContest ? AFK_DETECTED_LOGO_TINT     : QUEUE_LOGO_TINT;
         String mainColor   = isNoContest ? AFK_DETECTED_TEXT          : MAIN_TEXT_COLOR;
         String accentColor = isNoContest ? AFK_DETECTED_TITLE         : state.accentColor();
 
