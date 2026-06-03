@@ -395,12 +395,47 @@ public final class NexoriStatusHudService {
             return Optional.of(buildReturnState(returnHudState.get(), nowEpochMs));
         }
 
+        // Placement window: the player has arrived in the instance and is waiting for the rest of the
+        // expected roster. Rendered with the same blue queue card, fed by real placement counts.
+        Optional<ArenaMatchService.PlacementHudState> placementHudState = arenaMatchService.findPlacementHudState(playerUuid, nowEpochMs);
+        if (placementHudState.isPresent()) {
+            return Optional.of(buildPlacementState(placementHudState.get(), nowEpochMs));
+        }
+
         Optional<QueueCoordinatorService.QueueHudState> queueHudState = queueCoordinatorService.findQueueHudState(playerUuid, nowEpochMs);
         if (queueHudState.isPresent()) {
             return Optional.of(buildQueueState(queueHudState.get(), nowEpochMs));
         }
 
         return Optional.empty();
+    }
+
+    @Nonnull
+    private HudRenderState buildPlacementState(@Nonnull ArenaMatchService.PlacementHudState placementState, long nowEpochMs) {
+        int placed = placementState.placedPlayers();
+        int expected = placementState.expectedPlayers();
+
+        // Single, simple status line. Assigned/expected for THIS launch (never "Max"). ASCII '-' only.
+        // No minimumInitialPlayers shown for now.
+        String line = expected > 0
+            ? "Placed " + placed + "/" + expected
+            : "Placed " + placed;
+        if (placementState.windowExpiresAtEpochMs() > 0L) {
+            line = line + " - " + secondsRemaining(placementState.windowExpiresAtEpochMs(), nowEpochMs) + "s remaining";
+        }
+
+        return new HudRenderState(
+            HudRenderKind.QUEUE,
+            "",
+            "Waiting for players...",
+            // The whole status goes in this one wide span; statusText is left blank so buildQueueHud
+            // widens the count label (no second column, no ellipsis clipping).
+            line,
+            "",
+            QUEUE_WAITING_COLOR,
+            // Animated scan glow at full tick rate, same as the queue WAITING card.
+            nowEpochMs % 9000L
+        );
     }
 
     @Nonnull
@@ -590,10 +625,13 @@ public final class NexoriStatusHudService {
             .withHitTestVisible(false);
 
         // ── Player count label ────────────────────────────────────────────────
+        // When there is no second-column status (placement card), let the count span the full row so a
+        // longer single line ("Placed 1/2 - 21s remaining") fits without ellipsis clipping.
+        boolean wideCount = state.statusText() == null || state.statusText().isBlank();
         LabelBuilder playerCount = LabelBuilder.label()
             .withId("nexori-queue-player-count")
             .withText(state.detailText())
-            .withAnchor(new HyUIAnchor().setLeft(360).setTop(130).setWidth(190).setHeight(40))
+            .withAnchor(new HyUIAnchor().setLeft(360).setTop(130).setWidth(wideCount ? 580 : 190).setHeight(40))
             .withHitTestVisible(false)
             .withStyle(new HyUIStyle()
                 .setFontSize(25)

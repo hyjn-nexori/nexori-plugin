@@ -625,6 +625,75 @@ public class ArenaMatchService {
     }
 
     /**
+     * Returns the placement HUD state for a player who has arrived in the instance and is waiting for
+     * the rest of the expected initial roster. Present only while the match is in the initial placement
+     * window: the start gate is not open yet, the match is not over, admission is still open, the player
+     * has actually arrived, and there is a known expected roster. Otherwise empty (so the HUD clears the
+     * moment the gate opens, the match cancels, or the player is scheduled to return to the lobby).
+     */
+    @Nonnull
+    public synchronized Optional<PlacementHudState> findPlacementHudState(@Nonnull UUID playerUuid, long nowEpochMs) {
+        String matchId = matchIdByPlayerUuid.get(playerUuid);
+        if (matchId == null || matchId.isBlank()) {
+            return Optional.empty();
+        }
+
+        ArenaActiveMatch match = matchesById.get(matchId);
+        if (match == null) {
+            return Optional.empty();
+        }
+        // The start gate opening, completion, a winner, an explicit admission close (shortfall/cancel),
+        // or a pending return all hand the HUD off to gameplay or to the red/return cards.
+        if (match.startGateOpen()
+            || match.hasCompleted()
+            || match.hasWinner()
+            || match.explicitAdmissionClosed()
+            || match.hasPendingReturn(playerUuid)) {
+            return Optional.empty();
+        }
+        // Only players who have actually arrived in the instance see the "waiting for players" card.
+        if (!match.arrivedPlayerUuids().contains(playerUuid)) {
+            return Optional.empty();
+        }
+
+        int expectedPlayers = match.expectedPlayerCount();
+        if (expectedPlayers <= 0) {
+            return Optional.empty();
+        }
+        // "Placed" = expected players already confirmed/active in the instance (active ∩ expected).
+        int placedPlayers = Math.max(0, Math.min(countPlacedInitialPlayers(match), expectedPlayers));
+
+        String arenaDisplayName = arenaService.find(match.arenaId())
+            .map(ArenaDefinition::displayName)
+            .orElse(match.arenaId());
+
+        return Optional.of(new PlacementHudState(
+            match.matchId(),
+            match.queueId(),
+            arenaDisplayName,
+            placedPlayers,
+            expectedPlayers,
+            Math.max(0, match.minimumInitialPlayers()),
+            Math.max(0L, match.initialPlacementWindowExpiresAtEpochMs())
+        ));
+    }
+
+    /** Count of expected (initial-roster) players already active/placed in the instance. */
+    private int countPlacedInitialPlayers(@Nonnull ArenaActiveMatch match) {
+        if (match.expectedPlayerUuids().isEmpty()) {
+            return 0;
+        }
+        java.util.Set<UUID> expected = new java.util.LinkedHashSet<>(match.expectedPlayerUuids());
+        int placed = 0;
+        for (UUID playerUuid : match.activePlayerUuids()) {
+            if (expected.contains(playerUuid)) {
+                placed++;
+            }
+        }
+        return placed;
+    }
+
+    /**
      * Maps a NO_CONTEST return to a stable reason code the HUD uses to pick reason-aware copy. The
      * per-player outcome reason wins when it is the initial-placement-missed code; otherwise the
      * match-level explicit admission close reason (shortfall / backend AFK cancel / etc.) is used.
@@ -3419,6 +3488,25 @@ public class ArenaMatchService {
         String returnReasonCode,
         long returnAtEpochMs,
         long remainingReturnDelayMs
+    ) {
+    }
+
+    /**
+     * Snapshot for the placement HUD shown to a player who has arrived in the instance and is waiting
+     * for the rest of the expected initial roster before the start gate opens.
+     *
+     * <p>{@code expectedPlayers} is the assigned/expected roster for this match launch (NOT the queue's
+     * max players). {@code minimumInitialPlayers} is the minimum needed for the window to start the
+     * match; {@code windowExpiresAtEpochMs} is the real initial-placement-window deadline (0 if unknown).</p>
+     */
+    public record PlacementHudState(
+        String matchId,
+        String queueId,
+        String arenaDisplayName,
+        int placedPlayers,
+        int expectedPlayers,
+        int minimumInitialPlayers,
+        long windowExpiresAtEpochMs
     ) {
     }
 
