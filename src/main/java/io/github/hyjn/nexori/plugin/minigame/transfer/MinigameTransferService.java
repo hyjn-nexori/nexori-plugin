@@ -166,6 +166,9 @@ public final class MinigameTransferService {
     private final Map<UUID, MinigameTransferSession> sessionsByPlayerUuid = new LinkedHashMap<>();
     private final Map<UUID, PendingBackfillRetry> pendingBackfillRetries = new LinkedHashMap<>();
 
+    // Single-flight coordinator: ensures at most one spawnInstance(...) per match (keyed by matchId).
+    private final InstanceMaterializationRegistry materializationRegistry;
+
     private record PendingBackfillRetry(
         @Nonnull ReadyPlayerSnapshot snapshot,
         @Nonnull PendingArrival arrival,
@@ -195,6 +198,7 @@ public final class MinigameTransferService {
         this.instanceSpawnSlotService = instanceSpawnSlotService;
         this.instanceTeleportIssuer = instanceTeleportIssuer;
         this.teleportComponentChecker = teleportComponentChecker;
+        this.materializationRegistry = new InstanceMaterializationRegistry(logger);
     }
 
     public void setMatchGateway(@Nonnull MatchGateway gateway) {
@@ -465,9 +469,17 @@ public final class MinigameTransferService {
 
         try {
             World existingWorld = Universe.get().getWorld(instanceWorldName);
+            // Fast-path: world already alive (late arrival) -> use it directly; no registry, no spawn.
+            // Otherwise single-flight via the registry: only the FIRST player of this match calls
+            // spawnInstance(...); every other player joins the same shared world future (no duplicate).
             CompletableFuture<World> materializedFuture = (existingWorld != null && existingWorld.isAlive())
                 ? CompletableFuture.completedFuture(existingWorld)
-                : InstancesPlugin.get().spawnInstance(instanceTemplateId, instanceWorldName, defaultWorld, baseArrivalTransform.clone());
+                : materializationRegistry.materializeOrJoin(
+                    matchId, instanceWorldName, instanceTemplateId, playerUuid, nowEpochMs,
+                    () -> InstancesPlugin.get().spawnInstance(
+                        instanceTemplateId, instanceWorldName, defaultWorld, baseArrivalTransform.clone()));
+            // Per-player prepare is composed on top of the shared world future: the world is materialized
+            // once, but each session still runs its own prepareInstanceForMatch (its own spawn-slot).
             final List<InstanceSpawnSlotDefinition> slotsForPrepare = slots;
             final UUID puuid = playerUuid;
             final int idx = launchIndex;
@@ -619,11 +631,37 @@ public final class MinigameTransferService {
             && p != MinigameTransferPhase.SAFE_DEFAULT_READY;
     }
 
+    /**
+     * On-lock backstop that evicts completed single-flight materialization entries past their TTL.
+     * Invoked from {@code ArenaMatchService}'s server-global window sweep so entries do not leak when a
+     * match closes through a path that does not call {@link #closePendingSessionsForMatch}.
+     */
+    public void evictExpiredMaterializations(long nowEpochMs) {
+        materializationRegistry.evictExpired(nowEpochMs);
+    }
+
+    /**
+     * Explicit single-flight materialization cleanup for a match that is being removed definitively from
+     * {@code ArenaMatchService}. This closes the edge case where a FAILED materialization entry (which is
+     * intentionally NOT evicted by the TTL sweep) would otherwise be retained indefinitely if the match is
+     * removed through a path that does not call {@link #closePendingSessionsForMatch}. No-op (no log) when
+     * the match has no entry.
+     */
+    public void evictMaterializationForMatch(@Nonnull String matchId, @Nonnull String reason) {
+        String normalizedMatchId = normalizeOptional(matchId);
+        if (normalizedMatchId.isBlank()) {
+            return;
+        }
+        materializationRegistry.evict(normalizedMatchId, reason);
+    }
+
     public void closePendingSessionsForMatch(@Nonnull String matchId, @Nonnull String reason, long nowEpochMs) {
         String normalizedMatchId = normalizeOptional(matchId);
         if (normalizedMatchId.isBlank()) {
             return;
         }
+        // The match is closing/cancelling: drop any single-flight materialization entry for it.
+        materializationRegistry.evict(normalizedMatchId, reason);
         List<UUID> playersToClose = new ArrayList<>();
         for (MinigameTransferSession session : sessionsByPlayerUuid.values()) {
             if (normalizedMatchId.equals(session.matchId) && hasPendingPlacementSession(session.playerUuid)) {

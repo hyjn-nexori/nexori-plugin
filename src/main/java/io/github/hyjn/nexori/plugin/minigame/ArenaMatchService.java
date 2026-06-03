@@ -2712,6 +2712,10 @@ public class ArenaMatchService {
                 return;
             }
             lastInitialPlacementWindowSweepAtEpochMs = nowEpochMs;
+            // On-lock backstop eviction of stale single-flight instance-materialization entries.
+            if (minigameTransferService != null) {
+                minigameTransferService.evictExpiredMaterializations(nowEpochMs);
+            }
             lifecycleDispatches = reconcileInitialPlacementWindowsLocked(nowEpochMs);
         }
         dispatchLifecycleEvents(lifecycleDispatches);
@@ -2815,6 +2819,11 @@ public class ArenaMatchService {
             if (!shouldReportEmptyRuntimeAdmissionClosure(updated)) {
                 matchesById.remove(updated.matchId());
                 clearAfkPolicyOverrides(updated.matchId());
+                // Central match removal: drop any retained single-flight materialization entry (incl. FAILED,
+                // which the TTL sweep intentionally never evicts) so it cannot leak past match teardown.
+                if (minigameTransferService != null) {
+                    minigameTransferService.evictMaterializationForMatch(updated.matchId(), "match_removed");
+                }
                 return;
             }
             stored = updated.withExplicitAdmissionClosed(

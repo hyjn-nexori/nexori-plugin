@@ -72,6 +72,22 @@ final class MinigameTransferServiceTest {
     }
 
     // -------------------------------------------------------------------------
+    // Single-flight materialization cleanup wiring
+    // -------------------------------------------------------------------------
+
+    @Test
+    void evictMaterializationForMatchHandlesBlankAndUnknownGracefully() {
+        // The central match-removal cleanup hook (ArenaMatchService -> here -> registry.evict) must be a
+        // safe no-op when there is no materialization for the match, and must reject blank ids without
+        // throwing. Full failed-entry retention/eviction semantics are covered by
+        // InstanceMaterializationRegistryTest.
+        service.evictMaterializationForMatch("", "match_removed");
+        service.evictMaterializationForMatch("   ", "match_removed");
+        service.evictMaterializationForMatch("unknown-match", "match_removed");
+        service.evictExpiredMaterializations(NOW);
+    }
+
+    // -------------------------------------------------------------------------
     // No-instance arena: confirm immediately
     // -------------------------------------------------------------------------
 
