@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource;
@@ -8,6 +10,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,6 +24,8 @@ public final class AfkActivityService {
     private final Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup;
     private final Consumer<AfkActivityTransition> transitionConsumer;
     private final Map<UUID, PlayerActivityState> statesByPlayerUuid = new LinkedHashMap<>();
+    private final Map<String, Map<UUID, PlayerAfkReportState>> afkReportStatesByMatchId = new LinkedHashMap<>();
+    private final Map<String, JsonObject> finalAfkReportsByMatchId = new LinkedHashMap<>();
 
     public AfkActivityService(@Nonnull Function<UUID, Optional<EffectiveAfkDetectionPolicy>> effectivePolicyLookup) {
         this(null, effectivePolicyLookup, ignored -> {
@@ -153,11 +158,13 @@ public final class AfkActivityService {
     }
 
     public synchronized void removeMatch(@Nonnull String matchId) {
-        String normalizedMatchId = matchId == null ? "" : matchId.trim();
+        String normalizedMatchId = normalizeMatchId(matchId);
         if (normalizedMatchId.isBlank()) {
             return;
         }
         statesByPlayerUuid.entrySet().removeIf(entry -> entry.getValue().matchId().equals(normalizedMatchId));
+        afkReportStatesByMatchId.remove(normalizedMatchId);
+        finalAfkReportsByMatchId.remove(normalizedMatchId);
     }
 
     /**
@@ -196,7 +203,7 @@ public final class AfkActivityService {
 
     @Nonnull
     public synchronized List<UUID> afkPlayerUuids(@Nonnull String matchId) {
-        String normalizedMatchId = matchId == null ? "" : matchId.trim();
+        String normalizedMatchId = normalizeMatchId(matchId);
         if (normalizedMatchId.isBlank()) {
             return List.of();
         }
@@ -207,6 +214,31 @@ public final class AfkActivityService {
             }
         }
         return afkPlayerUuids.stream().distinct().toList();
+    }
+
+    @Nonnull
+    public synchronized Optional<JsonObject> findMatchAfkReport(@Nonnull String matchId, long nowEpochMs) {
+        String normalizedMatchId = normalizeMatchId(matchId);
+        if (normalizedMatchId.isBlank()) {
+            return Optional.empty();
+        }
+        JsonObject finalReport = finalAfkReportsByMatchId.get(normalizedMatchId);
+        if (finalReport != null) {
+            return Optional.of(finalReport.deepCopy());
+        }
+        Map<UUID, PlayerAfkReportState> statesByPlayer = afkReportStatesByMatchId.get(normalizedMatchId);
+        if (statesByPlayer == null || statesByPlayer.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(buildAfkReport(normalizedMatchId, statesByPlayer, nowEpochMs));
+    }
+
+    public synchronized void rememberFinalMatchAfkReport(@Nonnull String matchId, @Nonnull JsonObject report) {
+        String normalizedMatchId = normalizeMatchId(matchId);
+        if (normalizedMatchId.isBlank() || report == null || report.entrySet().isEmpty()) {
+            return;
+        }
+        finalAfkReportsByMatchId.put(normalizedMatchId, report.deepCopy());
     }
 
     /**
@@ -411,8 +443,65 @@ public final class AfkActivityService {
 
     private void dispatchTransition(AfkActivityTransition transition) {
         if (transition != null) {
+            synchronized (this) {
+                recordAfkReportTransitionLocked(transition);
+            }
             transitionConsumer.accept(transition);
         }
+    }
+
+    private void recordAfkReportTransitionLocked(@Nonnull AfkActivityTransition transition) {
+        String normalizedMatchId = normalizeMatchId(transition.matchId());
+        if (normalizedMatchId.isBlank()) {
+            return;
+        }
+        Map<UUID, PlayerAfkReportState> statesByPlayer = afkReportStatesByMatchId.computeIfAbsent(
+            normalizedMatchId,
+            ignored -> new LinkedHashMap<>()
+        );
+        PlayerAfkReportState state = statesByPlayer.computeIfAbsent(
+            transition.playerUuid(),
+            ignored -> new PlayerAfkReportState()
+        );
+        state.record(transition);
+        finalAfkReportsByMatchId.remove(normalizedMatchId);
+    }
+
+    @Nonnull
+    private JsonObject buildAfkReport(
+        @Nonnull String matchId,
+        @Nonnull Map<UUID, PlayerAfkReportState> statesByPlayer,
+        long nowEpochMs
+    ) {
+        JsonObject report = new JsonObject();
+        report.addProperty("schemaVersion", 1);
+        report.addProperty("matchId", matchId);
+        report.add("playerFields", afkReportPlayerFields());
+        JsonArray players = new JsonArray();
+        for (Map.Entry<UUID, PlayerAfkReportState> entry : statesByPlayer.entrySet()) {
+            players.add(entry.getValue().toJsonRow(entry.getKey(), nowEpochMs));
+        }
+        report.add("players", players);
+        return report;
+    }
+
+    @Nonnull
+    private JsonArray afkReportPlayerFields() {
+        JsonArray fields = new JsonArray();
+        fields.add("playerUuid");
+        fields.add("playerName");
+        fields.add("currentlyAfk");
+        fields.add("totalAfkMs");
+        fields.add("afkCount");
+        fields.add("currentStartedAtEpochMs");
+        fields.add("lastIdleMs");
+        fields.add("sources");
+        return fields;
+    }
+
+    @Nonnull
+    private static String normalizeMatchId(String matchId) {
+        return matchId == null ? "" : matchId.trim();
     }
 
     public record AfkActivityTransition(
@@ -438,6 +527,62 @@ public final class AfkActivityService {
     ) {
         PlayerActivityState(@Nonnull String matchId, @Nonnull String username, long lastActivityEpochMs, boolean afk) {
             this(matchId, username, lastActivityEpochMs, afk, true);
+        }
+    }
+
+    private static final class PlayerAfkReportState {
+        private String playerName = "";
+        private boolean currentlyAfk;
+        private long currentStartedAtEpochMs;
+        private long totalAfkMs;
+        private int afkCount;
+        private long lastIdleMs;
+        private final LinkedHashSet<NexoriAfkActivitySource> sources = new LinkedHashSet<>();
+
+        private void record(@Nonnull AfkActivityTransition transition) {
+            if (transition.playerName() != null && !transition.playerName().isBlank()) {
+                playerName = transition.playerName();
+            }
+            sources.add(transition.source());
+            lastIdleMs = Math.max(0L, transition.idleMs());
+            if (transition.afk()) {
+                if (!currentlyAfk) {
+                    currentStartedAtEpochMs = transition.changedAtEpochMs();
+                    afkCount++;
+                }
+                currentlyAfk = true;
+                return;
+            }
+            if (currentlyAfk && currentStartedAtEpochMs > 0L) {
+                totalAfkMs += Math.max(0L, transition.changedAtEpochMs() - currentStartedAtEpochMs);
+            }
+            currentlyAfk = false;
+            currentStartedAtEpochMs = 0L;
+        }
+
+        @Nonnull
+        private JsonArray toJsonRow(@Nonnull UUID playerUuid, long nowEpochMs) {
+            JsonArray row = new JsonArray();
+            row.add(playerUuid.toString());
+            row.add(playerName);
+            row.add(currentlyAfk);
+            row.add(totalAfkMs(nowEpochMs));
+            row.add(afkCount);
+            row.add(currentlyAfk ? currentStartedAtEpochMs : 0L);
+            row.add(lastIdleMs);
+            JsonArray sourceNames = new JsonArray();
+            for (NexoriAfkActivitySource source : sources) {
+                sourceNames.add(source.name());
+            }
+            row.add(sourceNames);
+            return row;
+        }
+
+        private long totalAfkMs(long nowEpochMs) {
+            if (!currentlyAfk || currentStartedAtEpochMs <= 0L) {
+                return totalAfkMs;
+            }
+            return totalAfkMs + Math.max(0L, nowEpochMs - currentStartedAtEpochMs);
         }
     }
 }

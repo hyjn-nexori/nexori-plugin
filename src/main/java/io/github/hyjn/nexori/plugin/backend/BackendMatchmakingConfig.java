@@ -16,8 +16,7 @@ public record BackendMatchmakingConfig(
     long matchStateDebounceMs,
     long matchStateMaxCoalesceWindowMs,
     long matchStateRetryIntervalMs,
-    long matchStateStaleAfterMs,
-    boolean afkContinuationCheckEnabled
+    long matchStateStaleAfterMs
 ) {
 
     public static final int CURRENT_SCHEMA_VERSION = 1;
@@ -28,41 +27,6 @@ public record BackendMatchmakingConfig(
     public static final long DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS = 5000L;
     public static final long DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS = 3000L;
     public static final long DEFAULT_MATCH_STATE_STALE_AFTER_MS = 30000L;
-
-    public BackendMatchmakingConfig(
-        int schemaVersion,
-        boolean syncEnabled,
-        String baseUrl,
-        String serverToken,
-        long syncIntervalMs,
-        String region,
-        long requestTimeoutMs,
-        boolean resultReportingEnabled,
-        long resultRetryIntervalMs,
-        boolean matchStateReportingEnabled,
-        long matchStateDebounceMs,
-        long matchStateMaxCoalesceWindowMs,
-        long matchStateRetryIntervalMs,
-        long matchStateStaleAfterMs
-    ) {
-        this(
-            schemaVersion,
-            syncEnabled,
-            baseUrl,
-            serverToken,
-            syncIntervalMs,
-            region,
-            requestTimeoutMs,
-            resultReportingEnabled,
-            resultRetryIntervalMs,
-            matchStateReportingEnabled,
-            matchStateDebounceMs,
-            matchStateMaxCoalesceWindowMs,
-            matchStateRetryIntervalMs,
-            matchStateStaleAfterMs,
-            false
-        );
-    }
 
     public BackendMatchmakingConfig(
         int schemaVersion,
@@ -89,8 +53,7 @@ public record BackendMatchmakingConfig(
             DEFAULT_MATCH_STATE_DEBOUNCE_MS,
             DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS,
             DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS,
-            DEFAULT_MATCH_STATE_STALE_AFTER_MS,
-            false
+            DEFAULT_MATCH_STATE_STALE_AFTER_MS
         );
     }
 
@@ -110,8 +73,7 @@ public record BackendMatchmakingConfig(
             DEFAULT_MATCH_STATE_DEBOUNCE_MS,
             DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS,
             DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS,
-            DEFAULT_MATCH_STATE_STALE_AFTER_MS,
-            false
+            DEFAULT_MATCH_STATE_STALE_AFTER_MS
         );
     }
 
@@ -150,8 +112,7 @@ public record BackendMatchmakingConfig(
             normalizedDebounceMs,
             normalizedMaxCoalesceWindowMs,
             normalizedRetryIntervalMs,
-            normalizedStaleAfterMs,
-            afkContinuationCheckEnabled
+            normalizedStaleAfterMs
         );
     }
 
@@ -173,12 +134,6 @@ public record BackendMatchmakingConfig(
     public boolean isMatchStateReportingUsable() {
         BackendMatchmakingConfig normalized = normalized();
         return !normalized.matchStateReportingEnabled()
-            || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
-    }
-
-    public boolean isAfkContinuationCheckUsable() {
-        BackendMatchmakingConfig normalized = normalized();
-        return !normalized.afkContinuationCheckEnabled()
             || (!normalized.baseUrl().isBlank() && !normalized.serverToken().isBlank());
     }
 
@@ -207,15 +162,6 @@ public record BackendMatchmakingConfig(
             normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);
         }
         return normalizedBaseUrl + "/nexori/matches/state";
-    }
-
-    @Nonnull
-    public String afkContinuationCheckUrl() {
-        String normalizedBaseUrl = normalizeOptional(baseUrl);
-        if (normalizedBaseUrl.endsWith("/")) {
-            normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);
-        }
-        return normalizedBaseUrl + "/nexori/afk/check";
     }
 
     @Nonnull

@@ -519,40 +519,6 @@ final class ArenaMatchServiceLifecycleInstrumentationTest {
     }
 
     @Test
-    void backendAfkCancelDispatchesCancellationBeforeMatchCompleted() {
-        NexoriMatchLifecycleDispatcher dispatcher = new NexoriMatchLifecycleDispatcher();
-        ArenaMatchService service = serviceWithMatch(dispatcher);
-        List<String> order = new ArrayList<>();
-        List<NexoriMatchLifecycleEvent> cancellationEvents = new ArrayList<>();
-        dispatcher.register("capture_the_zone", new NexoriMatchLifecycleListener() {
-            @Override
-            public void onMatchCancellationRequested(NexoriMatchLifecycleEvent event) {
-                order.add("cancel");
-                cancellationEvents.add(event);
-            }
-
-            @Override
-            public void onMatchCompleted(NexoriMatchLifecycleEvent event) {
-                order.add("completed");
-            }
-        });
-
-        ArenaMatchService.SubmitMatchResult result = service.cancelMatchForBackendAfk(
-            "match-1",
-            PLAYER_ONE,
-            "AFK_LIMIT",
-            "Match cancelled because a player went AFK."
-        );
-
-        assertEquals(ArenaMatchService.SubmitMatchOutcome.ACCEPTED, result.outcome());
-        assertEquals(List.of("cancel", "completed"), order);
-        assertEquals(1, cancellationEvents.size());
-        assertEquals("match-1", cancellationEvents.get(0).matchId());
-        assertEquals("BACKEND_AFK_CANCEL", cancellationEvents.get(0).reason());
-        assertEquals(List.of(PLAYER_ONE), cancellationEvents.get(0).activePlayerUuids());
-    }
-
-    @Test
     void initialPlacementTimeoutWithMinimumPlayersOpensStartGateWithoutPlacementCompleted() {
         ArenaMatchService service = service(new NexoriMatchLifecycleDispatcher());
         ArenaActiveMatch match = match(List.of(PLAYER_ONE, PLAYER_TWO), List.of(PLAYER_ONE), List.of(PLAYER_ONE))

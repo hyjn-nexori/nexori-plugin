@@ -313,11 +313,11 @@ final class MatchResultValidatorTest {
     @Test
     void acceptsFinalResultWhenAllPlayersAreNoContest() {
         ArenaActiveMatch match = baseMatchWithOutcomes(
-            outcome(PLAYER_ONE, ArenaPlayerResolutionOutcome.NO_CONTEST, "afk cancel"),
-            outcome(PLAYER_TWO, ArenaPlayerResolutionOutcome.NO_CONTEST, "afk cancel")
+            outcome(PLAYER_ONE, ArenaPlayerResolutionOutcome.NO_CONTEST, "no contest"),
+            outcome(PLAYER_TWO, ArenaPlayerResolutionOutcome.NO_CONTEST, "no contest")
         );
 
-        MatchResultValidationResult result = validator.validateFinalResult(match, "BACKEND_AFK_CANCEL", Map.of(), new JsonObject());
+        MatchResultValidationResult result = validator.validateFinalResult(match, "NO_CONTEST_CANCEL", Map.of(), new JsonObject());
 
         assertTrue(result.valid());
         assertEquals(List.of(PLAYER_ONE, PLAYER_TWO), result.players().stream().map(MatchResultValidationResult.PlayerResult::playerUuid).toList());

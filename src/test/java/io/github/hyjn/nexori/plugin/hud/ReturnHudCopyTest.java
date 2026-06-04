@@ -27,18 +27,10 @@ final class ReturnHudCopyTest {
     }
 
     @Test
-    void backendAfkCancelKeepsAfkTitle() {
-        ReturnHudCopy.Copy copy = ReturnHudCopy.resolve(
-            "No Contest",
-            ReturnHudCopy.REASON_BACKEND_AFK_CANCEL
-        );
-        assertEquals("MATCH CANCELLED DUE TO AFK PLAYER", copy.title());
-    }
-
-    @Test
     void noContestWithoutKnownReasonShowsGenericCancelled() {
         assertEquals("MATCH CANCELLED", ReturnHudCopy.resolve("No Contest", "").title());
         assertEquals("MATCH CANCELLED", ReturnHudCopy.resolve("No Contest", null).title());
+        assertEquals("MATCH CANCELLED", ReturnHudCopy.resolve("No Contest", "UNKNOWN_CANCEL").title());
         assertEquals("MATCH CANCELLED", ReturnHudCopy.resolve("No Contest", "SOME_OTHER_REASON").title());
     }
 

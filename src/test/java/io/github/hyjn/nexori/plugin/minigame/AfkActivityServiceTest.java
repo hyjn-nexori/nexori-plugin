@@ -1,5 +1,7 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource;
 import org.junit.jupiter.api.Test;
 
@@ -165,6 +167,47 @@ final class AfkActivityServiceTest {
         service.removeMatch("match-1");
 
         assertEquals(List.of(), service.afkPlayerUuids("match-1"));
+        assertTrue(service.findMatchAfkReport("match-1", 7_000L).isEmpty());
+    }
+
+    @Test
+    void matchAfkReportAccumulatesDurationAndSourcesForFinalResult() {
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 5);
+
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 1_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+
+        JsonObject report = service.findMatchAfkReport("match-1", 8_000L).orElseThrow();
+        JsonArray player = report.getAsJsonArray("players").get(0).getAsJsonArray();
+
+        assertEquals(1, report.get("schemaVersion").getAsInt());
+        assertEquals("match-1", report.get("matchId").getAsString());
+        assertEquals("playerUuid", report.getAsJsonArray("playerFields").get(0).getAsString());
+        assertEquals(PLAYER_UUID.toString(), player.get(0).getAsString());
+        assertEquals("PlayerOne", player.get(1).getAsString());
+        assertTrue(player.get(2).getAsBoolean());
+        assertEquals(2_000L, player.get(3).getAsLong());
+        assertEquals(1, player.get(4).getAsInt());
+        assertEquals(6_000L, player.get(5).getAsLong());
+        assertEquals(5_000L, player.get(6).getAsLong());
+        assertEquals(NexoriAfkActivitySource.IDLE_TIMEOUT.name(), player.get(7).getAsJsonArray().get(0).getAsString());
+    }
+
+    @Test
+    void matchAfkReportFreezesAcceptedFinalSnapshot() {
+        AfkActivityService service = serviceForActivePlayers(Set.of(PLAYER_UUID), true, 5);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 1_000L);
+        service.handlePlayerInputTick(PLAYER_UUID, "PlayerOne", false, 6_000L);
+        JsonObject finalReport = service.findMatchAfkReport("match-1", 8_000L).orElseThrow();
+
+        service.rememberFinalMatchAfkReport("match-1", finalReport);
+
+        JsonArray frozenPlayer = service.findMatchAfkReport("match-1", 12_000L)
+            .orElseThrow()
+            .getAsJsonArray("players")
+            .get(0)
+            .getAsJsonArray();
+        assertEquals(2_000L, frozenPlayer.get(3).getAsLong());
     }
 
     @Test

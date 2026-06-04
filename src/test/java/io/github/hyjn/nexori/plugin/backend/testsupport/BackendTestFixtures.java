@@ -54,29 +54,6 @@ public final class BackendTestFixtures {
     }
 
     /**
-     * Sync disabled, result reporting disabled, match-state reporting disabled, AFK check enabled.
-     */
-    public static BackendMatchmakingConfig enabledAfkCheckConfig() {
-        return new BackendMatchmakingConfig(
-            BackendMatchmakingConfig.CURRENT_SCHEMA_VERSION,
-            false,
-            "http://backend.test",
-            "test-server-token",
-            1_000L,
-            "us-east",
-            3_000L,
-            false,
-            5_000L,
-            false,
-            BackendMatchmakingConfig.DEFAULT_MATCH_STATE_DEBOUNCE_MS,
-            BackendMatchmakingConfig.DEFAULT_MATCH_STATE_MAX_COALESCE_WINDOW_MS,
-            BackendMatchmakingConfig.DEFAULT_MATCH_STATE_RETRY_INTERVAL_MS,
-            BackendMatchmakingConfig.DEFAULT_MATCH_STATE_STALE_AFTER_MS,
-            true
-        );
-    }
-
-    /**
      * Sync disabled, result reporting disabled, match-state reporting enabled.
      * Debounce is 0 ms so dirty matches flush immediately on the next tick.
      */

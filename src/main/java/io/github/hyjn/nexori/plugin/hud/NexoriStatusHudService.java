@@ -494,8 +494,7 @@ public final class NexoriStatusHudService {
             accentColor = RETURN_GENERIC_COLOR;
         }
 
-        // Reason-aware title/subtitle so a player returned for an expired start window or a
-        // not-enough-players shortfall does not see AFK-specific copy.
+        // Reason-aware title/subtitle for expired start windows, shortfalls, and generic no-contest returns.
         ReturnHudCopy.Copy copy = ReturnHudCopy.resolve(
             returnHudState.outcomeLabel(),
             returnHudState.returnReasonCode()
@@ -726,7 +725,7 @@ public final class NexoriStatusHudService {
             slideOffset = Math.round(30f * p);
         }
 
-        // ── No-contest (AFK cancellation) uses the AFK DETECTED red palette ─────
+        // ── No-contest returns use the AFK DETECTED red palette. ────────────────
         boolean isNoContest = RETURN_NO_CONTEST_COLOR.equals(state.accentColor());
         String cardBg      = isNoContest ? AFK_DETECTED_BG           : QUEUE_CARD_BG;
         String cardOutline = isNoContest ? AFK_DETECTED_OUTLINE       : QUEUE_CARD_OUTLINE;

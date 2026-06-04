@@ -1,7 +1,6 @@
 package io.github.hyjn.nexori.plugin;
 
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkContinuationDecision;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerAfkChangedEvent;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateService;
 import io.github.hyjn.nexori.plugin.accessgate.NexoriAccessGateStore;
@@ -14,8 +13,6 @@ import io.github.hyjn.nexori.plugin.bootstrap.TrustBundleStore;
 import io.github.hyjn.nexori.plugin.assets.PluginAssetPackRegistrar;
 import io.github.hyjn.nexori.plugin.backend.BackendAssignmentStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfig;
-import io.github.hyjn.nexori.plugin.backend.BackendAfkContinuationCheckService;
-import io.github.hyjn.nexori.plugin.backend.BackendAfkContinuationCheckTickSystem;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfigStore;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingService;
 import io.github.hyjn.nexori.plugin.backend.BackendMatchAdmissionStateReportingTickSystem;
@@ -204,7 +201,6 @@ public class NexoriPlugin extends JavaPlugin {
     private BackendMatchAdmissionStateReportingService backendMatchAdmissionStateReportingService;
     private BackendSyncService backendSyncService;
     private BackendResultReportingService backendResultReportingService;
-    private BackendAfkContinuationCheckService backendAfkContinuationCheckService;
 
     public NexoriPlugin(@Nonnull JavaPluginInit init) {
         super(init);
@@ -432,16 +428,10 @@ public class NexoriPlugin extends JavaPlugin {
                         transition.idleMs(),
                         transition.source()
                     ));
-                    if (this.backendAfkContinuationCheckService != null) {
-                        this.backendAfkContinuationCheckService.enqueue(transition);
-                    }
                 }
             );
             this.arenaMatchService.setMatchRuntimeClosedCallback(matchId -> {
                 this.afkActivityService.removeMatch(matchId);
-                if (this.backendAfkContinuationCheckService != null) {
-                    this.backendAfkContinuationCheckService.removeMatch(matchId);
-                }
             });
             this.backendMatchmakingConfigStore = new BackendMatchmakingConfigStore(
                 this.getDataDirectory().resolve("config").resolve("backend-matchmaking.json")
@@ -478,11 +468,6 @@ public class NexoriPlugin extends JavaPlugin {
                 backendResultStore,
                 this.localIdentity
             );
-            this.backendAfkContinuationCheckService = new BackendAfkContinuationCheckService(
-                this.getLogger(),
-                backendMatchmakingConfig,
-                this.localIdentity
-            );
             this.nexoriStatusHudService = new NexoriStatusHudService(
                 this.queueCoordinatorService,
                 this.arenaMatchService,
@@ -497,7 +482,6 @@ public class NexoriPlugin extends JavaPlugin {
                 this.arenaMatchService,
                 this.afkActivityService,
                 this.backendResultReportingService,
-                this.backendAfkContinuationCheckService,
                 this.matchLifecycleDispatcher,
                 this.afkActivityDispatcher
             );
@@ -655,10 +639,6 @@ public class NexoriPlugin extends JavaPlugin {
             this.getEntityStoreRegistry().registerSystem(new BackendSyncTickSystem(this.backendSyncService));
             this.getEntityStoreRegistry().registerSystem(new BackendMatchAdmissionStateReportingTickSystem(this.backendMatchAdmissionStateReportingService));
             this.getEntityStoreRegistry().registerSystem(new BackendResultReportingTickSystem(this.backendResultReportingService));
-            this.getEntityStoreRegistry().registerSystem(new BackendAfkContinuationCheckTickSystem(
-                this.backendAfkContinuationCheckService,
-                this::handleBackendAfkCancelDecision
-            ));
             this.getEntityStoreRegistry().registerSystem(new NexoriStatusHudTickSystem(this.nexoriStatusHudService));
             this.getEntityStoreRegistry().registerSystem(new WorldLabelTickSystem(this.worldLabelService));
             SpectatorPickupSpatialGuard spectatorPickupSpatialGuard = new SpectatorPickupSpatialGuard(this.spectatorRuntimeService);
@@ -865,47 +845,6 @@ public class NexoriPlugin extends JavaPlugin {
 
     public BackendResultReportingService getBackendResultReportingService() {
         return backendResultReportingService;
-    }
-
-    public BackendAfkContinuationCheckService getBackendAfkContinuationCheckService() {
-        return backendAfkContinuationCheckService;
-    }
-
-    private void handleBackendAfkCancelDecision(@Nonnull NexoriAfkContinuationDecision decision) {
-        if (decision == null || this.arenaMatchService == null) {
-            return;
-        }
-        ArenaMatchService.SubmitMatchResult result = this.arenaMatchService.cancelMatchForBackendAfk(
-            decision.matchId(),
-            decision.triggeringPlayerUuid(),
-            decision.reasonCode(),
-            decision.message()
-        );
-        if (result.outcome() != ArenaMatchService.SubmitMatchOutcome.ACCEPTED) {
-            this.getLogger().atWarning().log(
-                "Nexori backend AFK cancel could not complete matchId=" + decision.matchId()
-                    + " outcome=" + result.outcome()
-                    + " message=" + result.message()
-            );
-            return;
-        }
-        if (this.backendResultReportingService == null) {
-            return;
-        }
-        BackendResultReportingService.EnqueueResult enqueueResult = this.backendResultReportingService.enqueueResult(
-            result.activeMatch(),
-            result.players(),
-            result.metadata(),
-            result.customData(),
-            result.reason(),
-            result.resultPayloadHash(),
-            result.endedAtEpochMs()
-        );
-        this.getLogger().atInfo().log(
-            "Nexori backend AFK cancel completed matchId=" + result.matchId()
-                + " resultReport=" + enqueueResult.outcome()
-                + " resultId=" + enqueueResult.resultId()
-        );
     }
 
     /**

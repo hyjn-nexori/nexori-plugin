@@ -1,8 +1,8 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.google.gson.JsonObject;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkContinuationDecision;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriBackendReportStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionReason;
@@ -32,7 +32,6 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorStatus;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultResult;
-import io.github.hyjn.nexori.plugin.backend.BackendAfkContinuationCheckService;
 import io.github.hyjn.nexori.plugin.backend.BackendResultReportingService;
 
 import javax.annotation.Nonnull;
@@ -45,10 +44,11 @@ import java.util.UUID;
  */
 public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
 
+    private static final String AFK_CUSTOM_DATA_KEY = "nexoriAfk";
+
     private final ArenaMatchService arenaMatchService;
     private final AfkActivityService afkActivityService;
     private final BackendResultReportingService backendResultReportingService;
-    private final BackendAfkContinuationCheckService backendAfkContinuationCheckService;
     private final NexoriMatchLifecycleDispatcher matchLifecycleDispatcher;
     private final NexoriAfkActivityDispatcher afkActivityDispatcher;
 
@@ -62,24 +62,9 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher,
         @Nonnull NexoriAfkActivityDispatcher afkActivityDispatcher
     ) {
-        this(arenaMatchService, afkActivityService, backendResultReportingService, null, matchLifecycleDispatcher, afkActivityDispatcher);
-    }
-
-    /**
-     * Creates one bridge backed by the live arena-match service, including the AFK continuation check service.
-     */
-    public NexoriMinigameApiBridge(
-        @Nonnull ArenaMatchService arenaMatchService,
-        @Nonnull AfkActivityService afkActivityService,
-        BackendResultReportingService backendResultReportingService,
-        BackendAfkContinuationCheckService backendAfkContinuationCheckService,
-        @Nonnull NexoriMatchLifecycleDispatcher matchLifecycleDispatcher,
-        @Nonnull NexoriAfkActivityDispatcher afkActivityDispatcher
-    ) {
         this.arenaMatchService = arenaMatchService;
         this.afkActivityService = afkActivityService;
         this.backendResultReportingService = backendResultReportingService;
-        this.backendAfkContinuationCheckService = backendAfkContinuationCheckService;
         this.matchLifecycleDispatcher = matchLifecycleDispatcher;
         this.afkActivityDispatcher = afkActivityDispatcher;
     }
@@ -219,15 +204,6 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
             request.afk(),
             ""
         );
-    }
-
-    @Nonnull
-    @Override
-    public NexoriAfkContinuationDecision getAfkContinuationDecision(@Nonnull String matchId) {
-        if (backendAfkContinuationCheckService == null) {
-            return NexoriAfkContinuationDecision.unavailable(matchId == null ? "" : matchId.trim());
-        }
-        return backendAfkContinuationCheckService.getAfkContinuationDecision(matchId);
     }
 
     @Nonnull
@@ -405,11 +381,15 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
                 "Request cannot be null."
             );
         }
+        FinalResultCustomData finalCustomData = finalResultCustomData(request);
         ArenaMatchService.SubmitMatchResult localResult = arenaMatchService.submitFinalMatchResult(
             request.matchId(),
             request.reason() == null ? "" : request.reason(),
-            request.customData()
+            finalCustomData.customData()
         );
+        if (localResult.outcome() == ArenaMatchService.SubmitMatchOutcome.ACCEPTED && finalCustomData.afkReport() != null) {
+            afkActivityService.rememberFinalMatchAfkReport(localResult.matchId(), finalCustomData.afkReport());
+        }
         BackendResultEnqueueOutcome result = enqueueBackendResult(localResult);
         return new NexoriSubmitFinalMatchResultResult(
             result.matchStatus(),
@@ -514,6 +494,25 @@ public final class NexoriMinigameApiBridge implements NexoriMinigameApi {
         String resultId,
         String message
     ) {
+    }
+
+    @Nonnull
+    private FinalResultCustomData finalResultCustomData(@Nonnull NexoriSubmitFinalMatchResultRequest request) {
+        JsonObject requestedCustomData = request.customData();
+        Optional<JsonObject> afkReport = afkActivityService.findMatchAfkReport(
+            request.matchId(),
+            System.currentTimeMillis()
+        );
+        if (afkReport.isEmpty() || (requestedCustomData != null && requestedCustomData.has(AFK_CUSTOM_DATA_KEY))) {
+            return new FinalResultCustomData(requestedCustomData, null);
+        }
+        JsonObject enrichedCustomData = requestedCustomData == null ? new JsonObject() : requestedCustomData.deepCopy();
+        JsonObject report = afkReport.get();
+        enrichedCustomData.add(AFK_CUSTOM_DATA_KEY, report.deepCopy());
+        return new FinalResultCustomData(enrichedCustomData, report);
+    }
+
+    private record FinalResultCustomData(JsonObject customData, JsonObject afkReport) {
     }
 
     private void applyAfkPolicyStateActions(@Nonnull ArenaMatchService.SetAfkDetectionPolicyResult result) {

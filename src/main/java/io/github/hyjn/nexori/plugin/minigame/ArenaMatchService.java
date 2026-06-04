@@ -70,7 +70,7 @@ public class ArenaMatchService {
     private static final Gson GSON = new Gson();
     private static final long ELIMINATED_RETURN_DELAY_MS = 5_000L;
     private static final long WINNER_RETURN_DELAY_MS = 10_000L;
-    private static final long BACKEND_AFK_CANCEL_RETURN_DELAY_MS = 10_000L;
+    private static final long NO_CONTEST_RETURN_DELAY_MS = 10_000L;
     private static final long RETURN_RETRY_DELAY_MS = 5_000L;
     private static final String ASSIGNMENT_TYPE_INITIAL_MATCH = "INITIAL_MATCH";
     private static final String ASSIGNMENT_TYPE_BACKFILL = BackfillAdmissionDecider.ASSIGNMENT_TYPE_BACKFILL;
@@ -79,8 +79,6 @@ public class ArenaMatchService {
     private static final String INITIAL_WINDOW_CLOSE_MIN_PLAYERS_MET = "INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_MET";
     private static final String INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET = "INITIAL_WINDOW_EXPIRED_MIN_PLAYERS_NOT_MET";
     private static final String INITIAL_PLACEMENT_WINDOW_MISSED = "INITIAL_PLACEMENT_WINDOW_MISSED";
-    private static final String BACKEND_AFK_CANCEL_REASON = "BACKEND_AFK_CANCEL";
-    private static final String BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX = "Backend AFK cancellation requested: ";
     private static final String INITIAL_PLACEMENT_WINDOW_MISSED_PLAYER_MESSAGE =
         "Match start window expired: you did not join in time. Returning to lobby...";
     private static final long INITIAL_PLACEMENT_WINDOW_SWEEP_INTERVAL_MS = 250L;
@@ -696,7 +694,7 @@ public class ArenaMatchService {
     /**
      * Maps a NO_CONTEST return to a stable reason code the HUD uses to pick reason-aware copy. The
      * per-player outcome reason wins when it is the initial-placement-missed code; otherwise the
-     * match-level explicit admission close reason (shortfall / backend AFK cancel / etc.) is used.
+     * match-level explicit admission close reason (shortfall, admin cancellation, etc.) is used.
      * Returns "" when no specific reason is known, so the HUD falls back to generic cancellation copy.
      */
     @Nonnull
@@ -714,11 +712,6 @@ public class ArenaMatchService {
             if (!closeReason.isBlank()) {
                 return closeReason;
             }
-        }
-        // Backend AFK cancellation does not close admission explicitly; it is recognised by the
-        // last error stamped by cancelMatchForBackendAfkLocked.
-        if (normalizeOptional(match.lastError()).startsWith(BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX.trim())) {
-            return BACKEND_AFK_CANCEL_REASON;
         }
         return "";
     }
@@ -1374,100 +1367,6 @@ public class ArenaMatchService {
         maybeScheduleAdmissionReporting(match, updated, now, "");
         collectMatchCompletedTransition(match, updated, "MATCH_COMPLETED", now, lifecycleDispatches);
         return EndMatchResult.completed(match.matchId(), updated.pendingReturnAtEpochMsByPlayerUuid().size());
-    }
-
-    /**
-     * Cancels a match after the backend decides an AFK player should stop continuation.
-     */
-    @Nonnull
-    public SubmitMatchResult cancelMatchForBackendAfk(
-        @Nonnull String rawMatchId,
-        @Nullable UUID triggeringPlayerUuid,
-        @Nonnull String rawReasonCode,
-        @Nonnull String rawMessage
-    ) {
-        List<Runnable> lifecycleDispatches = new ArrayList<>();
-        SubmitMatchResult result;
-        synchronized (this) {
-            result = cancelMatchForBackendAfkLocked(rawMatchId, triggeringPlayerUuid, rawReasonCode, rawMessage, lifecycleDispatches);
-        }
-        dispatchLifecycleEvents(lifecycleDispatches);
-        return result;
-    }
-
-    @Nonnull
-    private SubmitMatchResult cancelMatchForBackendAfkLocked(
-        @Nonnull String rawMatchId,
-        @Nullable UUID triggeringPlayerUuid,
-        @Nonnull String rawReasonCode,
-        @Nonnull String rawMessage,
-        @Nonnull List<Runnable> lifecycleDispatches
-    ) {
-        String matchId = normalizeRequired(rawMatchId, "Match id cannot be blank.");
-        ArenaActiveMatch match = matchesById.get(matchId);
-        if (match == null) {
-            return SubmitMatchResult.matchMissing(matchId);
-        }
-        if (match.hasSubmittedResult()) {
-            return SubmitMatchResult.alreadySubmitted(match, match.resultPayloadHash(), false);
-        }
-        if (match.hasCompleted()) {
-            return SubmitMatchResult.invalid(match, "Match was already completed.");
-        }
-
-        long now = System.currentTimeMillis();
-        long returnAt = now + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
-        String reasonCode = normalizeOptional(rawReasonCode, "BACKEND_AFK_CANCEL");
-        String playerReason = normalizeOptional(rawMessage, "Match cancelled because a player went AFK.");
-        collectMatchCancellationRequested(match, "BACKEND_AFK_CANCEL", now, lifecycleDispatches);
-        ArenaActiveMatch updated = match;
-        for (UUID playerUuid : buildRequiredResultPlayerUuids(match)) {
-            updated = updated
-                .withPlayerOutcome(playerUuid, ArenaPlayerResolutionOutcome.NO_CONTEST, "NO_CONTEST", playerReason, now)
-                .withPendingReturn(playerUuid, returnAt, now);
-        }
-
-        String reason = "BACKEND_AFK_CANCEL";
-        JsonObject customData = new JsonObject();
-        customData.addProperty("cancelledBy", "nexori");
-        customData.addProperty("cancelReason", reason);
-        customData.addProperty("backendReasonCode", reasonCode);
-        customData.addProperty("backendMessage", playerReason);
-        if (triggeringPlayerUuid != null) {
-            customData.addProperty("triggeringPlayerUuid", triggeringPlayerUuid.toString());
-        }
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("cancelled_by", "nexori");
-        metadata.put("cancel_reason", reason);
-        metadata.put("backend_reason_code", reasonCode);
-
-        MatchResultValidationResult validation = matchResultValidator.validateFinalResult(updated, reason, metadata, customData);
-        if (!validation.valid()) {
-            return SubmitMatchResult.invalid(updated, validation.message());
-        }
-        String payloadHash = hashFinalSubmittedResult(
-            updated,
-            toSubmitMatchPlayerResults(validation.players()),
-            validation.metadata(),
-            validation.reason(),
-            validation.customData()
-        );
-        updated = updated
-            .withLastError(BACKEND_AFK_CANCEL_LAST_ERROR_PREFIX + reasonCode, now)
-            .withSubmittedResult(now, now, payloadHash);
-        matchesById.put(updated.matchId(), updated);
-        restoreRuntimeSpectators(updated, SpectatorRuntimeReason.MATCH_CLEANUP);
-        maybeScheduleAdmissionReporting(match, updated, now, "");
-        collectMatchCompletedTransition(match, updated, "MATCH_COMPLETED", now, lifecycleDispatches);
-        return SubmitMatchResult.accepted(
-            updated,
-            toSubmitMatchPlayerResults(validation.players()),
-            validation.metadata(),
-            validation.customData(),
-            validation.reason(),
-            payloadHash,
-            now
-        );
     }
 
     @Nonnull
@@ -2467,7 +2366,7 @@ public class ArenaMatchService {
             return match;
         }
         String playerReason = "Match cancelled: not enough players joined in time. Returning to lobby...";
-        long returnAt = nowEpochMs + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
+        long returnAt = nowEpochMs + NO_CONTEST_RETURN_DELAY_MS;
         collectMatchCancellationRequested(match, INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET, nowEpochMs, lifecycleDispatches);
         ArenaActiveMatch updated = match.withExplicitAdmissionClosed(
             INITIAL_WINDOW_CLOSE_MIN_PLAYERS_NOT_MET,
@@ -2567,7 +2466,7 @@ public class ArenaMatchService {
             }
         }
 
-        long returnAtEpochMs = nowEpochMs + BACKEND_AFK_CANCEL_RETURN_DELAY_MS;
+        long returnAtEpochMs = nowEpochMs + NO_CONTEST_RETURN_DELAY_MS;
         ArenaActiveMatch updated = match;
         for (UUID expectedPlayerUuid : missingInitialPlayers) {
             ArenaActiveMatch.ArenaPlayerOutcomeState existing = updated.playerOutcomeByUuid().get(expectedPlayerUuid);

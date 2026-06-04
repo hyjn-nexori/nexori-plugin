@@ -1,10 +1,10 @@
 package io.github.hyjn.nexori.plugin.minigame;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriActiveMatchInfo;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivityListener;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkActivitySource;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkContinuationDecision;
-import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkContinuationDecisionType;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriAfkDetectionPolicy;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriPlayerAfkChangedEvent;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetAfkDetectionPolicyResult;
@@ -13,11 +13,9 @@ import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetMatchAfkDetectionPolic
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkRequest;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkResult;
 import io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerAfkStatus;
-import io.github.hyjn.nexori.plugin.backend.BackendAfkContinuationCheckService;
-import io.github.hyjn.nexori.plugin.backend.BackendMatchmakingConfig;
-import io.github.hyjn.nexori.plugin.backend.testsupport.BackendTestFixtures;
-import io.github.hyjn.nexori.plugin.backend.testsupport.FakeBackendHttpTransport;
+import io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +25,10 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 final class NexoriMinigameApiBridgeAfkTest {
@@ -82,6 +83,46 @@ final class NexoriMinigameApiBridgeAfkTest {
 
         assertEquals(List.of(PLAYER_ONE), info.afkPlayerUuids());
         assertEquals("none", info.matchResolutionTriggerId());
+    }
+
+    @Test
+    void submitFinalMatchResultAttachesLocalAfkReportToCustomData() {
+        ArenaMatchService arenaMatchService = mock(ArenaMatchService.class);
+        when(arenaMatchService.submitFinalMatchResult(eq("match-1"), eq("finished"), any(JsonObject.class)))
+            .thenReturn(ArenaMatchService.SubmitMatchResult.matchMissing("match-1"));
+        AfkActivityService afkActivityService = new AfkActivityService(
+            playerUuid -> Optional.of(new EffectiveAfkDetectionPolicy(
+                "match-1",
+                "queue-1",
+                "arena-1",
+                "rules-1",
+                new AfkDetectionPolicy(true, 5)
+            ))
+        );
+        afkActivityService.handlePlayerInputTick(PLAYER_ONE, "PlayerOne", false, 1_000L);
+        afkActivityService.handlePlayerInputTick(PLAYER_ONE, "PlayerOne", false, 6_000L);
+        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
+            arenaMatchService,
+            afkActivityService,
+            null,
+            new NexoriMatchLifecycleDispatcher(),
+            new NexoriAfkActivityDispatcher()
+        );
+        JsonObject customData = new JsonObject();
+        customData.addProperty("round", 3);
+
+        bridge.submitFinalMatchResult(new NexoriSubmitFinalMatchResultRequest("match-1", "finished", customData));
+
+        ArgumentCaptor<JsonObject> customDataCaptor = ArgumentCaptor.forClass(JsonObject.class);
+        verify(arenaMatchService).submitFinalMatchResult(eq("match-1"), eq("finished"), customDataCaptor.capture());
+        JsonObject enrichedCustomData = customDataCaptor.getValue();
+        JsonObject report = enrichedCustomData.getAsJsonObject("nexoriAfk");
+        JsonArray player = report.getAsJsonArray("players").get(0).getAsJsonArray();
+        assertEquals(3, enrichedCustomData.get("round").getAsInt());
+        assertEquals("match-1", report.get("matchId").getAsString());
+        assertEquals(PLAYER_ONE.toString(), player.get(0).getAsString());
+        assertTrue(player.get(2).getAsBoolean());
+        assertEquals(NexoriAfkActivitySource.IDLE_TIMEOUT.name(), player.get(7).getAsJsonArray().get(0).getAsString());
     }
 
     @Test
@@ -562,80 +603,6 @@ final class NexoriMinigameApiBridgeAfkTest {
         NexoriSetAfkDetectionPolicyResult result = bridge.setMatchAfkDetectionPolicy(null);
 
         assertEquals(NexoriSetAfkDetectionPolicyStatus.INVALID_POLICY, result.status());
-    }
-
-    @Test
-    void getAfkContinuationDecisionReturnsUnavailableWhenServiceIsNull() {
-        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
-            mock(ArenaMatchService.class),
-            new AfkActivityService(playerUuid -> Optional.empty()),
-            null,
-            new NexoriMatchLifecycleDispatcher(),
-            new NexoriAfkActivityDispatcher()
-        );
-
-        NexoriAfkContinuationDecision decision = bridge.getAfkContinuationDecision("match-1");
-
-        assertEquals(NexoriAfkContinuationDecisionType.UNAVAILABLE, decision.decision());
-        assertEquals("match-1", decision.matchId());
-    }
-
-    @Test
-    void getAfkContinuationDecisionDelegatesToBackendService() {
-        FakeBackendHttpTransport transport = new FakeBackendHttpTransport();
-        transport.enqueueResponse(200, "{\"decision\":\"CONTINUE\"}");
-
-        BackendAfkContinuationCheckService checkService = new BackendAfkContinuationCheckService(
-            null,
-            BackendTestFixtures.enabledAfkCheckConfig(),
-            BackendTestFixtures.testServerIdentity(),
-            transport
-        );
-
-        NexoriMinigameApiBridge bridge = new NexoriMinigameApiBridge(
-            mock(ArenaMatchService.class),
-            new AfkActivityService(playerUuid -> Optional.empty()),
-            null,
-            checkService,
-            new NexoriMatchLifecycleDispatcher(),
-            new NexoriAfkActivityDispatcher()
-        );
-
-        checkService.enqueue(new AfkActivityService.AfkActivityTransition(
-            "match-1", "queue-1", "arena-1", "rules-1",
-            PLAYER_ONE, "PlayerOne", true, 1_000L, 5_000L,
-            NexoriAfkActivitySource.IDLE_TIMEOUT
-        ));
-        checkService.handleTick(2_000_000L);
-
-        NexoriAfkContinuationDecision decision = bridge.getAfkContinuationDecision("match-1");
-        assertEquals(NexoriAfkContinuationDecisionType.CONTINUE, decision.decision());
-    }
-
-    @Test
-    void getAfkContinuationDecisionDefaultReturnsUnavailable() {
-        // Verify the NexoriMinigameApi default method
-        io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi defaultImpl =
-            new io.github.hyjn.nexori.plugin.api.minigame.NexoriMinigameApi() {
-                @Override public java.util.Optional<String> findActiveMatchId(UUID playerUuid) { return java.util.Optional.empty(); }
-                @Override public java.util.Optional<UUID> findActivePlayerUuid(String matchId, String playerToken) { return java.util.Optional.empty(); }
-                @Override public java.util.Optional<NexoriActiveMatchInfo> findActiveMatchInfo(String matchId) { return java.util.Optional.empty(); }
-                @Override public java.util.Optional<String> findRulesEngineId(String matchId) { return java.util.Optional.empty(); }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerOutcomeResult setPlayerOutcome(String matchId, UUID playerUuid, io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultPlayerOutcome outcome, String reason) { return null; }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriSetPlayerSpectatorResult setPlayerSpectator(String matchId, UUID playerUuid, boolean spectator, String reason) { return null; }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriReturnPlayerResult returnPlayerToLobby(String matchId, UUID playerUuid, int delaySeconds, String reason) { return null; }
-                @Override public java.util.Optional<io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchResultRequirements> findMatchResultRequirements(String matchId) { return java.util.Optional.empty(); }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultResult submitFinalMatchResult(io.github.hyjn.nexori.plugin.api.minigame.NexoriSubmitFinalMatchResultRequest request) { return null; }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionResult closeMatchAdmission(io.github.hyjn.nexori.plugin.api.minigame.NexoriCloseMatchAdmissionRequest request) { return null; }
-                @Override public java.util.Optional<io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchPlacementState> findMatchPlacementState(String matchId) { return java.util.Optional.empty(); }
-                @Override @SuppressWarnings("removal") public java.util.Optional<String> findMatchResolutionTriggerId(String matchId) { return java.util.Optional.empty(); }
-                @Override public io.github.hyjn.nexori.plugin.api.minigame.NexoriListenerRegistration registerMatchLifecycleListener(String rulesEngineId, io.github.hyjn.nexori.plugin.api.minigame.NexoriMatchLifecycleListener listener) { return () -> {}; }
-            };
-
-        NexoriAfkContinuationDecision decision = defaultImpl.getAfkContinuationDecision("match-x");
-
-        assertEquals(NexoriAfkContinuationDecisionType.UNAVAILABLE, decision.decision());
-        assertEquals("match-x", decision.matchId());
     }
 
     private static ArenaMatchService.ActiveMatchInfo activeMatchInfo() {

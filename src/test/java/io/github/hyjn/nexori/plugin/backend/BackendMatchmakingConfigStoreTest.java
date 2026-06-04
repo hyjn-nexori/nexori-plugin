@@ -96,6 +96,43 @@ final class BackendMatchmakingConfigStoreTest {
     }
 
     @Test
+    void loadOrCreateDropsRemovedAfkBackendFlag(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("config.json");
+        String removedFlag = "afk" + "ContinuationCheckEnabled";
+        Files.writeString(
+            file,
+            """
+                {
+                  "schemaVersion": 1,
+                  "syncEnabled": true,
+                  "baseUrl": "http://backend.example.com",
+                  "serverToken": "token",
+                  "syncIntervalMs": 1000,
+                  "region": "us-east",
+                  "requestTimeoutMs": 3000,
+                  "resultReportingEnabled": true,
+                  "resultRetryIntervalMs": 5000,
+                  "matchStateReportingEnabled": true,
+                  "matchStateDebounceMs": 1000,
+                  "matchStateMaxCoalesceWindowMs": 5000,
+                  "matchStateRetryIntervalMs": 3000,
+                  "matchStateStaleAfterMs": 30000,
+                  "%s": true
+                }
+                """.formatted(removedFlag),
+            StandardCharsets.UTF_8
+        );
+        BackendMatchmakingConfigStore store = new BackendMatchmakingConfigStore(file);
+
+        BackendMatchmakingConfig loaded = store.loadOrCreate();
+
+        String rewritten = Files.readString(file, StandardCharsets.UTF_8);
+        assertTrue(loaded.matchStateReportingEnabled());
+        assertTrue(loaded.resultReportingEnabled());
+        assertFalse(rewritten.contains(removedFlag), "Removed AFK backend config must not be re-saved: " + rewritten);
+    }
+
+    @Test
     void loadOrCreateCreatesParentDirectoriesIfMissing(@TempDir Path dir) throws IOException {
         Path file = dir.resolve("nested/sub/config.json");
         BackendMatchmakingConfigStore store = new BackendMatchmakingConfigStore(file);
